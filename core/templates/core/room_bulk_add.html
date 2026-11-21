@@ -42,12 +42,12 @@
         <div class="col-md-4">
           <label class="form-label fw-semibold">Block</label>
           <input type="text" name="block" id="countBlock" class="form-control" value="{{ form.block.value|default:'A' }}" placeholder="e.g. A, B" required>
-          <div class="form-text">Hostel block name or letter</div>
+          <div class="form-text">Room prefix (e.g. Block A & room 101 &rarr; <code>A-101</code>)</div>
         </div>
         <div class="col-md-4">
           <label class="form-label fw-semibold">Starting Room No.</label>
           <input type="text" name="start_number" id="countStart" class="form-control" value="{{ form.start_number.value|default:'101' }}" placeholder="e.g. 101, 01" required>
-          <div class="form-text">e.g. 101, 201, 1, 01</div>
+          <div class="form-text">e.g. 101, 201, 01 (shows as <code>A-101</code>)</div>
         </div>
         <div class="col-md-4">
           <label class="form-label fw-semibold">Amount of Rooms to Add</label>
@@ -57,25 +57,20 @@
       </div>
 
       <div class="row g-3 mb-3">
-        <div class="col-md-4">
+        <div class="col-md-6">
           <label class="form-label fw-semibold">Or Ending Room No. (optional)</label>
           <input type="text" name="end_number" id="countEnd" class="form-control" value="{{ form.end_number.value|default:'' }}" placeholder="e.g. 120">
           <div class="form-text">Overrides amount if filled</div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-6">
           <label class="form-label fw-semibold">Capacity per Room</label>
           <input type="number" name="capacity" id="countCap" class="form-control" value="{{ form.capacity.value|default:'2' }}" min="1">
           <div class="form-text">Beds per room (default: 2)</div>
         </div>
-        <div class="col-md-4">
-          <label class="form-label fw-semibold">Prefix (optional)</label>
-          <input type="text" name="prefix" id="countPrefix" class="form-control" value="{{ form.prefix.value|default:'' }}" placeholder="e.g. F-">
-          <div class="form-text">Prepended to room number</div>
-        </div>
       </div>
 
       <div class="alert alert-light border py-2 mb-3" id="countPreview">
-        <span class="text-secondary">Preview: </span><strong id="previewText">A-101 to A-110 (10 rooms)</strong>
+        <span class="text-secondary">Preview: </span><span id="previewText">A-101 to A-110 (10 rooms)</span>
       </div>
       <button type="submit" class="btn btn-navy">Generate Rooms</button>
     </div>
@@ -85,7 +80,7 @@
       <div class="row g-3 mb-3">
         <div class="col-md-3">
           <label class="form-label fw-semibold">Block</label>
-          <input type="text" name="block" class="form-control" value="{{ form.block.value|default:'A' }}" placeholder="e.g. A">
+          <input type="text" name="floor_block" class="form-control" value="{{ form.floor_block.value|default:form.block.value|default:'A' }}" placeholder="e.g. A">
         </div>
         <div class="col-md-3">
           <label class="form-label fw-semibold">From Floor</label>
@@ -103,10 +98,10 @@
       <div class="row g-3 mb-3">
         <div class="col-md-4">
           <label class="form-label fw-semibold">Capacity per Room</label>
-          <input type="number" name="capacity" class="form-control" value="{{ form.capacity.value|default:'2' }}" min="1">
+          <input type="number" name="floor_capacity" class="form-control" value="{{ form.floor_capacity.value|default:form.capacity.value|default:'2' }}" min="1">
         </div>
       </div>
-      <p class="small text-secondary mb-3">Example: Floors 1 to 3 with 10 rooms per floor creates 101–110, 201–210, 301–310 (30 rooms total).</p>
+      <p class="small text-secondary mb-3">Example: Block A with floors 1 to 3 and 10 rooms per floor creates A-101–A-110, A-201–A-210, A-301–A-310 (30 rooms total).</p>
       <button type="submit" class="btn btn-navy">Generate Floor Rooms</button>
     </div>
 
@@ -115,11 +110,11 @@
       <div class="row g-3 mb-3">
         <div class="col-md-4">
           <label class="form-label fw-semibold">Default Block</label>
-          <input type="text" name="block" class="form-control" value="{{ form.block.value|default:'A' }}" placeholder="e.g. A">
+          <input type="text" name="list_block" class="form-control" value="{{ form.list_block.value|default:form.block.value|default:'A' }}" placeholder="e.g. A">
         </div>
         <div class="col-md-4">
           <label class="form-label fw-semibold">Capacity per Room</label>
-          <input type="number" name="capacity" class="form-control" value="{{ form.capacity.value|default:'2' }}" min="1">
+          <input type="number" name="list_capacity" class="form-control" value="{{ form.list_capacity.value|default:form.capacity.value|default:'2' }}" min="1">
         </div>
       </div>
       <div class="mb-3">
@@ -182,23 +177,48 @@ function setMode(mode) {
   modes.forEach(function(m) {
     var sec = document.getElementById('section-' + m);
     var btn = document.getElementById('tab-' + m);
-    if (m === mode) {
-      sec.style.display = 'block';
+    var isCurrent = (m === mode);
+    sec.style.display = isCurrent ? 'block' : 'none';
+    if (isCurrent) {
       btn.className = 'btn btn-sm btn-navy active';
     } else {
-      sec.style.display = 'none';
       btn.className = 'btn btn-sm btn-outline-primary';
     }
+    // Disable inputs in hidden tabs so browser never submits inactive fields
+    var fields = sec.querySelectorAll('input, select, textarea');
+    fields.forEach(function(el) {
+      el.disabled = !isCurrent;
+    });
   });
 }
 
 function updatePreview() {
-  var block = document.getElementById('countBlock').value.trim() || 'A';
-  var startStr = document.getElementById('countStart').value.trim() || '101';
+  var blockInput = document.getElementById('countBlock');
+  var startInput = document.getElementById('countStart');
+  var startStr = (startInput.value || '').trim() || '101';
   var amount = parseInt(document.getElementById('countAmount').value) || 10;
   var endStr = document.getElementById('countEnd').value.trim();
-  var prefix = document.getElementById('countPrefix').value.trim();
 
+  // If user entered e.g. "G 101", "G-101", or "G101" in the starting room field
+  var prefixMatch = startStr.match(/^([a-zA-Z]+)[ -]?(\d+)$/);
+  if (prefixMatch) {
+    var detectedBlock = prefixMatch[1].toUpperCase();
+    if (blockInput.value.trim().toUpperCase() !== detectedBlock) {
+      blockInput.value = detectedBlock;
+    }
+    startStr = prefixMatch[2];
+  } else if (startStr.indexOf('-') !== -1) {
+    var parts = startStr.split('-');
+    if (parts[0].trim() && /^[a-zA-Z]+$/.test(parts[0].trim())) {
+      var detectedBlock = parts[0].trim().toUpperCase();
+      if (blockInput.value.trim().toUpperCase() !== detectedBlock) {
+        blockInput.value = detectedBlock;
+      }
+    }
+    startStr = parts.slice(1).join('-').trim();
+  }
+
+  var block = (blockInput.value || 'A').trim().toUpperCase();
   var numMatch = startStr.match(/\d+/);
   if (!numMatch) {
     document.getElementById('previewText').innerText = 'Please enter a valid starting number.';
@@ -221,8 +241,8 @@ function updatePreview() {
     return;
   }
 
-  var first = formatNum(startNum, pad, prefix);
-  var last = formatNum(endNum, pad, prefix);
+  var first = formatNum(startNum, pad);
+  var last = formatNum(endNum, pad);
   document.getElementById('previewText').innerText = block + '-' + first + ' to ' + block + '-' + last + ' (' + amount + ' rooms)';
 }
 
@@ -230,17 +250,19 @@ function startMatchPadding(s) {
   return (s.length > 1 && s.charAt(0) === '0') ? s.length : 0;
 }
 
-function formatNum(num, pad, prefix) {
+function formatNum(num, pad) {
   var s = num.toString();
   while (s.length < pad) s = '0' + s;
-  return prefix + s;
+  return s;
 }
 
 document.getElementById('countBlock').addEventListener('input', updatePreview);
 document.getElementById('countStart').addEventListener('input', updatePreview);
 document.getElementById('countAmount').addEventListener('input', updatePreview);
 document.getElementById('countEnd').addEventListener('input', updatePreview);
-document.getElementById('countPrefix').addEventListener('input', updatePreview);
+
+// Initialize mode and preview
+setMode('count');
 updatePreview();
 </script>
 {% endblock %}

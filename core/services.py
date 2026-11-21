@@ -341,7 +341,7 @@ def import_allocations(rows):
 def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None, capacity=2, prefix="", suffix=""):
     """
     Creates a particular amount (count) or range of rooms for a given block.
-    Example: block='A', start_number=101, count=20 creates A-101 through A-120.
+    Block serves as the room prefix (e.g. Block A and room 101 displays like A-101).
     """
     block = (block or "A").strip()
     start_str = str(start_number or "").strip()
@@ -351,8 +351,16 @@ def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None
     if not start_str:
         raise ValueError("Starting room number is required.")
 
+    # If user passed e.g. "A-101", extract block "A" and start number "101"
+    if "-" in start_str:
+        b_part, _, n_part = start_str.partition("-")
+        if b_part.strip().isalpha():
+            block = b_part.strip().upper()
+            start_str = n_part.strip()
+
     m = re.match(r"^([a-zA-Z]+)[ -]?(\d+)$", start_str)
     if m and not prefix:
+        block = m.group(1).upper()
         digits = m.group(2)
         start_int = int(digits)
         pad = len(digits) if digits.startswith("0") else 0
@@ -364,10 +372,14 @@ def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None
         start_int = int(digits)
         pad = len(digits) if digits.startswith("0") else 0
 
+    block = block.upper()
+
     if count is not None and int(count) > 0:
         end_int = start_int + int(count) - 1
     elif end_number is not None and str(end_number).strip():
         end_str = str(end_number).strip()
+        if "-" in end_str:
+            _, _, end_str = end_str.partition("-")
         end_match = re.search(r"\d+", end_str)
         if not end_match:
             raise ValueError(f"Ending room number '{end_str}' must contain numeric digits.")

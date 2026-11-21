@@ -480,3 +480,96 @@ class RoomFilterAndBulkActionsTests(TestCase):
         self.assertFalse(self.room_b.is_blacklisted)
 
 
+class RoomPrefixAndDisplayTests(TestCase):
+    def test_room_string_representation_uses_block_as_prefix(self):
+        r1 = Room.objects.create(block="A", number="101", capacity=2)
+        self.assertEqual(str(r1), "A-101")
+
+        r2 = Room.objects.create(block="B", number="205", capacity=3)
+        self.assertEqual(str(r2), "B-205")
+
+    def test_room_cleans_redundant_prefix_on_save(self):
+        # User enters "A-101" for Block A
+        r = Room.objects.create(block="A", number="A-101", capacity=2)
+        self.assertEqual(r.number, "101")
+        self.assertEqual(str(r), "A-101")
+
+        # User enters "A102" for Block A
+        r2 = Room.objects.create(block="A", number="A102", capacity=2)
+        self.assertEqual(r2.number, "102")
+        self.assertEqual(str(r2), "A-102")
+
+    def test_bulk_create_rooms_uses_block_as_prefix(self):
+        # Generating with block="A", start_number="101"
+        res = bulk_create_rooms(block="A", start_number="101", count=3)
+        self.assertEqual(len(res["created"]), 3)
+        self.assertEqual([str(r) for r in res["created"]], ["A-101", "A-102", "A-103"])
+
+        # Generating with block="K", start_number="K-501" automatically parses K and 501
+        res2 = bulk_create_rooms(block="K", start_number="K-501", count=2)
+        self.assertEqual(len(res2["created"]), 2)
+        self.assertEqual([str(r) for r in res2["created"]], ["K-501", "K-502"])
+
+    def test_room_extracts_block_if_typed_in_number(self):
+        from core.forms import RoomForm
+        # Even if block is left as "A", entering "G 101" or "G-101" detects Block G
+        form1 = RoomForm(data={"block": "A", "number": "G 101", "capacity": 2})
+        self.assertTrue(form1.is_valid(), form1.errors)
+        r1 = form1.save()
+        self.assertEqual(r1.block, "G")
+        self.assertEqual(r1.number, "101")
+        self.assertEqual(str(r1), "G-101")
+
+        form2 = RoomForm(data={"block": "A", "number": "G-201", "capacity": 2})
+        self.assertTrue(form2.is_valid(), form2.errors)
+        r2 = form2.save()
+        self.assertEqual(r2.block, "G")
+        self.assertEqual(r2.number, "201")
+        self.assertEqual(str(r2), "G-201")
+
+    def test_bulk_add_view_creates_g_101_to_g_110(self):
+        warden = User.objects.create_user(username="warden_g", password="WardenPassword123", role="warden", is_staff=True)
+        c = Client()
+        c.force_login(warden)
+
+        # 1. User enters Block G and start_number 101 for 10 rooms
+        resp = c.post(reverse("rooms_bulk_add"), {
+            "mode": "count",
+            "block": "G",
+            "start_number": "101",
+            "count": "10",
+            "capacity": "2",
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(Room.objects.filter(block="G", number="101").exists())
+        self.assertTrue(Room.objects.filter(block="G", number="110").exists())
+        self.assertEqual(Room.objects.filter(block="G").count(), 10)
+
+        # 2. User enters start_number as "H 101" directly (even if block was left as default A)
+        resp2 = c.post(reverse("rooms_bulk_add"), {
+            "mode": "count",
+            "block": "A",
+            "start_number": "H 101",
+            "count": "5",
+            "capacity": "2",
+        })
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(Room.objects.filter(block="H", number="101").exists())
+        self.assertTrue(Room.objects.filter(block="H", number="105").exists())
+        self.assertEqual(Room.objects.filter(block="H").count(), 5)
+
+        # 3. Simulate browser form submission with multiple block values from tabs ['J', 'A', 'A']
+        resp3 = c.post(reverse("rooms_bulk_add"), {
+            "mode": "count",
+            "block": ["J", "A", "A"],
+            "start_number": "101",
+            "count": "10",
+            "capacity": ["2", "2", "2"],
+        })
+        self.assertEqual(resp3.status_code, 200)
+        self.assertTrue(Room.objects.filter(block="J", number="101").exists())
+        self.assertTrue(Room.objects.filter(block="J", number="110").exists())
+        self.assertEqual(Room.objects.filter(block="J").count(), 10)
+        self.assertEqual(Room.objects.filter(block="A").count(), 0)
+
+

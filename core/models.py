@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 from django.contrib.auth.models import AbstractUser
@@ -71,7 +72,15 @@ class Room(models.Model):
         ordering = ["block", "number"]
 
     def __str__(self):
-        return f"{self.block}-{self.number}"
+        if self.number and self.block:
+            b = str(self.block).strip()
+            num = str(self.number).strip()
+            if num.lower().startswith(f"{b.lower()}-"):
+                return f"{b}-{num[len(b)+1:].strip()}"
+            if num.lower().startswith(b.lower()) and len(num) > len(b) and num[len(b):][0].isdigit():
+                return f"{b}-{num[len(b):].strip()}"
+            return f"{b}-{num}"
+        return self.number or ""
 
     @property
     def occupied(self):
@@ -88,8 +97,29 @@ class Room(models.Model):
         return max(0, self.capacity - self.occupied)
 
     def clean(self):
+        if self.number and self.block:
+            b = str(self.block).strip()
+            num = str(self.number).strip()
+            if num.lower().startswith(f"{b.lower()}-"):
+                self.number = num[len(b)+1:].strip()
+            elif num.lower().startswith(f"{b.lower()} "):
+                self.number = num[len(b)+1:].strip()
+            elif num.lower().startswith(b.lower()) and len(num) > len(b) and num[len(b):][0].isdigit():
+                self.number = num[len(b):].strip()
         if self.pk and self.capacity < self.occupied:
             raise ValidationError(f"{self.occupied} students already live here; capacity cannot be lower.")
+
+    def save(self, *args, **kwargs):
+        if self.number and self.block:
+            b = str(self.block).strip()
+            num = str(self.number).strip()
+            if num.lower().startswith(f"{b.lower()}-"):
+                self.number = num[len(b)+1:].strip()
+            elif num.lower().startswith(f"{b.lower()} "):
+                self.number = num[len(b)+1:].strip()
+            elif num.lower().startswith(b.lower()) and len(num) > len(b) and num[len(b):][0].isdigit():
+                self.number = num[len(b):].strip()
+        super().save(*args, **kwargs)
 
 
 class RoomAllocation(models.Model):

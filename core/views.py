@@ -324,11 +324,13 @@ def room_bulk_add(request):
         d = form.cleaned_data
         try:
             if mode == "count":
-                block = d.get("block") or "A"
+                blocks = request.POST.getlist("block")
+                block = d.get("count_block") or (blocks[0] if blocks else None) or d.get("block") or "A"
                 start_no = d.get("start_number") or "101"
                 count = d.get("count")
                 end_no = d.get("end_number") or None
-                cap = d.get("capacity") or 2
+                caps = request.POST.getlist("capacity")
+                cap = d.get("count_capacity") or (caps[0] if caps else None) or d.get("capacity") or 2
                 prefix = d.get("prefix") or ""
                 result = bulk_create_rooms(
                     block=block,
@@ -339,11 +341,11 @@ def room_bulk_add(request):
                     prefix=prefix,
                 )
             elif mode == "floor":
-                block = d.get("block") or "A"
+                block = d.get("floor_block") or d.get("block") or "A"
                 start_fl = d.get("start_floor") or 1
                 end_fl = d.get("end_floor") or 1
                 r_per_fl = d.get("rooms_per_floor") or 10
-                cap = d.get("capacity") or 2
+                cap = d.get("floor_capacity") or d.get("capacity") or 2
                 result = bulk_create_rooms_floors(
                     block=block,
                     start_floor=start_fl,
@@ -352,9 +354,9 @@ def room_bulk_add(request):
                     capacity=cap,
                 )
             elif mode == "list":
-                block = d.get("block") or "A"
+                block = d.get("list_block") or d.get("block") or "A"
                 text = d.get("room_list") or ""
-                cap = d.get("capacity") or 2
+                cap = d.get("list_capacity") or d.get("capacity") or 2
                 result = bulk_create_rooms_from_list(
                     block=block,
                     text=text,
