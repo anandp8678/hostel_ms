@@ -1,0 +1,291 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <h4 style="color:var(--navy)" class="mb-0">Rooms</h4>
+    <span class="badge text-bg-primary rounded-pill">{{ total_rooms }} room{{ total_rooms|pluralize }}</span>
+  </div>
+  <div>
+    <a class="btn btn-outline-secondary me-2" href="{% url 'rooms_bulk_add' %}">Bulk Add Rooms</a>
+    <a class="btn btn-navy" href="{% url 'rooms_new' %}">Add Room</a>
+  </div>
+</div>
+
+<!-- Filters Card -->
+<div class="card p-3 mb-3 bg-white">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label small fw-semibold text-secondary mb-1">Search</label>
+      <input type="text" name="q" class="form-control form-control-sm" placeholder="Room no, block, cause..." value="{{ filter_q }}">
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label small fw-semibold text-secondary mb-1">Block</label>
+      <select name="block" class="form-select form-select-sm">
+        <option value="">All Blocks</option>
+        {% for b in all_blocks %}
+          <option value="{{ b }}" {% if filter_block == b %}selected{% endif %}>Block {{ b }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label small fw-semibold text-secondary mb-1">Status / Cause</label>
+      <select name="status" class="form-select form-select-sm" id="filterStatusSelect">
+        <option value="">All Rooms</option>
+        <option value="vacant" {% if filter_status == "vacant" %}selected{% endif %}>Available / Vacant</option>
+        <option value="full" {% if filter_status == "full" %}selected{% endif %}>Fully Occupied</option>
+        <option value="empty" {% if filter_status == "empty" %}selected{% endif %}>Completely Empty</option>
+        <option value="active" {% if filter_status == "active" %}selected{% endif %}>Active Only (Not Blacklisted)</option>
+        <option value="blacklisted" {% if filter_status == "blacklisted" %}selected{% endif %}>All Blacklisted</option>
+        <option value="maintenance" {% if filter_status == "maintenance" %}selected{% endif %}>Blacklisted: Maintenance</option>
+        <option value="renovation" {% if filter_status == "renovation" %}selected{% endif %}>Blacklisted: Renovation</option>
+        <option value="repair" {% if filter_status == "repair" %}selected{% endif %}>Blacklisted: Repair / Damage</option>
+        {% for c in all_causes %}
+          {% if c != "Maintenance" and c != "Renovation" and c != "Repair" %}
+            <option value="cause:{{ c }}" {% if filter_cause == c %}selected{% endif %}>Cause: {{ c }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label small fw-semibold text-secondary mb-1">Capacity</label>
+      <select name="capacity" class="form-select form-select-sm">
+        <option value="">Any Capacity</option>
+        <option value="1" {% if filter_capacity == "1" %}selected{% endif %}>1 Bed</option>
+        <option value="2" {% if filter_capacity == "2" %}selected{% endif %}>2 Beds</option>
+        <option value="3" {% if filter_capacity == "3" %}selected{% endif %}>3 Beds</option>
+        <option value="4" {% if filter_capacity == "4" %}selected{% endif %}>4 Beds</option>
+      </select>
+    </div>
+
+    <div class="col-md-2 d-flex gap-2">
+      <button type="submit" class="btn btn-sm btn-navy flex-grow-1">Filter</button>
+      <a href="{% url 'rooms' %}" class="btn btn-sm btn-outline-secondary" title="Reset Filters">Reset</a>
+    </div>
+  </form>
+</div>
+
+<!-- Bulk Actions Form -->
+<form method="post" id="bulkForm">
+  {% csrf_token %}
+  <div class="card mb-3">
+    <!-- Bulk Action Header Bar -->
+    <div class="card-header bg-light d-flex flex-wrap align-items-center justify-content-between py-2 gap-2">
+      <div class="d-flex align-items-center">
+        <div class="form-check me-3 mb-0">
+          <input class="form-check-input" type="checkbox" id="selectAllHeader" onclick="toggleSelectAll(this)">
+          <label class="form-check-label fw-semibold small" for="selectAllHeader">Select All</label>
+        </div>
+        <span id="selectedCountBadge" class="badge text-bg-secondary">0 selected</span>
+      </div>
+
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <select name="bulk_action" id="bulkActionSelect" class="form-select form-select-sm" style="width:auto;" onchange="onActionChange()">
+          <option value="">Choose action...</option>
+          <option value="blacklist">🚫 Blacklist selected</option>
+          <option value="activate">🟢 Activate selected (Remove blacklist)</option>
+          <option value="change_capacity">🛏 Change capacity</option>
+          <option value="delete">🗑 Delete selected</option>
+        </select>
+
+        <!-- Cause input for blacklisting -->
+        <div id="blacklistCauseGroup" style="display:none;" class="align-items-center gap-1">
+          <input type="text" name="blacklist_cause" id="blacklistCauseInput" class="form-control form-control-sm" placeholder="Cause (e.g. Maintenance, Repair)" value="Maintenance" list="causeSuggestions" style="width:180px;">
+          <datalist id="causeSuggestions">
+            <option value="Maintenance">
+            <option value="Renovation">
+            <option value="Repair">
+            <option value="Electrical Issue">
+            <option value="Water Leakage">
+            <option value="Pest Control">
+            <option value="Quarantine">
+          </datalist>
+        </div>
+
+        <!-- Capacity input for changing capacity -->
+        <div id="capacityGroup" style="display:none;" class="align-items-center gap-1">
+          <input type="number" name="new_capacity" id="newCapacityInput" class="form-control form-control-sm" placeholder="New beds" min="1" max="20" value="2" style="width:90px;">
+        </div>
+
+        <button type="submit" class="btn btn-sm btn-navy" id="applyBulkBtn" onclick="return confirmBulkAction()" disabled>Apply Action</button>
+      </div>
+    </div>
+
+    <!-- Rooms Table -->
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th style="width:40px;" class="text-center">#</th>
+            <th>Room</th>
+            <th>Block</th>
+            <th>Capacity</th>
+            <th>Occupied</th>
+            <th>Vacant</th>
+            <th>Status / Cause</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rooms %}
+            <tr {% if r.is_blacklisted %}class="table-light text-muted"{% endif %}>
+              <td class="text-center">
+                <input type="checkbox" name="selected_rooms" value="{{ r.pk }}" class="form-check-input room-checkbox" onchange="updateSelectedCount()">
+              </td>
+              <td class="fw-semibold">
+                <a href="{% url 'rooms_edit' r.pk %}" class="text-decoration-none {% if r.is_blacklisted %}text-muted{% else %}text-dark{% endif %}">
+                  {{ r }}
+                </a>
+              </td>
+              <td>Block {{ r.block }}</td>
+              <td>{{ r.capacity }} bed{{ r.capacity|pluralize }}</td>
+              <td>
+                {% if r.occupied > 0 %}
+                  <span class="badge text-bg-primary">{{ r.occupied }}</span>
+                {% else %}
+                  <span class="text-muted">0</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.is_blacklisted %}
+                  <span class="text-muted">—</span>
+                {% elif r.vacancy > 0 %}
+                  <span class="badge text-bg-success">{{ r.vacancy }} free</span>
+                {% else %}
+                  <span class="text-muted">0</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.is_blacklisted %}
+                  <span class="badge text-bg-danger" title="{{ r.blacklist_reason }}">
+                    🚫 Blacklisted: {{ r.blacklist_reason|default:"Unavailable" }}
+                  </span>
+                {% elif r.raw_vacancy == 0 %}
+                  <span class="badge text-bg-secondary">Full</span>
+                {% elif r.occupied == 0 %}
+                  <span class="badge text-bg-success">Vacant</span>
+                {% else %}
+                  <span class="badge text-bg-info">Partly occupied</span>
+                {% endif %}
+              </td>
+              <td class="text-end text-nowrap">
+                <!-- 1-Click Toggle Blacklist -->
+                <button type="button" class="btn btn-sm {% if r.is_blacklisted %}btn-outline-success{% else %}btn-outline-warning{% endif %} me-1" onclick="toggleSingleBlacklist('{{ r.pk }}', '{{ r.is_blacklisted }}', '{{ r }}')">
+                  {% if r.is_blacklisted %}Activate{% else %}Blacklist{% endif %}
+                </button>
+                <a class="btn btn-sm btn-outline-secondary me-1" href="{% url 'rooms_edit' r.pk %}">Edit</a>
+                <a class="btn btn-sm btn-outline-danger" href="{% url 'rooms_delete' r.pk %}">Delete</a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="8" class="text-center text-secondary py-5">
+                <div>No rooms found matching your filter criteria.</div>
+                <a href="{% url 'rooms' %}" class="btn btn-sm btn-outline-primary mt-2">Clear Filters</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</form>
+
+<!-- Hidden single toggle blacklist form -->
+<form id="singleToggleForm" method="post" action="" style="display:none;">
+  {% csrf_token %}
+  <input type="hidden" name="cause" id="singleToggleCause" value="Maintenance">
+  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+</form>
+
+<script>
+function toggleSelectAll(master) {
+  var boxes = document.querySelectorAll('.room-checkbox');
+  boxes.forEach(function(b) {
+    b.checked = master.checked;
+  });
+  updateSelectedCount();
+}
+
+function updateSelectedCount() {
+  var checked = document.querySelectorAll('.room-checkbox:checked');
+  var count = checked.length;
+  var badge = document.getElementById('selectedCountBadge');
+  var applyBtn = document.getElementById('applyBulkBtn');
+  var master = document.getElementById('selectAllHeader');
+  var allBoxes = document.querySelectorAll('.room-checkbox');
+
+  if (badge) {
+    badge.innerText = count + ' selected';
+    if (count > 0) {
+      badge.className = 'badge text-bg-primary';
+    } else {
+      badge.className = 'badge text-bg-secondary';
+    }
+  }
+
+  if (applyBtn) {
+    applyBtn.disabled = (count === 0);
+  }
+
+  if (master && allBoxes.length > 0) {
+    master.checked = (count === allBoxes.length);
+  }
+}
+
+function onActionChange() {
+  var act = document.getElementById('bulkActionSelect').value;
+  var causeGroup = document.getElementById('blacklistCauseGroup');
+  var capGroup = document.getElementById('capacityGroup');
+
+  if (causeGroup) {
+    causeGroup.style.display = (act === 'blacklist') ? 'inline-flex' : 'none';
+  }
+  if (capGroup) {
+    capGroup.style.display = (act === 'change_capacity') ? 'inline-flex' : 'none';
+  }
+}
+
+function confirmBulkAction() {
+  var act = document.getElementById('bulkActionSelect').value;
+  var count = document.querySelectorAll('.room-checkbox:checked').length;
+
+  if (count === 0) {
+    alert('Please select at least one room.');
+    return false;
+  }
+
+  if (!act) {
+    alert('Please choose an action to perform.');
+    return false;
+  }
+
+  if (act === 'delete') {
+    return confirm('Are you sure you want to delete ' + count + ' room(s)? Rooms with active students cannot be deleted.');
+  }
+
+  if (act === 'blacklist') {
+    var cause = document.getElementById('blacklistCauseInput').value.trim() || 'Maintenance';
+    return confirm('Blacklist ' + count + ' room(s) due to ' + cause + '? They will be marked unavailable for new student allocations.');
+  }
+
+  return true;
+}
+
+function toggleSingleBlacklist(pk, isBlacklisted, roomName) {
+  var form = document.getElementById('singleToggleForm');
+  form.action = '/rooms/' + pk + '/toggle-blacklist/';
+
+  if (isBlacklisted === 'True') {
+    form.submit();
+  } else {
+    var cause = prompt('Enter blacklist cause for Room ' + roomName + ':', 'Maintenance');
+    if (cause !== null) {
+      document.getElementById('singleToggleCause').value = cause.trim() || 'Maintenance';
+      form.submit();
+    }
+  }
+}
+</script>
+{% endblock %}

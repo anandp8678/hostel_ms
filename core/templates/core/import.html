@@ -1,0 +1,62 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 style="color:var(--navy)" class="mb-0">Import Students & Room Allocations</h4>
+  <a class="btn btn-outline-secondary" href="{% url 'students' %}">Back to students</a>
+</div>
+
+<div class="card p-4 mb-3" style="max-width:740px">
+  <p>Upload <strong>one combined CSV file</strong> containing student details, parent details, and room allocations. <a href="{% url 'import_template' %}">Download combined template</a>.</p>
+
+  <p class="small text-muted mb-2">Supported columns (all in one CSV):</p>
+  <ul class="small text-secondary mb-3">
+    <li><code>name</code> (required for new students): Student's full name</li>
+    <li><code>roll_no</code> (required): Student roll number / login username</li>
+    <li><code>course</code> (optional): Course / branch / department</li>
+    <li><code>phone</code> (optional): Student contact number</li>
+    <li><code>parent_name</code> (optional): Parent or guardian full name</li>
+    <li><code>parent_phone</code> (optional): Parent phone number (used for parent login: <code>p + phone</code>)</li>
+    <li><code>room</code> (optional): Allocated room (e.g. <code>A-101</code>). Assigned automatically upon upload</li>
+    <li><code>start_date</code> (optional): Room allocation start date (defaults to today)</li>
+  </ul>
+
+  <p class="small text-secondary mb-3">
+    <strong>Combined Processing:</strong>
+    Works for both new and existing students. If a student is already registered, their profile and parent info are updated, and they are automatically allocated to the specified room.
+  </p>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <div class="mb-3">
+      {{ form.file }}
+      <div class="text-danger small">{{ form.file.errors|join:" " }}</div>
+    </div>
+    <button class="btn btn-navy">Upload and Process All</button>
+  </form>
+</div>
+
+{% if result %}
+  {% if result.created or result.updated or result.allocated or result.already_allocated %}
+    <div class="alert alert-success">
+      <h6 class="alert-heading mb-2">Import Successful</h6>
+      <ul class="mb-0">
+        {% if result.created %}<li><b>{{ result.created }}</b> new student(s) and parent(s) registered.</li>{% endif %}
+        {% if result.updated %}<li><b>{{ result.updated }}</b> existing student profile(s) updated.</li>{% endif %}
+        {% if result.allocated %}<li><b>{{ result.allocated }}</b> student(s) automatically allocated to rooms.</li>{% endif %}
+        {% if result.already_allocated %}<li><b>{{ result.already_allocated }}</b> student(s) were already active in their assigned room.</li>{% endif %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if result.errors %}
+    <div class="alert alert-warning">
+      <b>{{ result.errors|length }} row(s) skipped / could not be processed:</b>
+      <ul class="mb-0 mt-2">
+        {% for e in result.errors %}
+          <li>{{ e }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

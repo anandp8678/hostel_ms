@@ -1,0 +1,4 @@
+{% extends "core/base.html" %}{% block content %}
+<h4 style="color:var(--navy)" class="mb-3">My children</h4><div class="row g-3">
+{% for c in children %}<div class="col-md-4"><a class="text-decoration-none" href="{% url 'child' c.pk %}"><div class="card p-3"><div class="fs-5">{{ c.user.display_name }}</div><div class="text-secondary">{{ c.roll_no }} · {{ c.course }}</div></div></a></div>
+{% empty %}<p class="text-secondary">No student is linked to your account yet. Please contact the hostel office.</p>{% endfor %}</div>{% endblock %}

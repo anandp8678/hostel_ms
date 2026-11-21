@@ -1,0 +1,246 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 style="color:var(--navy)" class="mb-0">Bulk Add Rooms</h4>
+  <a class="btn btn-outline-secondary" href="{% url 'rooms' %}">Back to rooms</a>
+</div>
+
+<div class="card p-4 mb-4" style="max-width:760px">
+  <p class="text-secondary mb-3">Add a particular amount or range of rooms at once instead of adding them one by one.</p>
+
+  <!-- Navigation Tabs -->
+  <ul class="nav nav-pills mb-3" id="bulkTab" role="tablist">
+    <li class="nav-item me-2" role="presentation">
+      <button class="btn btn-sm btn-outline-primary active" id="tab-count" type="button" onclick="setMode('count')">
+        By Amount / Count
+      </button>
+    </li>
+    <li class="nav-item me-2" role="presentation">
+      <button class="btn btn-sm btn-outline-primary" id="tab-floor" type="button" onclick="setMode('floor')">
+        Multi-Floor Generator
+      </button>
+    </li>
+    <li class="nav-item me-2" role="presentation">
+      <button class="btn btn-sm btn-outline-primary" id="tab-list" type="button" onclick="setMode('list')">
+        Enter Room List
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="btn btn-sm btn-outline-primary" id="tab-csv" type="button" onclick="setMode('csv')">
+        Upload CSV
+      </button>
+    </li>
+  </ul>
+
+  <form method="post" enctype="multipart/form-data" id="bulkRoomForm">
+    {% csrf_token %}
+    <input type="hidden" name="mode" id="modeInput" value="count">
+    {{ form.non_field_errors }}
+
+    <!-- MODE 1: By Amount / Range -->
+    <div id="section-count" class="mode-section">
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Block</label>
+          <input type="text" name="block" id="countBlock" class="form-control" value="{{ form.block.value|default:'A' }}" placeholder="e.g. A, B" required>
+          <div class="form-text">Hostel block name or letter</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Starting Room No.</label>
+          <input type="text" name="start_number" id="countStart" class="form-control" value="{{ form.start_number.value|default:'101' }}" placeholder="e.g. 101, 01" required>
+          <div class="form-text">e.g. 101, 201, 1, 01</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Amount of Rooms to Add</label>
+          <input type="number" name="count" id="countAmount" class="form-control" value="{{ form.count.value|default:'10' }}" min="1" max="500">
+          <div class="form-text">How many rooms to create</div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Or Ending Room No. (optional)</label>
+          <input type="text" name="end_number" id="countEnd" class="form-control" value="{{ form.end_number.value|default:'' }}" placeholder="e.g. 120">
+          <div class="form-text">Overrides amount if filled</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Capacity per Room</label>
+          <input type="number" name="capacity" id="countCap" class="form-control" value="{{ form.capacity.value|default:'2' }}" min="1">
+          <div class="form-text">Beds per room (default: 2)</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Prefix (optional)</label>
+          <input type="text" name="prefix" id="countPrefix" class="form-control" value="{{ form.prefix.value|default:'' }}" placeholder="e.g. F-">
+          <div class="form-text">Prepended to room number</div>
+        </div>
+      </div>
+
+      <div class="alert alert-light border py-2 mb-3" id="countPreview">
+        <span class="text-secondary">Preview: </span><strong id="previewText">A-101 to A-110 (10 rooms)</strong>
+      </div>
+      <button type="submit" class="btn btn-navy">Generate Rooms</button>
+    </div>
+
+    <!-- MODE 2: Multi-Floor -->
+    <div id="section-floor" class="mode-section" style="display:none;">
+      <div class="row g-3 mb-3">
+        <div class="col-md-3">
+          <label class="form-label fw-semibold">Block</label>
+          <input type="text" name="block" class="form-control" value="{{ form.block.value|default:'A' }}" placeholder="e.g. A">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-semibold">From Floor</label>
+          <input type="number" name="start_floor" class="form-control" value="{{ form.start_floor.value|default:'1' }}" min="0">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-semibold">To Floor</label>
+          <input type="number" name="end_floor" class="form-control" value="{{ form.end_floor.value|default:'3' }}" min="0">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-semibold">Rooms per Floor</label>
+          <input type="number" name="rooms_per_floor" class="form-control" value="{{ form.rooms_per_floor.value|default:'10' }}" min="1">
+        </div>
+      </div>
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Capacity per Room</label>
+          <input type="number" name="capacity" class="form-control" value="{{ form.capacity.value|default:'2' }}" min="1">
+        </div>
+      </div>
+      <p class="small text-secondary mb-3">Example: Floors 1 to 3 with 10 rooms per floor creates 101–110, 201–210, 301–310 (30 rooms total).</p>
+      <button type="submit" class="btn btn-navy">Generate Floor Rooms</button>
+    </div>
+
+    <!-- MODE 3: List -->
+    <div id="section-list" class="mode-section" style="display:none;">
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Default Block</label>
+          <input type="text" name="block" class="form-control" value="{{ form.block.value|default:'A' }}" placeholder="e.g. A">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Capacity per Room</label>
+          <input type="number" name="capacity" class="form-control" value="{{ form.capacity.value|default:'2' }}" min="1">
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Room Numbers</label>
+        <textarea name="room_list" class="form-control" rows="4" placeholder="Enter room numbers separated by commas or new lines, e.g.&#10;101, 102, 103, 104, 105&#10;or: A-101, A-102, B-201">{{ form.room_list.value|default:'' }}</textarea>
+      </div>
+      <button type="submit" class="btn btn-navy">Add Rooms from List</button>
+    </div>
+
+    <!-- MODE 4: CSV -->
+    <div id="section-csv" class="mode-section" style="display:none;">
+      <p class="small text-secondary">Upload a CSV file with columns: <code>block, number, capacity</code> (or <code>room, capacity</code>). <a href="{% url 'rooms_bulk_template' %}">Download template</a>.</p>
+      <div class="mb-3">
+        <input type="file" name="file" class="form-control" accept=".csv">
+      </div>
+      <button type="submit" class="btn btn-navy">Upload CSV</button>
+    </div>
+  </form>
+</div>
+
+<!-- Results display -->
+{% if result %}
+  {% if result.created %}
+    <div class="alert alert-success">
+      <h6 class="alert-heading mb-2"><b>{{ result.created|length }}</b> room(s) created successfully!</h6>
+      <div class="small">
+        <strong>Created rooms:</strong>
+        {% for r in result.created %}
+          <span class="badge text-bg-light border me-1 mb-1">{{ r }}</span>
+        {% endfor %}
+      </div>
+      {% if result.skipped %}
+        <div class="small mt-2 text-muted">
+          {{ result.skipped|length }} existing room(s) skipped: {{ result.skipped|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+  {% elif result.skipped and not result.created %}
+    <div class="alert alert-info">
+      All {{ result.skipped|length }} specified room(s) already exist: {{ result.skipped|join:", " }}
+    </div>
+  {% endif %}
+
+  {% if result.errors %}
+    <div class="alert alert-warning">
+      <b>{{ result.errors|length }} error(s) occurred:</b>
+      <ul class="mb-0 mt-2">
+        {% for e in result.errors %}
+          <li>{{ e }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+{% endif %}
+
+<script>
+function setMode(mode) {
+  document.getElementById('modeInput').value = mode;
+  var modes = ['count', 'floor', 'list', 'csv'];
+  modes.forEach(function(m) {
+    var sec = document.getElementById('section-' + m);
+    var btn = document.getElementById('tab-' + m);
+    if (m === mode) {
+      sec.style.display = 'block';
+      btn.className = 'btn btn-sm btn-navy active';
+    } else {
+      sec.style.display = 'none';
+      btn.className = 'btn btn-sm btn-outline-primary';
+    }
+  });
+}
+
+function updatePreview() {
+  var block = document.getElementById('countBlock').value.trim() || 'A';
+  var startStr = document.getElementById('countStart').value.trim() || '101';
+  var amount = parseInt(document.getElementById('countAmount').value) || 10;
+  var endStr = document.getElementById('countEnd').value.trim();
+  var prefix = document.getElementById('countPrefix').value.trim();
+
+  var numMatch = startStr.match(/\d+/);
+  if (!numMatch) {
+    document.getElementById('previewText').innerText = 'Please enter a valid starting number.';
+    return;
+  }
+  var startNum = parseInt(numMatch[0]);
+  var pad = startMatchPadding(numMatch[0]);
+  var endNum = startNum + amount - 1;
+
+  if (endStr) {
+    var endMatch = endStr.match(/\d+/);
+    if (endMatch) {
+      endNum = parseInt(endMatch[0]);
+      amount = endNum - startNum + 1;
+    }
+  }
+
+  if (amount <= 0) {
+    document.getElementById('previewText').innerText = 'End number must be >= start number.';
+    return;
+  }
+
+  var first = formatNum(startNum, pad, prefix);
+  var last = formatNum(endNum, pad, prefix);
+  document.getElementById('previewText').innerText = block + '-' + first + ' to ' + block + '-' + last + ' (' + amount + ' rooms)';
+}
+
+function startMatchPadding(s) {
+  return (s.length > 1 && s.charAt(0) === '0') ? s.length : 0;
+}
+
+function formatNum(num, pad, prefix) {
+  var s = num.toString();
+  while (s.length < pad) s = '0' + s;
+  return prefix + s;
+}
+
+document.getElementById('countBlock').addEventListener('input', updatePreview);
+document.getElementById('countStart').addEventListener('input', updatePreview);
+document.getElementById('countAmount').addEventListener('input', updatePreview);
+document.getElementById('countEnd').addEventListener('input', updatePreview);
+document.getElementById('countPrefix').addEventListener('input', updatePreview);
+updatePreview();
+</script>
+{% endblock %}

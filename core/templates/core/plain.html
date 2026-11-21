@@ -1,0 +1,8 @@
+{% extends "core/base.html" %}{% block content %}
+<h4 style="color:var(--navy)" class="mb-3">{{ title }}</h4>{% if note %}<p class="text-secondary">{{ note }}</p>{% endif %}
+{% if form %}<div class="card p-3 mb-3" style="max-width:640px"><h6>{{ form_title }}</h6><form method="post">{% csrf_token %}{{ form.non_field_errors }}
+{% for f in form %}<div class="mb-2"><label class="form-label">{{ f.label }}</label>{{ f }}<div class="text-danger small">{{ f.errors|join:" " }}</div></div>{% endfor %}
+<button class="btn btn-navy">{{ button }}</button></form></div>{% endif %}
+<div class="card"><div class="table-responsive"><table class="table mb-0"><thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead><tbody>
+{% for r in rows %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% empty %}<tr><td colspan="{{ headers|length }}" class="text-center text-secondary py-4">Nothing here yet.</td></tr>{% endfor %}
+</tbody></table></div></div>{% endblock %}

@@ -1,0 +1,5 @@
+{% extends "core/base.html" %}{% block content %}
+<h4 style="color:var(--navy)" class="mb-3">Dashboard</h4>
+<div class="row g-3">{% for label, value, url in stats %}<div class="col-6 col-lg-4"><a href="{% url url %}" class="text-decoration-none"><div class="card p-3"><div class="stat">{{ value }}</div><div class="text-secondary">{{ label }}</div></div></a></div>{% endfor %}</div>
+<div class="mt-4"><a class="btn btn-navy me-2" href="{% url 'attendance' %}">Mark today's attendance</a><a class="btn btn-outline-secondary me-2" href="{% url 'students_new' %}">Add student</a><a class="btn btn-outline-secondary" href="{% url 'students_import' %}">Import students</a></div>
+{% endblock %}

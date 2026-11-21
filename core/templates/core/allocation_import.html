@@ -1,0 +1,57 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 style="color:var(--navy)" class="mb-0">Import Room Allocations</h4>
+  <a class="btn btn-outline-secondary" href="{% url 'allocations' %}">Back to allocations</a>
+</div>
+
+<div class="card p-4 mb-3" style="max-width:740px">
+  <p>Upload a CSV file containing students and their allocated rooms. You can use a minimal CSV (<code>roll_no, room</code>) or the <strong>combined CSV</strong> with all student & parent info. <a href="{% url 'allocations_import_template' %}">Download combined template</a>.</p>
+
+  <p class="small text-muted mb-2">Supported columns:</p>
+  <ul class="small text-secondary mb-3">
+    <li><code>roll_no</code> (required): Student roll number (e.g. <code>CS2101</code>)</li>
+    <li><code>room</code> (required): Room code (e.g. <code>A-101</code>, <code>B-102</code>)</li>
+    <li><code>start_date</code> (optional): Date of allocation (defaults to today)</li>
+    <li><code>name</code> (optional): Student name (new students are registered automatically)</li>
+    <li><code>course, phone, parent_name, parent_phone</code> (optional): All student & parent details are saved/updated</li>
+  </ul>
+  <p class="small text-secondary mb-3">
+    <strong>Note:</strong> If a student already has an active room, their previous room is vacated and the new room allocated. Room capacities are validated automatically.
+  </p>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <div class="mb-3">
+      {{ form.file }}
+      <div class="text-danger small">{{ form.file.errors|join:" " }}</div>
+    </div>
+    <button class="btn btn-navy">Upload and Allocate</button>
+  </form>
+</div>
+
+{% if result %}
+  {% if result.allocated or result.already_allocated or result.created or result.updated %}
+    <div class="alert alert-success">
+      <h6 class="alert-heading mb-2">Import Successful</h6>
+      <ul class="mb-0">
+        {% if result.allocated %}<li><b>{{ result.allocated }}</b> student(s) successfully allocated to rooms.</li>{% endif %}
+        {% if result.created %}<li><b>{{ result.created }}</b> new student(s) registered in the system.</li>{% endif %}
+        {% if result.updated %}<li><b>{{ result.updated }}</b> existing student profile(s) updated.</li>{% endif %}
+        {% if result.already_allocated %}<li><b>{{ result.already_allocated }}</b> student(s) were already active in their assigned room.</li>{% endif %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if result.errors %}
+    <div class="alert alert-warning">
+      <b>{{ result.errors|length }} row(s) could not be processed:</b>
+      <ul class="mb-0 mt-2">
+        {% for e in result.errors %}
+          <li>{{ e }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+{% endif %}
+{% endblock %}
