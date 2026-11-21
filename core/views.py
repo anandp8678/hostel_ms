@@ -1,4 +1,5 @@
 import csv
+import re
 from datetime import date, timedelta
 from functools import wraps
 
@@ -513,18 +514,311 @@ def attendance(request):
         day = date.fromisoformat(request.GET.get("date") or request.POST.get("date") or "")
     except ValueError:
         day = date.today()
+
     students = list(m.Student.objects.filter(is_active=True).select_related("user"))
     existing = {a.student_id: a.status for a in m.Attendance.objects.filter(date=day)}
     on_leave = set(m.LeaveRequest.objects.filter(status="Approved", from_date__lte=day, to_date__gte=day).values_list("student_id", flat=True))
+
     if request.method == "POST":
         for s in students:
             st = request.POST.get(f"s{s.pk}")
             if st in ("P", "A", "L"):
                 m.Attendance.objects.update_or_create(student=s, date=day, defaults={"status": st})
         messages.success(request, f"Attendance saved for {date_s(day)}.")
+        next_url = request.POST.get("next")
+        if next_url:
+            return redirect(next_url)
         return redirect(f"{reverse('attendance')}?date={day.isoformat()}")
-    rows = [(s, existing.get(s.pk) or ("L" if s.pk in on_leave else "P"), s.pk in on_leave) for s in students]
-    return show(request, "attendance", rows=rows, day=day, saved=bool(existing))
+
+    # Room mappings for active students
+    active_allocs = m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room")
+    student_rooms = {a.student_id: a.room for a in active_allocs}
+    all_rooms = list(m.Room.objects.all().order_by("block", "number"))
+
+    # Day stats across ALL staying students (unfiltered)
+    total_staying = len(students)
+    day_present = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else "P")) == "P")
+    day_absent = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else "P")) == "A")
+    day_leave = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else "P")) == "L")
+    day_pct = round(100 * day_present / total_staying) if total_staying > 0 else 0
+
+    # Filters
+    filter_q = request.GET.get("q", "").strip()
+    filter_room = request.GET.get("room", "").strip()
+    filter_status = request.GET.get("status", "").strip()
+
+    rows = []
+    for s in students:
+        st = existing.get(s.pk) or ("L" if s.pk in on_leave else "P")
+        s_room = student_rooms.get(s.pk)
+        is_lv = s.pk in on_leave
+
+        if filter_q:
+            q_low = filter_q.lower()
+            if q_low not in s.roll_no.lower() and q_low not in s.user.display_name.lower():
+                continue
+
+        if filter_room:
+            if filter_room.isdigit():
+                if not s_room or s_room.pk != int(filter_room):
+                    continue
+            else:
+                if not s_room:
+                    continue
+                if (s_room.block.lower() != filter_room.lower() and
+                    s_room.number.lower() != filter_room.lower() and
+                    str(s_room).lower() != filter_room.lower()):
+                    continue
+
+        if filter_status == "A" and st != "A":
+            continue
+        elif filter_status == "L" and st != "L":
+            continue
+        elif filter_status == "P" and st != "P":
+            continue
+        elif filter_status == "absent_or_leave" and st not in ("A", "L"):
+            continue
+
+        rows.append((s, st, is_lv, s_room))
+
+    prev_day = day - timedelta(days=1)
+    next_day = day + timedelta(days=1)
+    is_today = (day == date.today())
+
+    return show(
+        request,
+        "attendance",
+        rows=rows,
+        day=day,
+        prev_day=prev_day,
+        next_day=next_day,
+        is_today=is_today,
+        saved=bool(existing),
+        total_staying=total_staying,
+        day_present=day_present,
+        day_absent=day_absent,
+        day_leave=day_leave,
+        day_pct=day_pct,
+        all_rooms=all_rooms,
+        filter_q=filter_q,
+        filter_room=filter_room,
+        filter_status=filter_status,
+        filtered_count=len(rows),
+    )
+
+
+@staff
+def attendance_history(request):
+    # 1. Determine Selected Month
+    month_str = request.GET.get("month", "").strip()
+    if not month_str or not re.match(r"^\d{4}-\d{2}$", month_str):
+        month_str = date.today().strftime("%Y-%m")
+
+    try:
+        year, month_num = map(int, month_str.split("-"))
+        selected_month_date = date(year, month_num, 1)
+    except ValueError:
+        selected_month_date = date.today().replace(day=1)
+        year, month_num = selected_month_date.year, selected_month_date.month
+        month_str = selected_month_date.strftime("%Y-%m")
+
+    if month_num == 1:
+        prev_month_str = f"{year - 1:04d}-12"
+    else:
+        prev_month_str = f"{year:04d}-{month_num - 1:02d}"
+
+    if month_num == 12:
+        next_month_str = f"{year + 1:04d}-01"
+    else:
+        next_month_str = f"{year:04d}-{month_num + 1:02d}"
+
+    month_label = selected_month_date.strftime("%B %Y")
+
+    # 2. Discover available months
+    existing_months = set(
+        d.strftime("%Y-%m") for d in m.Attendance.objects.dates("date", "month", order="DESC")
+    )
+    today = date.today()
+    for i in range(6):
+        m_calc = today.month - i
+        y_calc = today.year
+        while m_calc <= 0:
+            m_calc += 12
+            y_calc -= 1
+        existing_months.add(f"{y_calc:04d}-{m_calc:02d}")
+    existing_months.add(month_str)
+
+    available_months = []
+    for ym in sorted(existing_months, reverse=True):
+        y_int, m_int = map(int, ym.split("-"))
+        available_months.append({"key": ym, "label": date(y_int, m_int, 1).strftime("%B %Y")})
+
+    # 3. Room mapping for students
+    active_allocs = m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room")
+    student_room_map = {a.student_id: a.room for a in active_allocs}
+    all_rooms = list(m.Room.objects.all().order_by("block", "number"))
+
+    # 4. Base QuerySet for this month
+    month_qs = m.Attendance.objects.filter(
+        date__year=year,
+        date__month=month_num
+    ).select_related("student__user")
+
+    total_records = month_qs.count()
+    month_present = month_qs.filter(status="P").count()
+    month_absent = month_qs.filter(status="A").count()
+    month_leave = month_qs.filter(status="L").count()
+    distinct_dates = list(month_qs.values_list("date", flat=True).distinct().order_by("-date"))
+    days_recorded = len(distinct_dates)
+    tot_eval = month_present + month_absent
+    avg_present_pct = round(100 * month_present / tot_eval) if tot_eval > 0 else (100 if month_present > 0 else 0)
+
+    # 5. Filters
+    filter_q = request.GET.get("q", "").strip()
+    filter_room = request.GET.get("room", "").strip()
+    filter_status = request.GET.get("status", "").strip()
+    filter_date = request.GET.get("date", "").strip()
+    view_mode = request.GET.get("view_mode", "logs").strip()
+    if view_mode not in ("logs", "summary"):
+        view_mode = "logs"
+
+    filtered_qs = month_qs
+
+    if filter_date:
+        try:
+            d_val = date.fromisoformat(filter_date)
+            filtered_qs = filtered_qs.filter(date=d_val)
+        except ValueError:
+            pass
+
+    if filter_q:
+        filtered_qs = filtered_qs.filter(
+            Q(student__user__first_name__icontains=filter_q) |
+            Q(student__user__last_name__icontains=filter_q) |
+            Q(student__roll_no__icontains=filter_q) |
+            Q(student__user__username__icontains=filter_q)
+        )
+
+    if filter_status == "A":
+        filtered_qs = filtered_qs.filter(status="A")
+    elif filter_status == "L":
+        filtered_qs = filtered_qs.filter(status="L")
+    elif filter_status == "P":
+        filtered_qs = filtered_qs.filter(status="P")
+    elif filter_status == "absent_or_leave":
+        filtered_qs = filtered_qs.filter(status__in=["A", "L"])
+
+    if filter_room:
+        if filter_room.isdigit():
+            r_st_ids = m.RoomAllocation.objects.filter(room_id=int(filter_room)).values_list("student_id", flat=True)
+            filtered_qs = filtered_qs.filter(student_id__in=r_st_ids)
+        else:
+            r_st_ids = m.RoomAllocation.objects.filter(
+                Q(room__number__iexact=filter_room) | Q(room__block__iexact=filter_room)
+            ).values_list("student_id", flat=True)
+            filtered_qs = filtered_qs.filter(student_id__in=r_st_ids)
+
+    # 6. CSV Export
+    if request.GET.get("export") == "csv":
+        resp = HttpResponse(content_type="text/csv")
+        resp["Content-Disposition"] = f'attachment; filename="attendance_{month_str}.csv"'
+        w = csv.writer(resp)
+        w.writerow(["Date", "Roll no", "Name", "Room", "Status"])
+        for a in filtered_qs.order_by("-date", "student__roll_no"):
+            r = student_room_map.get(a.student_id)
+            w.writerow([a.date.isoformat(), a.student.roll_no, a.student.user.display_name, str(r) if r else "—", a.get_status_display()])
+        return resp
+
+    # 7. Formatted Logs
+    logs = []
+    for a in filtered_qs.order_by("-date", "student__roll_no")[:500]:
+        r = student_room_map.get(a.student_id)
+        logs.append({
+            "record": a,
+            "student": a.student,
+            "date": a.date,
+            "status": a.status,
+            "status_display": a.get_status_display(),
+            "room": r,
+        })
+
+    # 8. Student Monthly Summary
+    student_stats = {}
+    for a in month_qs:
+        s_id = a.student_id
+        if s_id not in student_stats:
+            student_stats[s_id] = {"present": 0, "absent": 0, "leave": 0, "total": 0, "student": a.student}
+        st_data = student_stats[s_id]
+        st_data["total"] += 1
+        if a.status == "P":
+            st_data["present"] += 1
+        elif a.status == "A":
+            st_data["absent"] += 1
+        elif a.status == "L":
+            st_data["leave"] += 1
+
+    summary_rows = []
+    for s_id, s_data in student_stats.items():
+        s = s_data["student"]
+        r = student_room_map.get(s_id)
+        p = s_data["present"]
+        ab = s_data["absent"]
+        lv = s_data["leave"]
+        tot = p + ab
+        pct = round(100 * p / tot) if tot > 0 else (100 if p > 0 else 0)
+        s_data["percent"] = pct
+        s_data["room"] = r
+
+        if filter_q:
+            q_low = filter_q.lower()
+            if q_low not in s.roll_no.lower() and q_low not in s.user.display_name.lower():
+                continue
+
+        if filter_room:
+            if filter_room.isdigit() and (not r or r.pk != int(filter_room)):
+                continue
+            elif not filter_room.isdigit() and (not r or (r.number.lower() != filter_room.lower() and r.block.lower() != filter_room.lower() and str(r).lower() != filter_room.lower())):
+                continue
+
+        if filter_status == "A" and ab == 0:
+            continue
+        elif filter_status == "L" and lv == 0:
+            continue
+        elif filter_status == "P" and p == 0:
+            continue
+        elif filter_status == "absent_or_leave" and (ab == 0 and lv == 0):
+            continue
+
+        summary_rows.append(s_data)
+
+    summary_rows.sort(key=lambda x: (x["room"] is None, str(x["room"]) if x["room"] else "", x["student"].roll_no))
+
+    return show(
+        request,
+        "attendance_history",
+        month=month_str,
+        month_label=month_label,
+        prev_month=prev_month_str,
+        next_month=next_month_str,
+        available_months=available_months,
+        distinct_dates=distinct_dates,
+        all_rooms=all_rooms,
+        total_records=total_records,
+        month_present=month_present,
+        month_absent=month_absent,
+        month_leave=month_leave,
+        days_recorded=days_recorded,
+        avg_present_pct=avg_present_pct,
+        filter_q=filter_q,
+        filter_room=filter_room,
+        filter_status=filter_status,
+        filter_date=filter_date,
+        view_mode=view_mode,
+        logs=logs,
+        summary_rows=summary_rows,
+        total_filtered_logs=filtered_qs.count(),
+        total_filtered_summary=len(summary_rows),
+    )
 
 
 @staff

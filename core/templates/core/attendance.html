@@ -1,10 +1,221 @@
 {% extends "core/base.html" %}{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3"><h4 style="color:var(--navy)" class="mb-0">Attendance</h4>
-<form method="get" class="d-flex gap-2"><input type="date" name="date" value="{{ day|date:'Y-m-d' }}" class="form-control"><button class="btn btn-outline-secondary">Go</button></form></div>
-<p class="text-secondary">Everyone starts as present (or on leave if a leave was approved). Change only the exceptions, then save.{% if saved %} Already saved for this date; saving again updates it.{% endif %}</p>
-<form method="post">{% csrf_token %}<input type="hidden" name="date" value="{{ day|date:'Y-m-d' }}">
-<div class="card"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Roll no.</th><th>Name</th><th>Present</th><th>Absent</th><th>On leave</th></tr></thead><tbody>
-{% for s, st, lv in rows %}<tr><td>{{ s.roll_no }}</td><td>{{ s.user.display_name }}</td>
-{% for code in "PAL" %}<td><input class="form-check-input" type="radio" name="s{{ s.pk }}" value="{{ code }}" {% if st == code %}checked{% endif %}></td>{% endfor %}</tr>
-{% empty %}<tr><td colspan="5" class="text-center text-secondary py-4">No students yet.</td></tr>{% endfor %}</tbody></table></div></div>
-<button class="btn btn-navy mt-3">Save attendance</button></form>{% endblock %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+  <div>
+    <h4 style="color:var(--navy)" class="mb-1">Attendance</h4>
+    <div class="text-secondary small">Daily attendance marking and management</div>
+  </div>
+  <!-- Top Navigation Tabs -->
+  <div class="btn-group" role="group">
+    <a href="{% url 'attendance' %}" class="btn btn-sm btn-navy active">
+      📅 Daily Attendance
+    </a>
+    <a href="{% url 'attendance_history' %}" class="btn btn-sm btn-outline-primary">
+      📊 Past Records by Month
+    </a>
+  </div>
+</div>
+
+<!-- Date Navigation Card -->
+<div class="card p-3 mb-3 bg-white">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div class="d-flex align-items-center gap-2">
+      <a href="?date={{ prev_day|date:'Y-m-d' }}" class="btn btn-sm btn-outline-secondary" title="Previous Day">&larr; Yesterday</a>
+      <a href="?date={% now 'Y-m-d' %}" class="btn btn-sm {% if is_today %}btn-primary{% else %}btn-outline-primary{% endif %}">Today</a>
+      <a href="?date={{ next_day|date:'Y-m-d' }}" class="btn btn-sm btn-outline-secondary" title="Next Day">Tomorrow &rarr;</a>
+      <span class="fw-semibold ms-2" style="color:var(--navy); font-size:1.05rem;">
+        {{ day|date:"l, d F Y" }}
+      </span>
+      {% if saved %}
+        <span class="badge text-bg-success ms-1">✓ Saved</span>
+      {% else %}
+        <span class="badge text-bg-warning ms-1">Unsaved for this date</span>
+      {% endif %}
+    </div>
+
+    <!-- Date selector form -->
+    <form method="get" class="d-flex align-items-center gap-2">
+      <input type="date" name="date" value="{{ day|date:'Y-m-d' }}" class="form-control form-control-sm" style="width:160px;" required>
+      {% if filter_q %}<input type="hidden" name="q" value="{{ filter_q }}">{% endif %}
+      {% if filter_room %}<input type="hidden" name="room" value="{{ filter_room }}">{% endif %}
+      {% if filter_status %}<input type="hidden" name="status" value="{{ filter_status }}">{% endif %}
+      <button class="btn btn-sm btn-navy">Go to Date</button>
+    </form>
+  </div>
+</div>
+
+<!-- Day Stats Counter Cards -->
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="card p-2 text-center bg-white">
+      <div class="small text-secondary fw-semibold">Staying Students</div>
+      <div class="fs-4 fw-bold text-dark">{{ total_staying }}</div>
+      <div class="small text-muted">Active residents</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-2 text-center bg-white border-success">
+      <div class="small text-success fw-semibold">Present</div>
+      <div class="fs-4 fw-bold text-success">{{ day_present }} <span class="fs-6 text-muted fw-normal">({{ day_pct }}%)</span></div>
+      <div class="small text-muted">In hostel</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-2 text-center bg-white border-danger">
+      <div class="small text-danger fw-semibold">Absent</div>
+      <div class="fs-4 fw-bold text-danger">{{ day_absent }}</div>
+      <div class="small text-muted">Unexcused</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-2 text-center bg-white border-warning">
+      <div class="small text-warning fw-semibold">On Leave</div>
+      <div class="fs-4 fw-bold text-warning">{{ day_leave }}</div>
+      <div class="small text-muted">Approved leave</div>
+    </div>
+  </div>
+</div>
+
+<!-- Filters Card -->
+<div class="card p-3 mb-3 bg-white">
+  <form method="get" class="row g-2 align-items-end">
+    <input type="hidden" name="date" value="{{ day|date:'Y-m-d' }}">
+    <div class="col-md-4">
+      <label class="form-label small fw-semibold text-secondary mb-1">Search Name or Roll No.</label>
+      <input type="text" name="q" class="form-control form-control-sm" placeholder="e.g. Rahul, CS101..." value="{{ filter_q }}">
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label small fw-semibold text-secondary mb-1">Room</label>
+      <select name="room" class="form-select form-select-sm">
+        <option value="">All Rooms</option>
+        {% for r in all_rooms %}
+          <option value="{{ r.pk }}" {% if filter_room == r.pk|stringformat:"s" %}selected{% endif %}>
+            {{ r }} (Block {{ r.block }})
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label small fw-semibold text-secondary mb-1">Status Filter</label>
+      <select name="status" class="form-select form-select-sm">
+        <option value="">All Students</option>
+        <option value="A" {% if filter_status == "A" %}selected{% endif %}>🔴 Absent Only (Those who are absent)</option>
+        <option value="L" {% if filter_status == "L" %}selected{% endif %}>🟡 On Leave Only (Those who are on leave)</option>
+        <option value="P" {% if filter_status == "P" %}selected{% endif %}>🟢 Present Only</option>
+        <option value="absent_or_leave" {% if filter_status == "absent_or_leave" %}selected{% endif %}>⚠️ Absent or Leave (All Exceptions)</option>
+      </select>
+    </div>
+
+    <div class="col-md-2 d-flex gap-2">
+      <button type="submit" class="btn btn-sm btn-navy flex-grow-1">Filter</button>
+      <a href="?date={{ day|date:'Y-m-d' }}" class="btn btn-sm btn-outline-secondary" title="Reset Filters">Reset</a>
+    </div>
+  </form>
+</div>
+
+<!-- Attendance Marking Form -->
+<form method="post" id="attendanceForm">
+  {% csrf_token %}
+  <input type="hidden" name="date" value="{{ day|date:'Y-m-d' }}">
+  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+
+  <div class="card mb-3 bg-white">
+    <div class="card-header bg-light d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
+      <span class="small text-secondary">
+        Showing <b>{{ rows|length }}</b> of {{ total_staying }} student{{ total_staying|pluralize }}
+        {% if filter_q or filter_room or filter_status %} (Filtered){% endif %}
+      </span>
+      <!-- Quick Batch Selection Controls -->
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-outline-success" onclick="markAllVisible('P')">
+          ✓ Mark Visible as Present
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="markAllVisible('A')">
+          ✕ Mark Visible as Absent
+        </button>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th style="width:130px;">Room</th>
+            <th style="width:140px;">Roll No.</th>
+            <th>Student Name</th>
+            <th class="text-center" style="width:100px;">Present</th>
+            <th class="text-center" style="width:100px;">Absent</th>
+            <th class="text-center" style="width:120px;">On Leave</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s, st, lv, s_room in rows %}
+            <tr class="student-row {% if st == 'A' %}table-danger-subtle{% elif st == 'L' %}table-warning-subtle{% endif %}">
+              <td>
+                {% if s_room %}
+                  <span class="badge text-bg-light border text-dark fw-bold">{{ s_room }}</span>
+                {% else %}
+                  <span class="text-muted small">—</span>
+                {% endif %}
+              </td>
+              <td class="fw-semibold text-secondary">{{ s.roll_no }}</td>
+              <td>
+                <span class="fw-semibold text-dark">{{ s.user.display_name }}</span>
+                {% if lv %}
+                  <span class="badge text-bg-warning ms-1" title="Approved leave for this day">Leave Approved</span>
+                {% endif %}
+              </td>
+              <!-- Present Radio -->
+              <td class="text-center">
+                <input class="form-check-input att-radio att-p" type="radio" name="s{{ s.pk }}" value="P" {% if st == "P" %}checked{% endif %} id="p_{{ s.pk }}">
+              </td>
+              <!-- Absent Radio -->
+              <td class="text-center">
+                <input class="form-check-input att-radio att-a" type="radio" name="s{{ s.pk }}" value="A" {% if st == "A" %}checked{% endif %} id="a_{{ s.pk }}">
+              </td>
+              <!-- On Leave Radio -->
+              <td class="text-center">
+                <input class="form-check-input att-radio att-l" type="radio" name="s{{ s.pk }}" value="L" {% if st == "L" %}checked{% endif %} id="l_{{ s.pk }}">
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6" class="text-center text-secondary py-4">
+                No students match your filter criteria for this date.
+                {% if filter_q or filter_room or filter_status %}
+                  <div class="mt-2"><a href="?date={{ day|date:'Y-m-d' }}" class="btn btn-sm btn-outline-secondary">Clear Filters</a></div>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="d-flex justify-content-between align-items-center">
+    <button type="submit" class="btn btn-navy px-4 py-2 fw-semibold">
+      💾 Save Attendance
+    </button>
+    <a href="{% url 'attendance_history' %}" class="btn btn-outline-secondary">
+      View Monthly Attendance Records &rarr;
+    </a>
+  </div>
+</form>
+
+<script>
+function markAllVisible(code) {
+  var inputs = document.querySelectorAll('.att-radio.att-' + code.toLowerCase());
+  inputs.forEach(function(r) {
+    r.checked = true;
+    var row = r.closest('tr');
+    if (row) {
+      row.classList.remove('table-danger-subtle', 'table-warning-subtle');
+      if (code === 'A') row.classList.add('table-danger-subtle');
+      if (code === 'L') row.classList.add('table-warning-subtle');
+    }
+  });
+}
+</script>
+{% endblock %}

@@ -19,6 +19,7 @@ urlpatterns = [
     path("rooms/", v.room_list, name="rooms"),
     path("rooms/<int:pk>/toggle-blacklist/", v.room_toggle_blacklist, name="room_toggle_blacklist"),
     path("attendance/", v.attendance, name="attendance"),
+    path("attendance/history/", v.attendance_history, name="attendance_history"),
     path("leaves/", v.leaves, name="leaves"),
     path("leaves/<int:pk>/<str:decision>/", v.leave_decide, name="leave_decide"),
     path("allocations/<int:pk>/vacate/", v.allocation_vacate, name="allocation_vacate"),

@@ -6,7 +6,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Room, RoomAllocation, Student, User
+from core.models import Attendance, Room, RoomAllocation, Student, User
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
@@ -571,5 +571,130 @@ class RoomPrefixAndDisplayTests(TestCase):
         self.assertTrue(Room.objects.filter(block="J", number="110").exists())
         self.assertEqual(Room.objects.filter(block="J").count(), 10)
         self.assertEqual(Room.objects.filter(block="A").count(), 0)
+
+
+class AttendanceMonthlyHistoryAndFilterTests(TestCase):
+    def setUp(self):
+        self.warden = User.objects.create_user(
+            username="warden_att",
+            password="WardenPassword123",
+            role="warden",
+            is_staff=True,
+        )
+        self.room_a = Room.objects.create(block="A", number="101", capacity=2)
+        self.room_b = Room.objects.create(block="B", number="201", capacity=2)
+
+        self.student_a = onboard_student(name="Anil Kumar", roll_no="AK101", room=self.room_a)
+        self.student_b = onboard_student(name="Bhavna Sharma", roll_no="BS201", room=self.room_b)
+
+        # November 2026 records
+        Attendance.objects.create(student=self.student_a, date=date(2026, 11, 1), status="P")
+        Attendance.objects.create(student=self.student_a, date=date(2026, 11, 2), status="A")
+        Attendance.objects.create(student=self.student_b, date=date(2026, 11, 1), status="L")
+        Attendance.objects.create(student=self.student_b, date=date(2026, 11, 2), status="P")
+
+        # October 2026 records
+        Attendance.objects.create(student=self.student_a, date=date(2026, 10, 15), status="P")
+        Attendance.objects.create(student=self.student_b, date=date(2026, 10, 15), status="A")
+
+    def test_attendance_history_categorized_by_month(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # November view
+        resp = c.get(reverse("attendance_history") + "?month=2026-11")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "November 2026")
+        self.assertContains(resp, "Anil Kumar")
+        self.assertContains(resp, "Bhavna Sharma")
+        self.assertEqual(resp.context["total_records"], 4)
+
+        # October view
+        resp2 = c.get(reverse("attendance_history") + "?month=2026-10")
+        self.assertEqual(resp2.status_code, 200)
+        self.assertContains(resp2, "October 2026")
+        self.assertEqual(resp2.context["total_records"], 2)
+
+    def test_attendance_history_filter_by_room(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Filter by Room A
+        resp = c.get(reverse("attendance_history") + f"?month=2026-11&room={self.room_a.pk}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "AK101")
+        self.assertNotContains(resp, "BS201")
+
+        # Filter by Room B
+        resp2 = c.get(reverse("attendance_history") + f"?month=2026-11&room={self.room_b.pk}")
+        self.assertEqual(resp2.status_code, 200)
+        self.assertContains(resp2, "BS201")
+        self.assertNotContains(resp2, "AK101")
+
+    def test_attendance_history_filter_by_name(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        resp = c.get(reverse("attendance_history") + "?month=2026-11&q=Anil")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Anil Kumar")
+        self.assertNotContains(resp, "Bhavna Sharma")
+
+    def test_attendance_history_filter_absent_and_leave(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Those who are absent
+        resp_absent = c.get(reverse("attendance_history") + "?month=2026-11&status=A")
+        self.assertEqual(resp_absent.status_code, 200)
+        self.assertEqual(resp_absent.context["total_filtered_logs"], 1)
+        self.assertContains(resp_absent, "AK101")
+        self.assertContains(resp_absent, "Absent")
+
+        # Those who are on leave
+        resp_leave = c.get(reverse("attendance_history") + "?month=2026-11&status=L")
+        self.assertEqual(resp_leave.status_code, 200)
+        self.assertEqual(resp_leave.context["total_filtered_logs"], 1)
+        self.assertContains(resp_leave, "BS201")
+        self.assertContains(resp_leave, "On Leave")
+
+    def test_attendance_history_summary_view_mode(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        resp = c.get(reverse("attendance_history") + "?month=2026-11&view_mode=summary")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Student Monthly Summary")
+        self.assertContains(resp, "AK101")
+        self.assertContains(resp, "BS201")
+
+    def test_attendance_history_csv_export(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        resp = c.get(reverse("attendance_history") + "?month=2026-11&export=csv")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "text/csv")
+        content = resp.content.decode("utf-8")
+        self.assertIn("Date,Roll no,Name,Room,Status", content)
+        self.assertIn("AK101", content)
+        self.assertIn("BS201", content)
+
+    def test_daily_attendance_filters(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Filter daily attendance by Room A
+        resp = c.get(reverse("attendance") + f"?date=2026-11-01&room={self.room_a.pk}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "AK101")
+        self.assertNotContains(resp, "BS201")
+
+        # Filter daily attendance by Name
+        resp2 = c.get(reverse("attendance") + "?date=2026-11-01&q=Bhavna")
+        self.assertEqual(resp2.status_code, 200)
+        self.assertContains(resp2, "BS201")
+        self.assertNotContains(resp2, "AK101")
+
 
 
