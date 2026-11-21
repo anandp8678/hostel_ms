@@ -1,10 +1,25 @@
 {% extends "core/base.html" %}{% block content %}
+<style>
+  .select-col {
+    display: none;
+    width: 44px;
+    text-align: center;
+  }
+  .selection-active .select-col {
+    display: table-cell !important;
+  }
+</style>
+
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div class="d-flex align-items-center gap-2">
     <h4 style="color:var(--navy)" class="mb-0">Rooms</h4>
     <span class="badge text-bg-primary rounded-pill">{{ total_rooms }} room{{ total_rooms|pluralize }}</span>
   </div>
   <div>
+    <!-- Toggle Selection Mode Button -->
+    <button type="button" class="btn btn-outline-primary me-2" id="selectToggleBtn" onclick="toggleSelectMode()">
+      <span id="selectBtnIcon">☑</span> <span id="selectBtnText">Select</span>
+    </button>
     <a class="btn btn-outline-secondary me-2" href="{% url 'rooms_bulk_add' %}">Bulk Add Rooms</a>
     <a class="btn btn-navy" href="{% url 'rooms_new' %}">Add Room</a>
   </div>
@@ -69,14 +84,13 @@
 <!-- Bulk Actions Form -->
 <form method="post" id="bulkForm">
   {% csrf_token %}
-  <div class="card mb-3">
-    <!-- Bulk Action Header Bar -->
-    <div class="card-header bg-light d-flex flex-wrap align-items-center justify-content-between py-2 gap-2">
-      <div class="d-flex align-items-center">
-        <div class="form-check me-3 mb-0">
-          <input class="form-check-input" type="checkbox" id="selectAllHeader" onclick="toggleSelectAll(this)">
-          <label class="form-check-label fw-semibold small" for="selectAllHeader">Select All</label>
-        </div>
+  <div class="card mb-3" id="roomsCard">
+    <!-- Bulk Action Header Bar (hidden until user clicks 'Select') -->
+    <div class="card-header bg-light align-items-center justify-content-between py-2 gap-2" id="bulkActionToolbar" style="display:none;">
+      <div class="d-flex align-items-center gap-2">
+        <button type="button" class="btn btn-sm btn-outline-primary" id="selectAllBtn" onclick="toggleSelectAllRooms()">
+          Select All
+        </button>
         <span id="selectedCountBadge" class="badge text-bg-secondary">0 selected</span>
       </div>
 
@@ -91,7 +105,7 @@
 
         <!-- Cause input for blacklisting -->
         <div id="blacklistCauseGroup" style="display:none;" class="align-items-center gap-1">
-          <input type="text" name="blacklist_cause" id="blacklistCauseInput" class="form-control form-control-sm" placeholder="Cause (e.g. Maintenance, Repair)" value="Maintenance" list="causeSuggestions" style="width:180px;">
+          <input type="text" name="blacklist_cause" id="blacklistCauseInput" class="form-control form-control-sm" placeholder="Cause (e.g. Maintenance)" value="Maintenance" list="causeSuggestions" style="width:180px;">
           <datalist id="causeSuggestions">
             <option value="Maintenance">
             <option value="Renovation">
@@ -109,6 +123,7 @@
         </div>
 
         <button type="submit" class="btn btn-sm btn-navy" id="applyBulkBtn" onclick="return confirmBulkAction()" disabled>Apply Action</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleSelectMode()">Done</button>
       </div>
     </div>
 
@@ -117,7 +132,7 @@
       <table class="table table-hover align-middle mb-0">
         <thead>
           <tr>
-            <th style="width:40px;" class="text-center">#</th>
+            <th class="select-col">#</th>
             <th>Room</th>
             <th>Block</th>
             <th>Capacity</th>
@@ -130,7 +145,7 @@
         <tbody>
           {% for r in rooms %}
             <tr {% if r.is_blacklisted %}class="table-light text-muted"{% endif %}>
-              <td class="text-center">
+              <td class="select-col">
                 <input type="checkbox" name="selected_rooms" value="{{ r.pk }}" class="form-check-input room-checkbox" onchange="updateSelectedCount()">
               </td>
               <td class="fw-semibold">
@@ -200,11 +215,64 @@
 </form>
 
 <script>
-function toggleSelectAll(master) {
+var isSelectionMode = false;
+
+function toggleSelectMode() {
+  isSelectionMode = !isSelectionMode;
+  var tableCard = document.getElementById('roomsCard');
+  var toolbar = document.getElementById('bulkActionToolbar');
+  var btn = document.getElementById('selectToggleBtn');
+  var btnText = document.getElementById('selectBtnText');
+  var btnIcon = document.getElementById('selectBtnIcon');
+  var selectCols = document.querySelectorAll('.select-col');
+
+  if (isSelectionMode) {
+    if (tableCard) tableCard.classList.add('selection-active');
+    if (toolbar) toolbar.style.display = 'flex';
+    if (btn) {
+      btn.className = 'btn btn-secondary me-2';
+      btnText.innerText = 'Cancel';
+      btnIcon.innerText = '✕';
+    }
+    selectCols.forEach(function(col) {
+      col.style.display = 'table-cell';
+    });
+  } else {
+    if (tableCard) tableCard.classList.remove('selection-active');
+    if (toolbar) toolbar.style.display = 'none';
+    if (btn) {
+      btn.className = 'btn btn-outline-primary me-2';
+      btnText.innerText = 'Select';
+      btnIcon.innerText = '☑';
+    }
+    selectCols.forEach(function(col) {
+      col.style.display = 'none';
+    });
+    // Uncheck all when exiting selection mode
+    var boxes = document.querySelectorAll('.room-checkbox');
+    boxes.forEach(function(b) {
+      b.checked = false;
+    });
+    updateSelectedCount();
+  }
+}
+
+function toggleSelectAllRooms() {
   var boxes = document.querySelectorAll('.room-checkbox');
+  var btn = document.getElementById('selectAllBtn');
+  var allChecked = true;
   boxes.forEach(function(b) {
-    b.checked = master.checked;
+    if (!b.checked) allChecked = false;
   });
+
+  var newState = !allChecked;
+  boxes.forEach(function(b) {
+    b.checked = newState;
+  });
+
+  if (btn) {
+    btn.innerText = newState ? 'Deselect All' : 'Select All';
+  }
   updateSelectedCount();
 }
 
@@ -213,24 +281,20 @@ function updateSelectedCount() {
   var count = checked.length;
   var badge = document.getElementById('selectedCountBadge');
   var applyBtn = document.getElementById('applyBulkBtn');
-  var master = document.getElementById('selectAllHeader');
+  var selectAllBtn = document.getElementById('selectAllBtn');
   var allBoxes = document.querySelectorAll('.room-checkbox');
 
   if (badge) {
     badge.innerText = count + ' selected';
-    if (count > 0) {
-      badge.className = 'badge text-bg-primary';
-    } else {
-      badge.className = 'badge text-bg-secondary';
-    }
+    badge.className = count > 0 ? 'badge text-bg-primary' : 'badge text-bg-secondary';
   }
 
   if (applyBtn) {
     applyBtn.disabled = (count === 0);
   }
 
-  if (master && allBoxes.length > 0) {
-    master.checked = (count === allBoxes.length);
+  if (selectAllBtn && allBoxes.length > 0) {
+    selectAllBtn.innerText = (count === allBoxes.length && count > 0) ? 'Deselect All' : 'Select All';
   }
 }
 
