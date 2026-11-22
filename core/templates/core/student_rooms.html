@@ -26,7 +26,7 @@
       <div class="input-group">
         <span class="input-group-text bg-light text-muted">🔍</span>
         <input type="text" name="q" value="{{ q }}" class="form-control"
-               placeholder="Search by room number (e.g. A-101) or student name..."
+               placeholder="Search by room number or student name..."
                aria-label="Search rooms or residents">
         {% if q or selected_block %}
           <a href="{% url 'student_rooms' %}" class="btn btn-outline-secondary" title="Clear search">✕</a>

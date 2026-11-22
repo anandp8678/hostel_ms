@@ -761,21 +761,21 @@ class StudentRoommatesAndDirectoryTests(TestCase):
         # Search by student name
         resp_search_name = c.get(reverse("student_rooms") + "?q=Kiran")
         self.assertEqual(resp_search_name.status_code, 200)
-        self.assertContains(resp_search_name, "B-201")
+        self.assertContains(resp_search_name, "Room B-201")
         self.assertContains(resp_search_name, "Kiran Kumar")
-        self.assertNotContains(resp_search_name, "A-101")
+        self.assertNotContains(resp_search_name, "Room A-101")
 
         # Search by room number
         resp_search_room = c.get(reverse("student_rooms") + "?q=A-101")
         self.assertEqual(resp_search_room.status_code, 200)
-        self.assertContains(resp_search_room, "A-101")
-        self.assertNotContains(resp_search_room, "B-201")
+        self.assertContains(resp_search_room, "Room A-101")
+        self.assertNotContains(resp_search_room, "Room B-201")
 
         # Filter by block
         resp_block = c.get(reverse("student_rooms") + "?block=A")
         self.assertEqual(resp_block.status_code, 200)
-        self.assertContains(resp_block, "A-101")
-        self.assertNotContains(resp_block, "B-201")
+        self.assertContains(resp_block, "Room A-101")
+        self.assertNotContains(resp_block, "Room B-201")
 
     def test_unauthenticated_user_redirected(self):
         c = Client()
