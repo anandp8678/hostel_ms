@@ -33,6 +33,13 @@ def decode_csv_file(file_obj):
     except UnicodeDecodeError:
         return raw.decode("latin-1").splitlines()
 
+
+def floor_order_key(b):
+    code = str(b or "").strip().upper()
+    order = {"B": -1, "G": 0, "0": 0, "F": 1, "1": 1, "S": 2, "2": 2, "T": 3, "3": 3, "4": 4, "5": 5}
+    return order.get(code, 50)
+
+
 STAFF = ("admin", "warden")
 BADGE = {"Paid": "success", "Resolved": "success", "Approved": "success", "Present": "success", "Unpaid": "secondary",
          "Submitted": "secondary", "Pending": "warning", "Under Review": "info", "In Progress": "primary",
@@ -661,9 +668,11 @@ def room_list(request):
     elif status == "empty":
         rooms = [r for r in rooms if r.occupied == 0 and not r.is_blacklisted]
 
-    distinct_blocks = sorted(list(m.Room.objects.values_list("block", flat=True).distinct()))
+    distinct_blocks = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
     all_blocks = [{"code": b, "display": m.Room(block=b).floor_display} for b in distinct_blocks]
     all_causes = sorted(list(set(m.Room.objects.filter(is_blacklisted=True).exclude(blacklist_reason="").values_list("blacklist_reason", flat=True))))
+
+    rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
 
     return show(
         request,
@@ -1114,20 +1123,22 @@ def student_rooms(request):
 
     q = request.GET.get("q", "").strip()
     block = request.GET.get("block", "").strip()
+    sort_by = request.GET.get("sort", "floor_asc").strip()
+
+    distinct_codes = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
+    all_blocks = [{"code": b, "label": m.Room(block=b).floor_display, "name": m.Room(block=b).floor_name} for b in distinct_codes]
 
     rooms_qs = m.Room.objects.all().prefetch_related(
         Prefetch(
             "allocations",
             queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("student__user")
         )
-    ).order_by("block", "number")
+    )
 
     if block:
         rooms_qs = rooms_qs.filter(block__iexact=block)
 
     all_rooms = list(rooms_qs)
-    distinct_blocks = sorted(list(m.Room.objects.values_list("block", flat=True).distinct()))
-    all_blocks = [{"code": b, "label": m.Room(block=b).floor_display} for b in distinct_blocks]
 
     if q:
         q_lower = q.lower()
@@ -1142,10 +1153,22 @@ def student_rooms(request):
                 filtered.append(r)
         all_rooms = filtered
 
+    # Sorting
+    if sort_by == "floor_desc":
+        all_rooms.sort(key=lambda r: (-floor_order_key(r.block), r.number))
+    elif sort_by == "room_asc":
+        all_rooms.sort(key=lambda r: r.number)
+    elif sort_by == "vacant":
+        all_rooms.sort(key=lambda r: (-r.vacancy, floor_order_key(r.block), r.number))
+    else:  # floor_asc (default)
+        all_rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
+
+    # Group rooms by floor
+    grouped_dict = {}
     room_items = []
     for r in all_rooms:
         residents = [a.student.user.display_name for a in r.allocations.all()]
-        room_items.append({
+        item = {
             "room": r,
             "room_str": str(r),
             "block": r.block,
@@ -1154,17 +1177,42 @@ def student_rooms(request):
             "number": r.number,
             "capacity": r.capacity,
             "occupied": len(residents),
+            "vacancy": r.vacancy,
             "is_blacklisted": r.is_blacklisted,
             "blacklist_reason": r.blacklist_reason,
             "residents": residents,
-        })
+        }
+        room_items.append(item)
+
+        fl_key = r.block
+        if fl_key not in grouped_dict:
+            grouped_dict[fl_key] = {
+                "floor_code": r.block,
+                "floor_name": r.floor_name,
+                "floor_display": r.floor_display,
+                "rooms": [],
+                "total_capacity": 0,
+                "total_occupied": 0,
+            }
+        grouped_dict[fl_key]["rooms"].append(item)
+        grouped_dict[fl_key]["total_capacity"] += r.capacity
+        grouped_dict[fl_key]["total_occupied"] += len(residents)
+
+    if sort_by == "floor_desc":
+        sorted_keys = sorted(grouped_dict.keys(), key=lambda k: -floor_order_key(k))
+    else:
+        sorted_keys = sorted(grouped_dict.keys(), key=floor_order_key)
+
+    floor_groups = [grouped_dict[k] for k in sorted_keys]
 
     return show(
         request,
         "student_rooms",
         rooms=room_items,
+        floor_groups=floor_groups,
         total_rooms=len(room_items),
         blocks=all_blocks,
         selected_block=block,
+        sort_by=sort_by,
         q=q,
     )
