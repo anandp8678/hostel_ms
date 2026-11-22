@@ -23,7 +23,7 @@ body{background:var(--sky);min-height:100vh}
 {% if user.is_authenticated and not hide_nav %}
 <div class="d-flex">
  <nav class="sidebar py-3" id="sb"><div class="px-3 pb-3 text-white fs-5 fw-semibold">Hostel</div>
-  {% for name, label in nav_items %}<a href="{% url name %}" {% if request.resolver_match.url_name == name or name == 'attendance' and request.resolver_match.url_name == 'attendance_history' %}class="active"{% endif %}>{{ label }}</a>{% endfor %}
+  {% for name, label in nav_items %}<a href="{% url name %}" {% if request.resolver_match.url_name == name or name == 'attendance' and request.resolver_match.url_name == 'attendance_history' or name == 'rooms' and request.resolver_match.url_name == 'room_detail' or name == 'students' and request.resolver_match.url_name == 'student_detail' %}class="active"{% endif %}>{{ label }}</a>{% endfor %}
  </nav>
  <div class="flex-grow-1">
   <div class="topbar d-flex align-items-center justify-content-between px-3 py-2">

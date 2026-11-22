@@ -16,6 +16,7 @@
         {% endfor %}
       </select>
     </form>
+    <a href="{% url 'fees_export_pdf' %}?month={{ month_str }}" class="btn btn-sm btn-outline-danger text-nowrap">📄 Export PDF</a>
     <a href="{% url 'fee_structure' %}" class="btn btn-sm btn-outline-secondary text-nowrap">⚙️ Settings</a>
     <a href="{% url 'fees' %}" class="btn btn-sm btn-outline-secondary text-nowrap">&larr; Fees</a>
   </div>

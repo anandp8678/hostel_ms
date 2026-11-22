@@ -5,13 +5,17 @@
     <div>
       <div class="d-flex align-items-center gap-2 mb-1">
         <h4 class="mb-0 fw-bold" style="color:var(--navy);">
-          {% if parent_view %}Parent Portal · {{ s.user.display_name }}{% else %}Welcome back, {{ s.user.first_name }}!{% endif %}
+          {% if staff_view %}Student Profile · {{ s.user.display_name }}{% elif parent_view %}Parent Portal · {{ s.user.display_name }}{% else %}Welcome back, {{ s.user.first_name }}!{% endif %}
         </h4>
-        <span class="badge {% if parent_view %}text-bg-info text-dark{% else %}text-bg-primary{% endif %} rounded-pill">
-          {% if parent_view %}Parent View{% else %}Student Resident{% endif %}
+        <span class="badge {% if staff_view %}text-bg-warning text-dark{% elif parent_view %}text-bg-info text-dark{% else %}text-bg-primary{% endif %} rounded-pill">
+          {% if staff_view %}Staff View (Warden/Admin){% elif parent_view %}Parent View{% else %}Student Resident{% endif %}
         </span>
         <span class="badge text-bg-light border text-dark rounded-pill">
-          Room {{ room|default:"Unallocated" }}
+          {% if room and staff_view %}
+            <a href="{% url 'room_detail' room.pk %}" class="text-decoration-none text-dark">🏢 Room {{ room }}</a>
+          {% else %}
+            Room {{ room|default:"Unallocated" }}
+          {% endif %}
         </span>
       </div>
       <div class="text-secondary small">
@@ -32,7 +36,28 @@
 
     <!-- Quick Action Shortcut Buttons -->
     <div class="d-flex flex-wrap gap-2">
-      {% if parent_view %}
+      {% if staff_view %}
+        {% if room %}
+          <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'room_detail' room.pk %}">
+            🏢 View Room {{ room }}
+          </a>
+        {% endif %}
+        <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}?q={{ s.roll_no }}">
+          📅 Attendance
+        </a>
+        <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'fees' %}?q={{ s.roll_no }}">
+          💳 Fees
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'complaints' %}?q={{ s.roll_no }}">
+          💬 Complaints
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'students_edit' s.pk %}">
+          ✏️ Edit Student
+        </a>
+        <a class="btn btn-sm btn-outline-dark" href="{% if room %}{% url 'room_detail' room.pk %}{% else %}{% url 'rooms' %}{% endif %}">
+          ← Back
+        </a>
+      {% elif parent_view %}
         <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'menu' %}">
           🍲 Mess Menu
         </a>
@@ -475,11 +500,15 @@
         </div>
       </div>
     {% else %}
-      <!-- My Leave Requests Card for Student -->
+      <!-- My Leave Requests Card for Student / Staff -->
       <div class="card p-3 h-100 bg-white border-0 shadow-sm">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h6 class="mb-0 fw-bold" style="color:var(--navy);">✈️ My Leave Requests</h6>
-          <a href="{% url 'my_leaves' %}" class="btn btn-sm btn-outline-primary fw-semibold">Request Leave &rarr;</a>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">✈️ {% if staff_view %}Leave Requests{% else %}My Leave Requests{% endif %}</h6>
+          {% if staff_view %}
+            <a href="{% url 'leaves' %}" class="btn btn-sm btn-outline-primary fw-semibold">All Leaves &rarr;</a>
+          {% else %}
+            <a href="{% url 'my_leaves' %}" class="btn btn-sm btn-outline-primary fw-semibold">Request Leave &rarr;</a>
+          {% endif %}
         </div>
 
         <div class="list-group list-group-flush mb-2">
@@ -503,21 +532,35 @@
         <div class="mt-auto pt-2 border-top">
           <div class="d-flex justify-content-between align-items-center mb-2">
             <span class="small text-muted">Open complaints: <b>{{ complaints }}</b></span>
-            <a href="{% url 'my_complaints' %}" class="small text-decoration-none">Complaints desk &rarr;</a>
+            {% if staff_view %}
+              <a href="{% url 'complaints' %}?q={{ s.roll_no }}" class="small text-decoration-none">Manage Complaints &rarr;</a>
+            {% else %}
+              <a href="{% url 'my_complaints' %}" class="small text-decoration-none">Complaints desk &rarr;</a>
+            {% endif %}
           </div>
 
           {% if my_complaints %}
             {% for c in my_complaints %}
               <div class="p-2 mb-1 bg-light rounded-2 border d-flex justify-content-between align-items-center">
                 <div style="max-width: 68%;">
-                  <div class="fw-semibold text-dark small text-truncate">{{ c.title }}</div>
+                  <div class="fw-semibold text-dark small text-truncate">
+                    {% if staff_view %}
+                      <a href="{% url 'complaints_edit' c.pk %}" class="text-decoration-none text-dark">{{ c.title }}</a>
+                    {% else %}
+                      {{ c.title }}
+                    {% endif %}
+                  </div>
                   <div class="text-muted" style="font-size: 0.72rem;">
                     Status: <span class="badge {% if c.status == 'Resolved' %}text-bg-success{% elif c.status == 'In Progress' %}text-bg-primary{% elif c.status == 'Under Review' %}text-bg-info text-dark{% else %}text-bg-secondary{% endif %} py-0 px-1">{{ c.status }}</span>
                     {% if c.staff_note %} · Note: {{ c.staff_note|truncatechars:20 }}{% endif %}
                   </div>
                 </div>
                 <div>
-                  {% if c.status != 'Resolved' %}
+                  {% if staff_view %}
+                    <a href="{% url 'complaints_edit' c.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2 fw-semibold" style="font-size: 0.72rem;">
+                      Manage &rarr;
+                    </a>
+                  {% elif c.status != 'Resolved' %}
                     <form method="post" action="{% url 'my_complaint_resolve' c.pk %}">
                       {% csrf_token %}
                       <input type="hidden" name="next" value="{{ request.path }}">
@@ -565,7 +608,9 @@
     <div class="card bg-white border-0 shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
         <span class="fw-bold small" style="color:var(--navy);">📋 Recent Attendance Log (Last 10 Records)</span>
-        {% if not parent_view %}
+        {% if staff_view %}
+          <a href="{% url 'attendance_history' %}?q={{ s.roll_no }}" class="small text-decoration-none">Full History &rarr;</a>
+        {% elif not parent_view %}
           <a href="{% url 'my_attendance' %}" class="small text-decoration-none">Full History &rarr;</a>
         {% endif %}
       </div>
@@ -595,7 +640,9 @@
     <div class="card bg-white border-0 shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
         <span class="fw-bold small" style="color:var(--navy);">💳 Fee Invoices & Dues</span>
-        {% if not parent_view %}
+        {% if staff_view %}
+          <a href="{% url 'fees' %}?q={{ s.roll_no }}" class="small text-decoration-none">Manage Fees &rarr;</a>
+        {% elif not parent_view %}
           <a href="{% url 'my_fees' %}" class="small text-decoration-none">Fee Details &rarr;</a>
         {% endif %}
       </div>
@@ -607,22 +654,23 @@
               <div class="text-muted" style="font-size:0.75rem;">
                 Due: {{ x.due_date|date:"d M Y" }}
                 {% if x.has_breakdown %}
-                  · <span class="text-secondary">Rent: ₹{{ x.rent_amount }} | Food: ₹{{ x.food_amount }}</span>
-                  {% if x.mess_cut_amount > 0 %}
-                    · <span class="text-success fw-semibold">Mess Cut: -₹{{ x.mess_cut_amount }} ({{ x.mess_cut_days }}d)</span>
+                  · <span class="text-secondary">Rent: ₹{{ x.rent_amount|default:"1500" }} | Food: ₹{{ x.food_amount|default:"0" }}</span>
+                  {% if x.mess_cut_amount and x.mess_cut_amount > 0 %}
+                    · <span class="text-success fw-semibold">Mess Cut: -₹{{ x.mess_cut_amount }}{% if x.mess_cut_days %} ({{ x.mess_cut_days }}d){% endif %}</span>
                   {% endif %}
                 {% endif %}
-                {% if x.fine_amount > 0 %}
-                  · <span class="text-danger fw-semibold">Late Fine: +₹{{ x.fine_amount }} ({{ x.overdue_days }}d overdue)</span>
+                {% if x.fine_amount and x.fine_amount > 0 %}
+                  · <span class="text-danger fw-semibold">Late Fine: +₹{{ x.fine_amount }}{% if x.overdue_days > 0 %} ({{ x.overdue_days }}d overdue){% endif %}</span>
                 {% elif x.fine_waived %}
                   · <span class="text-muted fw-semibold">Late Fine: Waived</span>
                 {% endif %}
               </div>
             </div>
             <div class="text-end">
-              <span class="badge {% if x.balance == 0 %}text-bg-success{% else %}text-bg-warning text-dark{% endif %}">
+              <span class="badge {% if x.balance == 0 %}text-bg-success{% else %}text-bg-warning text-dark{% endif %} mb-1 d-block">
                 {{ x.status }} (Bal: ₹{{ x.balance }})
               </span>
+              <a href="{% url 'fee_pdf' x.pk %}" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.72rem;">📄 PDF Receipt</a>
             </div>
           </li>
         {% empty %}

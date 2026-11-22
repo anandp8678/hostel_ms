@@ -1153,3 +1153,187 @@ class FeeStructureAndMessCutTests(TestCase):
         fee.refresh_from_db()
         self.assertEqual(fee.balance, Decimal("0.00"))
         self.assertEqual(fee.status, "Paid")
+
+    def test_warden_can_export_fees_pdf_report(self):
+        Fee.objects.create(
+            student=self.student,
+            title="Hostel Fee - November 2026",
+            month="2026-11",
+            amount=Decimal("5270.00"),
+            due_date=date(2026, 12, 10),
+        )
+
+        c = Client()
+        c.force_login(self.warden_user)
+
+        # 1. Master export PDF
+        resp = c.get(reverse("fees_export_pdf"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "application/pdf")
+        self.assertTrue(resp.content.startswith(b"%PDF"))
+        self.assertIn("attachment; filename=", resp["Content-Disposition"])
+
+        # 2. Filtered by month
+        resp_m = c.get(reverse("fees_export_pdf") + "?month=2026-11")
+        self.assertEqual(resp_m.status_code, 200)
+        self.assertTrue(resp_m.content.startswith(b"%PDF"))
+
+        # 3. Reports page PDF export
+        resp_rep = c.get(reverse("reports") + "?export=fees_pdf")
+        self.assertEqual(resp_rep.status_code, 200)
+        self.assertEqual(resp_rep["Content-Type"], "application/pdf")
+        self.assertTrue(resp_rep.content.startswith(b"%PDF"))
+
+    def test_student_and_parent_fee_pdf_receipt(self):
+        fee = Fee.objects.create(
+            student=self.student,
+            title="Hostel & Mess Fee - November 2026",
+            month="2026-11",
+            rent_amount=Decimal("1500.00"),
+            food_amount=Decimal("3900.00"),
+            mess_cut_amount=Decimal("130.00"),
+            amount=Decimal("5270.00"),
+            due_date=date(2026, 12, 10),
+        )
+
+        c = Client()
+        # Student 1 logs in and downloads receipt
+        c.force_login(self.student_user)
+        resp = c.get(reverse("fee_pdf", args=[fee.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "application/pdf")
+        self.assertTrue(resp.content.startswith(b"%PDF"))
+        self.assertIn(f"fee_receipt_{self.student.roll_no}_{fee.pk}.pdf", resp["Content-Disposition"])
+
+        # Student also exports their full statement PDF
+        stmt_resp = c.get(reverse("my_fees_export_pdf"))
+        self.assertEqual(stmt_resp.status_code, 200)
+        self.assertEqual(stmt_resp["Content-Type"], "application/pdf")
+        self.assertTrue(stmt_resp.content.startswith(b"%PDF"))
+
+        # Another student cannot download Student 1's fee receipt
+        other_user = User.objects.create_user(username="other_stud", password="p", role="student")
+        Student.objects.create(user=other_user, roll_no="CS999")
+        c.force_login(other_user)
+        blocked_resp = c.get(reverse("fee_pdf", args=[fee.pk]))
+        self.assertEqual(blocked_resp.status_code, 403)
+
+
+class RoomSectionWardenAdminTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(username="admin_user", password="p", role="admin")
+        self.warden = User.objects.create_user(username="warden_user", password="p", role="warden")
+        self.student_user = User.objects.create_user(
+            username="stud_arjun", password="p", role="student", first_name="Arjun", last_name="Verma"
+        )
+        self.parent_user = User.objects.create_user(
+            username="parent_ramesh", password="p", role="parent", first_name="Ramesh", last_name="Verma"
+        )
+        self.parent = Parent.objects.create(user=self.parent_user)
+        self.student = Student.objects.create(
+            user=self.student_user, roll_no="CS301", course="B.Tech Computer Science", parent=self.parent
+        )
+
+        # Create rooms on different floors
+        self.room_g1 = Room.objects.create(block="G", number="101", capacity=2)
+        self.room_g2 = Room.objects.create(block="G", number="102", capacity=2)
+        self.room_f1 = Room.objects.create(block="F", number="201", capacity=2)
+
+        # Allocate Arjun to G-101
+        self.alloc = RoomAllocation.objects.create(
+            student=self.student, room=self.room_g1, start_date=date(2026, 1, 1)
+        )
+
+        # Create active complaint from Arjun
+        self.active_comp = Complaint.objects.create(
+            student=self.student,
+            title="Fan regulator broken",
+            description="Speed control is stuck at 5 in room G-101.",
+            status="Under Review",
+        )
+
+        # Create resolved complaint
+        self.resolved_comp = Complaint.objects.create(
+            student=self.student,
+            title="Tube light blinking",
+            description="Tube light on bed 1 blinks continuously.",
+            status="Resolved",
+            staff_note="Replaced choke and starter.",
+        )
+
+    def test_warden_room_list_floor_filter_and_grid(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # 1. Main Rooms section (grid view)
+        resp = c.get(reverse("rooms"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Hostel Rooms Directory")
+        self.assertContains(resp, "G-101")
+        self.assertContains(resp, "F-201")
+        self.assertContains(resp, "Ground Floor")
+        self.assertContains(resp, "Arjun Verma")
+
+        # 2. Filter by floor G
+        resp_g = c.get(reverse("rooms") + "?block=G")
+        self.assertEqual(resp_g.status_code, 200)
+        self.assertContains(resp_g, "G-101")
+        self.assertNotContains(resp_g, "F-201")
+
+        # 3. Table view
+        resp_tbl = c.get(reverse("rooms") + "?view=table")
+        self.assertEqual(resp_tbl.status_code, 200)
+        self.assertContains(resp_tbl, "Table & Bulk Select")
+
+    def test_warden_room_detail_inmates_and_complaints(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Visit room detail for G-101
+        resp = c.get(reverse("room_detail", args=[self.room_g1.pk]))
+        self.assertEqual(resp.status_code, 200)
+
+        # Verify Room info
+        self.assertContains(resp, "Room G-101")
+        self.assertContains(resp, "Ground Floor")
+
+        # Verify Inmate info with clickable profile link
+        self.assertContains(resp, "Arjun Verma")
+        self.assertContains(resp, reverse("student_detail", args=[self.student.pk]))
+        self.assertContains(resp, "CS301")
+        self.assertContains(resp, "Ramesh Verma")
+
+        # Verify Active Complaint with clickable link to manage complaint
+        self.assertContains(resp, "Fan regulator broken")
+        self.assertContains(resp, reverse("complaints_edit", args=[self.active_comp.pk]))
+
+        # Verify Resolved Complaint history
+        self.assertContains(resp, "Tube light blinking")
+        self.assertContains(resp, "Replaced choke and starter")
+
+        # Verify Vacant bed slot for bed 2
+        self.assertContains(resp, "Bed Slot Available")
+        self.assertContains(resp, reverse("allocations_new") + f"?room={self.room_g1.pk}")
+
+    def test_warden_student_detail_profile(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        resp = c.get(reverse("student_detail", args=[self.student.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Arjun Verma")
+        self.assertContains(resp, "CS301")
+        self.assertContains(resp, "Room G-101")
+        self.assertContains(resp, reverse("room_detail", args=[self.room_g1.pk]))
+
+    def test_student_cannot_access_staff_room_and_student_details(self):
+        c = Client()
+        c.force_login(self.student_user)
+
+        # Student cannot access /rooms/<pk>/
+        resp = c.get(reverse("room_detail", args=[self.room_g1.pk]))
+        self.assertEqual(resp.status_code, 403)
+
+        # Student cannot access /students/<pk>/
+        resp2 = c.get(reverse("student_detail", args=[self.student.pk]))
+        self.assertEqual(resp2.status_code, 403)

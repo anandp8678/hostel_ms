@@ -8,7 +8,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import PasswordChangeView
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
@@ -17,6 +17,7 @@ from django.views.decorators.http import require_POST
 
 from . import forms as f
 from . import models as m
+from .pdf_services import generate_fee_invoice_pdf, generate_fees_report_pdf
 from .services import (
     bulk_create_rooms,
     bulk_create_rooms_floors,
@@ -108,7 +109,8 @@ def crud(key, model, form_class, title, columns, roles=STAFF, create=True, delet
     @role_required(*roles)
     def edit(request, pk=None):
         obj = get_object_or_404(model, pk=pk) if pk else None
-        form = form_class(request.POST or None, instance=obj)
+        initial = request.GET.dict() if (request.method == "GET" and not obj) else None
+        form = form_class(request.POST or None, initial=initial, instance=obj)
         if request.method == "POST" and form.is_valid():
             form.save()
             messages.success(request, "Saved.")
@@ -141,6 +143,7 @@ def fee_actions(fee):
         acts.append(("Record payment", reverse("payment_new", args=[fee.pk]), False, ""))
     if fee.fine_amount > 0 and not fee.fine_waived:
         acts.append(("Waive fine", reverse("fee_waive_fine", args=[fee.pk]), True, f"Waive late fine of ₹{fee.fine_amount} for {fee.student}?"))
+    acts.append(("Receipt PDF", reverse("fee_pdf", args=[fee.pk]), False, ""))
     return acts
 
 
@@ -155,7 +158,9 @@ V["students"] = crud("students", m.Student, f.StudentEditForm, "Students", [
     ("Roll no.", lambda s: s.roll_no), ("Name", lambda s: s.user.display_name), ("Course", lambda s: s.course or "—"),
     ("Room", lambda s: s.room or "—"), ("Parent", lambda s: s.parent or "—"),
     ("Status", lambda s: "Staying" if s.is_active else "Left")],
-    qs=lambda: m.Student.objects.select_related("user", "parent__user"), add_label="Add student")
+    qs=lambda: m.Student.objects.select_related("user", "parent__user"),
+    actions=lambda s: [("View Profile", reverse("student_detail", args=[s.pk]), False, "")],
+    add_label="Add student")
 V["rooms"] = crud("rooms", m.Room, f.RoomForm, "Rooms", [
     ("Room", str), ("Capacity", lambda r: r.capacity), ("Occupied", lambda r: r.occupied), ("Vacant", lambda r: r.vacancy)])
 V["allocations"] = crud("allocations", m.RoomAllocation, f.AllocationForm, "Room allocations", [
@@ -305,11 +310,20 @@ def fees_calculate_monthly(request):
                 if not student:
                     continue
 
-                rent_val = Decimal(request.POST.get(f"rent_{sid}", str(cfg.rent_amount)))
-                food_val = Decimal(request.POST.get(f"food_{sid}", "0"))
-                mess_days_val = int(request.POST.get(f"mess_days_{sid}", "0"))
-                mess_cut_val = Decimal(request.POST.get(f"mess_cut_{sid}", "0"))
-                total_val = Decimal(request.POST.get(f"total_{sid}", str(max(Decimal("0.00"), rent_val + food_val - mess_cut_val))))
+                raw_rent = (request.POST.get(f"rent_{sid}") or "").strip()
+                rent_val = Decimal(raw_rent) if raw_rent else cfg.rent_amount
+
+                raw_food = (request.POST.get(f"food_{sid}") or "").strip()
+                food_val = Decimal(raw_food) if raw_food else Decimal("0.00")
+
+                raw_days = (request.POST.get(f"mess_days_{sid}") or "").strip()
+                mess_days_val = int(raw_days) if raw_days.isdigit() else 0
+
+                raw_cut = (request.POST.get(f"mess_cut_{sid}") or "").strip()
+                mess_cut_val = Decimal(raw_cut) if raw_cut else Decimal("0.00")
+
+                raw_total = (request.POST.get(f"total_{sid}") or "").strip()
+                total_val = Decimal(raw_total) if raw_total else max(Decimal("0.00"), rent_val + food_val - mess_cut_val)
 
                 notes = f"Rent: ₹{rent_val} | Food: ₹{food_val} | Mess Cut: -₹{mess_cut_val} ({mess_days_val}d)"
 
@@ -414,6 +428,65 @@ def fee_waive_fine(request, pk):
     fee.sync_late_fine(save=True)
     messages.success(request, f"Late fine waived for {fee.student}. Total fee adjusted to ₹{fee.amount}.")
     return redirect("fees")
+
+
+@staff
+def fees_export_pdf(request):
+    """Exports all or filtered hostel fees as a master PDF report."""
+    month = request.GET.get("month")
+    status_filter = request.GET.get("status")
+    qs = m.Fee.objects.select_related("student__user").prefetch_related("payments")
+
+    title = "Hostel Fees & Resident Billing Statement"
+    subtitle = ""
+    if month:
+        qs = qs.filter(month=month)
+        try:
+            parts = month.split("-")
+            month_lbl = date(int(parts[0]), int(parts[1]), 1).strftime("%B %Y")
+            title = f"Hostel Fee Report · {month_lbl}"
+            subtitle = f"All billed resident fees and mess charges for {month_lbl}"
+        except Exception:
+            pass
+
+    fee_list = list(qs)
+    for f in fee_list:
+        if f.due_date and f.due_date < date.today():
+            f.sync_late_fine()
+
+    if status_filter == "pending":
+        fee_list = [f for f in fee_list if f.balance > 0]
+        title = "Hostel Pending Fees & Dues Statement"
+        subtitle = "All residents with outstanding fee balances"
+    elif status_filter == "overdue":
+        fee_list = [f for f in fee_list if f.balance > 0 and f.due_date and f.due_date < date.today()]
+        title = "Hostel Overdue Fees & Penalties Report"
+        subtitle = "Residents with past-due balances incurring late fines"
+
+    pdf_bytes = generate_fees_report_pdf(fee_list, title=title, subtitle=subtitle, staff_user=request.user)
+    filename = f"hostel_fees_{month or 'report'}_{date.today().strftime('%Y%m%d')}.pdf"
+    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
+
+@login_required
+def fee_invoice_pdf(request, pk):
+    """Exports an individual fee invoice / receipt as a downloadable PDF."""
+    fee = get_object_or_404(m.Fee, pk=pk)
+    u = request.user
+    if u.role == "student" and fee.student.user != u:
+        raise PermissionDenied
+    if u.role == "parent":
+        p = getattr(u, "parent", None)
+        if not p or fee.student not in p.children.all():
+            raise PermissionDenied
+
+    pdf_bytes = generate_fee_invoice_pdf(fee, current_user=u)
+    filename = f"fee_receipt_{fee.student.roll_no}_{fee.pk}.pdf"
+    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
 
 
 @staff
@@ -841,11 +914,14 @@ def room_list(request):
     status = request.GET.get("status", "").strip()
     cause = request.GET.get("cause", "").strip()
     capacity = request.GET.get("capacity", "").strip()
+    view_mode = request.GET.get("view", "grid").strip()
 
-    rooms_qs = m.Room.objects.all().prefetch_related("allocations")
-
-    if q:
-        rooms_qs = rooms_qs.filter(Q(number__icontains=q) | Q(block__icontains=q) | Q(blacklist_reason__icontains=q))
+    rooms_qs = m.Room.objects.all().prefetch_related(
+        Prefetch(
+            "allocations",
+            queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("student__user")
+        )
+    )
 
     if block:
         rooms_qs = rooms_qs.filter(block__iexact=block)
@@ -871,6 +947,18 @@ def room_list(request):
 
     rooms = list(rooms_qs)
 
+    if q:
+        q_lower = q.lower()
+        rooms = [
+            r for r in rooms
+            if (q_lower in str(r).lower() or
+                q_lower in r.block.lower() or
+                q_lower in r.floor_name.lower() or
+                q_lower in r.number.lower() or
+                q_lower in (r.blacklist_reason or "").lower() or
+                any(q_lower in a.student.user.display_name.lower() or q_lower in a.student.roll_no.lower() for a in r.allocations.all()))
+        ]
+
     if status == "vacant":
         rooms = [r for r in rooms if r.vacancy > 0 and not r.is_blacklisted]
     elif status == "full":
@@ -879,15 +967,57 @@ def room_list(request):
         rooms = [r for r in rooms if r.occupied == 0 and not r.is_blacklisted]
 
     distinct_blocks = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
-    all_blocks = [{"code": b, "display": m.Room(block=b).floor_display} for b in distinct_blocks]
+    all_blocks = [{"code": b, "display": m.Room(block=b).floor_display, "name": m.Room(block=b).floor_name} for b in distinct_blocks]
     all_causes = sorted(list(set(m.Room.objects.filter(is_blacklisted=True).exclude(blacklist_reason="").values_list("blacklist_reason", flat=True))))
 
     rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
+
+    # Active complaints per student
+    active_complaints_students = set(
+        m.Complaint.objects.exclude(status="Resolved").values_list("student_id", flat=True)
+    )
+
+    # Enrich each room with inmates and active complaints count
+    for r in rooms:
+        r.inmates_list = [a.student for a in r.allocations.all()]
+        r.inmate_names = [s.user.display_name for s in r.inmates_list]
+        r.active_complaints_count = sum(1 for s in r.inmates_list if s.pk in active_complaints_students)
+
+    # Group rooms by floor for Grid View
+    grouped_floors = {}
+    for r in rooms:
+        b = r.block
+        if b not in grouped_floors:
+            grouped_floors[b] = {
+                "floor_code": b,
+                "floor_name": r.floor_name,
+                "floor_display": r.floor_display,
+                "rooms": [],
+                "total_capacity": 0,
+                "total_occupied": 0,
+                "total_vacant": 0,
+                "active_complaints": 0,
+            }
+        grouped_floors[b]["rooms"].append(r)
+        grouped_floors[b]["total_capacity"] += r.capacity
+        grouped_floors[b]["total_occupied"] += len(r.inmates_list)
+        grouped_floors[b]["total_vacant"] += r.vacancy
+        grouped_floors[b]["active_complaints"] += r.active_complaints_count
+
+    sorted_floor_keys = sorted(grouped_floors.keys(), key=floor_order_key)
+    floor_groups = [grouped_floors[k] for k in sorted_floor_keys]
+
+    total_beds = sum(r.capacity for r in rooms)
+    total_occupied = sum(len(r.inmates_list) for r in rooms)
+    total_vacant = sum(r.vacancy for r in rooms)
+    total_maintenance = sum(1 for r in rooms if r.is_blacklisted)
+    total_active_complaints = sum(r.active_complaints_count for r in rooms)
 
     return show(
         request,
         "rooms_list",
         rooms=rooms,
+        floor_groups=floor_groups,
         all_blocks=all_blocks,
         all_causes=all_causes,
         filter_q=q,
@@ -896,6 +1026,95 @@ def room_list(request):
         filter_cause=cause,
         filter_capacity=capacity,
         total_rooms=len(rooms),
+        total_beds=total_beds,
+        total_occupied=total_occupied,
+        total_vacant=total_vacant,
+        total_maintenance=total_maintenance,
+        total_active_complaints=total_active_complaints,
+        view_mode=view_mode,
+    )
+
+
+@staff
+def room_detail(request, pk):
+    room = get_object_or_404(m.Room, pk=pk)
+    today = date.today()
+
+    active_allocs = list(
+        m.RoomAllocation.objects.filter(room=room, end_date__isnull=True)
+        .select_related("student__user", "student__parent__user")
+        .order_by("start_date")
+    )
+
+    inmates = []
+    for a in active_allocs:
+        s = a.student
+        today_att = s.attendance.filter(date=today).first()
+        today_status = today_att.status if today_att else None
+
+        balance = s.fee_balance
+        has_fines = s.fees.filter(fine_amount__gt=0).exists()
+
+        active_leave = s.leaves.filter(
+            status="Approved",
+            from_date__lte=today,
+            to_date__gte=today,
+        ).first()
+
+        parent_user = getattr(getattr(s, "parent", None), "user", None)
+
+        inmates.append({
+            "allocation": a,
+            "student": s,
+            "today_status": today_status,
+            "fee_balance": balance,
+            "has_fines": has_fines,
+            "active_leave": active_leave,
+            "parent_name": parent_user.display_name if parent_user else "Not Registered",
+            "parent_phone": parent_user.phone if (parent_user and parent_user.phone) else "",
+            "student_phone": s.user.phone or "",
+        })
+
+    empty_beds = list(range(room.vacancy))
+
+    all_room_students = list(m.Student.objects.filter(allocations__room=room).distinct())
+    complaints_qs = m.Complaint.objects.filter(
+        Q(student__in=all_room_students) |
+        Q(description__icontains=str(room)) |
+        Q(title__icontains=str(room))
+    ).select_related("student__user").distinct().order_by("-created_at")
+
+    active_complaints = [c for c in complaints_qs if c.status != "Resolved"]
+    resolved_complaints = [c for c in complaints_qs if c.status == "Resolved"]
+
+    past_allocs = list(
+        m.RoomAllocation.objects.filter(room=room, end_date__isnull=False)
+        .select_related("student__user")
+        .order_by("-end_date")[:10]
+    )
+
+    return show(
+        request,
+        "room_detail",
+        room=room,
+        inmates=inmates,
+        empty_beds=empty_beds,
+        active_complaints=active_complaints,
+        resolved_complaints=resolved_complaints,
+        past_allocs=past_allocs,
+        total_inmates=len(inmates),
+        today=today,
+    )
+
+
+@staff
+def student_detail(request, pk):
+    s = get_object_or_404(m.Student.objects.select_related("user", "parent__user"), pk=pk)
+    return show(
+        request,
+        "overview",
+        staff_view=True,
+        **overview(s, request.user),
     )
 
 
@@ -1254,6 +1473,17 @@ def reports(request):
                 for x in m.Fee.objects.select_related("student__user") if x.balance > 0]
     att_rows = [(s.roll_no, s.user.display_name, s.attendance_percent() if s.attendance_percent() is not None else "") for s in students]
     if exp:
+        if exp == "fees_pdf":
+            pending_fees = [x for x in m.Fee.objects.select_related("student__user").prefetch_related("payments") if x.balance > 0]
+            pdf_bytes = generate_fees_report_pdf(
+                pending_fees,
+                title="Hostel Outstanding Fees & Ledger Report",
+                subtitle="All active resident accounts with pending balances",
+                staff_user=request.user,
+            )
+            resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+            resp["Content-Disposition"] = f'attachment; filename="pending_fees_{date.today().strftime("%Y%m%d")}.pdf"'
+            return resp
         resp = HttpResponse(content_type="text/csv")
         resp["Content-Disposition"] = f'attachment; filename="{exp}_report.csv"'
         w = csv.writer(resp)
@@ -1262,11 +1492,12 @@ def reports(request):
         else:
             w.writerow(["Roll no", "Name", "Attendance %"]); w.writerows(att_rows)
         return resp
-    blocks = {}
+    floors = {}
     for r in m.Room.objects.all():
-        b = blocks.setdefault(r.block, [0, 0])
+        b = floors.setdefault(r.block, [0, 0])
         b[0] += r.capacity; b[1] += r.occupied
-    occupancy = [(k, v[0], v[1], v[0] - v[1]) for k, v in sorted(blocks.items())]
+    sorted_codes = sorted(floors.keys(), key=floor_order_key)
+    occupancy = [(m.Room(block=k).floor_display, floors[k][0], floors[k][1], max(0, floors[k][0] - floors[k][1])) for k in sorted_codes]
     low = sorted([r for r in att_rows if r[2] != ""], key=lambda r: r[2])[:10]
     return show(request, "reports", occupancy=occupancy, fee_rows=fee_rows[:50], low=low, badge=badge)
 
@@ -1360,22 +1591,47 @@ def my_fees(request):
             x.title,
             f"₹{x.rent_amount}" if x.rent_amount else "—",
             f"₹{x.food_amount}" if x.food_amount else "—",
-            f"-₹{x.mess_cut_amount} ({x.mess_cut_days}d)" if x.mess_cut_amount else "—",
-            f"+₹{x.fine_amount} ({x.overdue_days}d late)" if x.fine_amount > 0 else ("Waived" if x.fine_waived else "—"),
+            f"-₹{x.mess_cut_amount} ({x.mess_cut_days}d)" if (x.mess_cut_amount and x.mess_cut_amount > 0) else "—",
+            f"+₹{x.fine_amount} ({x.overdue_days}d late)" if (x.fine_amount and x.fine_amount > 0) else ("Waived" if x.fine_waived else "—"),
             f"₹{x.amount}",
             f"₹{x.paid}",
             f"₹{x.balance}",
             date_s(x.due_date),
             badge(x.status),
+            format_html('<a class="btn btn-sm btn-outline-danger" href="{}">📄 Receipt</a>', reverse("fee_pdf", args=[x.pk])),
         )
         for x in s.fees.all()
     ]
+    note = format_html(
+        'Hostel fees must be settled before due date. A late fine of ₹300 is charged for every 5 days past due. <a class="btn btn-sm btn-outline-danger ms-2" href="{}">📄 Export All Fees PDF</a>',
+        reverse("my_fees_export_pdf"),
+    )
     return show(
         request, "plain", title="Fees & Mess Bill Breakdown",
-        headers=["Fee Title", "Room Rent", "Food Charge", "Mess Cut Rebate", "Late Fine", "Total Amount", "Paid", "Balance", "Due Date", "Status"],
+        headers=["Fee Title", "Room Rent", "Food Charge", "Mess Cut Rebate", "Late Fine", "Total Amount", "Paid", "Balance", "Due Date", "Status", ""],
         rows=rows,
-        note="Hostel fees must be settled before due date. A late fine of ₹300 is charged for every 5 days past due."
+        note=note,
     )
+
+
+@role_required("student")
+def my_fees_export_pdf(request):
+    """Exports all fee statements for the logged-in student as a PDF."""
+    s = _mine(request)
+    fees = list(s.fees.all())
+    for f_obj in fees:
+        if f_obj.due_date and f_obj.due_date < date.today():
+            f_obj.sync_late_fine()
+    pdf_bytes = generate_fees_report_pdf(
+        fees,
+        title=f"Personal Fee Statement · {s.user.display_name} ({s.roll_no})",
+        subtitle=f"Official student account fee ledger for {s.user.display_name}",
+        staff_user=request.user,
+    )
+    filename = f"my_fees_statement_{s.roll_no}_{date.today().strftime('%Y%m%d')}.pdf"
+    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
 
 
 @login_required

@@ -285,7 +285,7 @@ class Fee(models.Model):
 
     @property
     def has_breakdown(self):
-        return bool(self.rent_amount > 0 or self.food_amount > 0 or self.mess_cut_amount > 0 or self.fine_amount > 0)
+        return bool((self.rent_amount or 0) > 0 or (self.food_amount or 0) > 0 or (self.mess_cut_amount or 0) > 0 or (self.fine_amount or 0) > 0)
 
     @property
     def overdue_days(self):
@@ -331,34 +331,34 @@ class Fee(models.Model):
         If overdue for >= 5 days, an additional ₹300 fine per 5 days is added to the amount.
         """
         if self.fine_waived:
-            if self.fine_amount > 0:
-                self.amount = max(Decimal("0.00"), self.amount - self.fine_amount)
+            if (self.fine_amount or 0) > 0:
+                self.amount = max(Decimal("0.00"), self.amount - (self.fine_amount or Decimal("0.00")))
                 self.fine_amount = Decimal("0.00")
             if save and self.pk:
                 Fee.objects.filter(pk=self.pk).update(fine_waived=True, fine_amount=Decimal("0.00"), amount=self.amount)
             return Decimal("0.00")
 
         expected_fine = self.calculate_late_fine(as_of=as_of)
-        if self.base_amount <= 0:
-            self.base_amount = max(Decimal("0.00"), self.amount - self.fine_amount)
+        if (self.base_amount or 0) <= 0:
+            self.base_amount = max(Decimal("0.00"), self.amount - (self.fine_amount or Decimal("0.00")))
 
         if expected_fine != self.fine_amount:
             self.fine_amount = expected_fine
-            self.amount = self.base_amount + self.fine_amount
+            self.amount = (self.base_amount or Decimal("0.00")) + self.fine_amount
             if save and self.pk:
                 Fee.objects.filter(pk=self.pk).update(base_amount=self.base_amount, fine_amount=self.fine_amount, amount=self.amount, fine_waived=self.fine_waived)
         return self.fine_amount
 
     def save(self, *args, **kwargs):
-        if self.base_amount <= 0:
-            if self.rent_amount > 0 or self.food_amount > 0:
-                self.base_amount = max(Decimal("0.00"), self.rent_amount + self.food_amount - self.mess_cut_amount)
+        if (self.base_amount or 0) <= 0:
+            if (self.rent_amount or 0) > 0 or (self.food_amount or 0) > 0:
+                self.base_amount = max(Decimal("0.00"), (self.rent_amount or Decimal("0.00")) + (self.food_amount or Decimal("0.00")) - (self.mess_cut_amount or Decimal("0.00")))
             else:
-                self.base_amount = max(Decimal("0.00"), self.amount - self.fine_amount)
+                self.base_amount = max(Decimal("0.00"), self.amount - (self.fine_amount or Decimal("0.00")))
         if self.fine_waived:
             self.fine_amount = Decimal("0.00")
-        if self.base_amount > 0 and self.amount == 0:
-            self.amount = self.base_amount + self.fine_amount
+        if (self.base_amount or 0) > 0 and self.amount == 0:
+            self.amount = self.base_amount + (self.fine_amount or Decimal("0.00"))
         super().save(*args, **kwargs)
 
     @property
