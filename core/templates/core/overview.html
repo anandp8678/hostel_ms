@@ -1,13 +1,195 @@
 {% extends "core/base.html" %}{% block content %}
-<h4 style="color:var(--navy)" class="mb-1">{{ s.user.display_name }}</h4>
-<p class="text-secondary">{{ s.roll_no }} · {{ s.course }}{% if parent_view and siblings.count > 1 %} · {% for x in siblings %}<a href="{% url 'child' x.pk %}">{{ x.user.first_name }}</a> {% endfor %}{% endif %}</p>
-<div class="row g-3 mb-3">
-<div class="col-6 col-lg-3"><div class="card p-3"><div class="stat">{{ room|default:"—" }}</div><div class="text-secondary">Room</div></div></div>
-<div class="col-6 col-lg-3"><div class="card p-3"><div class="stat">{% if pct is None %}—{% else %}{{ pct }}%{% endif %}</div><div class="text-secondary">Attendance</div></div></div>
-<div class="col-6 col-lg-3"><div class="card p-3"><div class="stat">{{ balance }}</div><div class="text-secondary">Fees balance</div></div></div>
-<div class="col-6 col-lg-3"><div class="card p-3"><div class="stat">{{ complaints }}</div><div class="text-secondary">Open complaints</div></div></div></div>
-<div class="row g-3"><div class="col-lg-6"><div class="card mb-3"><div class="card-header bg-white">Today's meals</div><ul class="list-group list-group-flush">{% for x in menu %}<li class="list-group-item"><b>{{ x.get_meal_display }}</b> · {{ x.items }}</li>{% empty %}<li class="list-group-item text-secondary">Menu not set for today.</li>{% endfor %}</ul></div>
-<div class="card"><div class="card-header bg-white">Recent attendance</div><ul class="list-group list-group-flush">{% for a in recent %}<li class="list-group-item d-flex justify-content-between">{{ a.date }}<span>{{ a.get_status_display }}</span></li>{% empty %}<li class="list-group-item text-secondary">No attendance recorded yet.</li>{% endfor %}</ul></div></div>
-<div class="col-lg-6"><div class="card mb-3"><div class="card-header bg-white">Fees</div><ul class="list-group list-group-flush">{% for x in fees %}<li class="list-group-item d-flex justify-content-between">{{ x.title }} · due {{ x.due_date }}<span>{{ x.status }} (balance {{ x.balance }})</span></li>{% empty %}<li class="list-group-item text-secondary">No fees.</li>{% endfor %}</ul></div>
-<div class="card"><div class="card-header bg-white">Announcements</div><ul class="list-group list-group-flush">{% for n in notices %}<li class="list-group-item"><b>{{ n.title }}</b><br>{{ n.body }}</li>{% empty %}<li class="list-group-item text-secondary">No announcements.</li>{% endfor %}</ul></div></div></div>
+<!-- Student Header Card -->
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">{{ s.user.display_name }}</h4>
+        <span class="badge text-bg-primary rounded-pill">Room {{ room|default:"Unallocated" }}</span>
+      </div>
+      <div class="text-secondary small">
+        Roll No: <b>{{ s.roll_no }}</b> · Course: <b>{{ s.course|default:"Not specified" }}</b>
+        {% if parent_view and siblings.count > 1 %}
+          · Siblings: {% for x in siblings %}<a href="{% url 'child' x.pk %}" class="badge text-bg-light border text-decoration-none">{{ x.user.first_name }}</a> {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Quick Action Buttons for Student -->
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'my_attendance' %}">
+        📅 View Attendance
+      </a>
+      <a class="btn btn-sm btn-outline-primary" href="{% url 'my_leaves' %}">
+        ✈️ Request Leave
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_complaints' %}">
+        💬 File Complaint
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_fees' %}">
+        💳 Fee Dues
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- 4 Key Metric Cards for Student -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card p-3 h-100 card-hover bg-white">
+      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">Allocated Room</div>
+      <div class="stat text-dark">
+        {% if room %}{{ room }}{% else %}<span class="text-muted small">None</span>{% endif %}
+      </div>
+      <div class="small text-muted mt-auto">
+        {% if room %}Hostel Block {{ room.block }}{% else %}Awaiting assignment{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <div class="card p-3 h-100 card-hover bg-white">
+      <div class="d-flex justify-content-between align-items-center mb-1">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Attendance</span>
+        {% if pct is not None %}
+          <span class="badge {% if pct >= 75 %}text-bg-success{% elif pct >= 50 %}text-bg-warning{% else %}text-bg-danger{% endif %} rounded-pill">
+            {{ pct }}%
+          </span>
+        {% endif %}
+      </div>
+      <div class="stat {% if pct is not None and pct >= 75 %}text-success{% elif pct is not None and pct < 75 %}text-danger{% endif %}">
+        {% if pct is None %}—{% else %}{{ pct }}%{% endif %}
+      </div>
+      <div class="progress my-1" style="height: 5px;">
+        <div class="progress-bar {% if pct >= 75 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
+             role="progressbar" style="width: {{ pct|default:0 }}%;"></div>
+      </div>
+      <div class="small text-muted">
+        {{ p_count }} Present · {{ a_count }} Absent · {{ l_count }} Leave
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <div class="card p-3 h-100 card-hover bg-white">
+      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">Pending Fees</div>
+      <div class="stat {% if balance > 0 %}text-danger{% else %}text-success{% endif %}">
+        ₹{{ balance }}
+      </div>
+      <div class="small text-muted mt-auto">
+        {% if balance > 0 %}<span class="text-danger fw-semibold">Outstanding dues</span>{% else %}<span class="text-success fw-semibold">✓ All cleared</span>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <div class="card p-3 h-100 card-hover bg-white">
+      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">Open Complaints</div>
+      <div class="stat {% if complaints > 0 %}text-warning{% else %}text-dark{% endif %}">
+        {{ complaints }}
+      </div>
+      <div class="small text-muted mt-auto">
+        {% if complaints > 0 %}In progress by warden{% else %}No open issues{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Widgets Row: Meals, Attendance, Fees, Announcements -->
+<div class="row g-3">
+  <!-- Today's Meals Widget -->
+  <div class="col-lg-6">
+    <div class="card mb-3 bg-white h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small" style="color:var(--navy);">🍲 Today's Meal Menu</span>
+        <a href="{% url 'menu' %}" class="small text-decoration-none">Full Week Menu &rarr;</a>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for x in menu %}
+          <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+            <span class="badge text-bg-primary rounded-pill px-2 py-1">{{ x.get_meal_display }}</span>
+            <span class="small text-dark fw-medium">{{ x.items }}</span>
+          </li>
+        {% empty %}
+          <li class="list-group-item text-secondary py-3 text-center small">Menu not configured for today.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <!-- Recent Attendance Widget -->
+  <div class="col-lg-6">
+    <div class="card mb-3 bg-white h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small" style="color:var(--navy);">📋 Recent Attendance Log</span>
+        <a href="{% url 'my_attendance' %}" class="small text-decoration-none">View All &rarr;</a>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for a in recent %}
+          <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+            <span class="small fw-semibold">{{ a.date|date:"d M Y (D)" }}</span>
+            {% if a.status == 'P' %}
+              <span class="badge text-bg-success">✓ Present</span>
+            {% elif a.status == 'A' %}
+              <span class="badge text-bg-danger">✕ Absent</span>
+            {% elif a.status == 'L' %}
+              <span class="badge text-bg-warning">⏱ On Leave</span>
+            {% else %}
+              <span class="badge text-bg-secondary">{{ a.get_status_display }}</span>
+            {% endif %}
+          </li>
+        {% empty %}
+          <li class="list-group-item text-secondary py-3 text-center small">No attendance records yet.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <!-- Fees Widget -->
+  <div class="col-lg-6">
+    <div class="card mb-3 bg-white h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small" style="color:var(--navy);">💳 Fee Invoices & Dues</span>
+        <a href="{% url 'my_fees' %}" class="small text-decoration-none">Fee Details &rarr;</a>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for x in fees %}
+          <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+            <div>
+              <div class="small fw-semibold text-dark">{{ x.title }}</div>
+              <div class="text-muted" style="font-size:0.75rem;">Due: {{ x.due_date|date:"d M Y" }}</div>
+            </div>
+            <div class="text-end">
+              <span class="badge {% if x.balance == 0 %}text-bg-success{% else %}text-bg-warning{% endif %}">
+                {{ x.status }} (Bal: ₹{{ x.balance }})
+              </span>
+            </div>
+          </li>
+        {% empty %}
+          <li class="list-group-item text-secondary py-3 text-center small">No fees assigned.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <!-- Announcements Widget -->
+  <div class="col-lg-6">
+    <div class="card mb-3 bg-white h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small" style="color:var(--navy);">📢 Notices & Announcements</span>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for n in notices %}
+          <li class="list-group-item py-2">
+            <div class="fw-semibold text-dark small mb-1">{{ n.title }}</div>
+            <div class="text-secondary small">{{ n.body }}</div>
+            <div class="text-muted" style="font-size:0.7rem;">Posted on {{ n.created_at|date:"d M Y" }}</div>
+          </li>
+        {% empty %}
+          <li class="list-group-item text-secondary py-3 text-center small">No announcements posted.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
 {% endblock %}

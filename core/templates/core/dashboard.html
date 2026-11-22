@@ -1,5 +1,561 @@
 {% extends "core/base.html" %}{% block content %}
-<h4 style="color:var(--navy)" class="mb-3">Dashboard</h4>
-<div class="row g-3">{% for label, value, url in stats %}<div class="col-6 col-lg-4"><a href="{% url url %}" class="text-decoration-none"><div class="card p-3"><div class="stat">{{ value }}</div><div class="text-secondary">{{ label }}</div></div></a></div>{% endfor %}</div>
-<div class="mt-4"><a class="btn btn-navy me-2" href="{% url 'attendance' %}">Mark today's attendance</a><a class="btn btn-outline-secondary me-2" href="{% url 'students_new' %}">Add student</a><a class="btn btn-outline-secondary" href="{% url 'students_import' %}">Import students</a></div>
+<!-- Top Welcome & Quick Actions Bar -->
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Welcome back, {{ user.display_name }}</h4>
+        <span class="badge text-bg-primary rounded-pill">{{ user.get_role_display }}</span>
+      </div>
+      <div class="text-secondary small">
+        Hostel Operations & Management Dashboard · <span class="fw-semibold text-dark">{{ today|date:"l, d F Y" }}</span>
+      </div>
+    </div>
+
+    <!-- Quick Action Shortcut Buttons -->
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'attendance' %}">
+        📅 Mark Attendance
+      </a>
+      <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}">
+        📊 Past Attendance
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'students_new' %}">
+        ➕ Add Student
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'rooms_bulk_add' %}">
+        🚪 Bulk Add Rooms
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'fees_new' %}">
+        💰 Add Fee
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- 4 Key Metric Summary Cards -->
+<div class="row g-3 mb-4">
+  <!-- 1. Room Occupancy Card -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="card p-3 h-100 card-hover bg-white">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Bed Occupancy</span>
+        <span class="badge {% if free_beds > 0 %}text-bg-success{% else %}text-bg-danger{% endif %} rounded-pill">
+          {{ occupancy_pct }}% Filled
+        </span>
+      </div>
+      <div class="d-flex align-items-baseline gap-2 mb-2">
+        <div class="stat">{{ occupied_beds }}</div>
+        <span class="text-muted">/ {{ total_beds }} total beds</span>
+      </div>
+      <div class="progress mb-2" style="height: 6px;">
+        <div class="progress-bar bg-primary" role="progressbar" style="width: {{ occupancy_pct }}%;"></div>
+      </div>
+      <div class="d-flex justify-content-between small text-muted">
+        <span><b>{{ free_beds }}</b> vacant beds</span>
+        <a href="{% url 'rooms' %}" class="text-decoration-none">View Rooms &rarr;</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Active Students Card -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="card p-3 h-100 card-hover bg-white">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Residents</span>
+        {% if unallocated_count > 0 %}
+          <span class="badge text-bg-warning rounded-pill">{{ unallocated_count }} Awaiting Room</span>
+        {% else %}
+          <span class="badge text-bg-success rounded-pill">All Allocated</span>
+        {% endif %}
+      </div>
+      <div class="d-flex align-items-baseline gap-2 mb-2">
+        <div class="stat">{{ active_student_count }}</div>
+        <span class="text-muted">active students</span>
+      </div>
+      <div class="progress mb-2" style="height: 6px;">
+        <div class="progress-bar bg-success" role="progressbar"
+             style="width: {% if active_student_count > 0 %}{% widthratio allocated_count active_student_count 100 %}{% else %}0{% endif %}%;"></div>
+      </div>
+      <div class="d-flex justify-content-between small text-muted">
+        <span><b>{{ allocated_count }}</b> housed in rooms</span>
+        <a href="{% url 'students' %}" class="text-decoration-none">Manage &rarr;</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Today's Attendance Card -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="card p-3 h-100 card-hover bg-white">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Today's Attendance</span>
+        <span class="badge {% if att_marked_count >= active_student_count and active_student_count > 0 %}text-bg-success{% elif att_marked_count > 0 %}text-bg-warning{% else %}text-bg-secondary{% endif %} rounded-pill">
+          {{ att_marked_count }}/{{ active_student_count }} Marked
+        </span>
+      </div>
+      <div class="d-flex align-items-baseline gap-2 mb-2">
+        <div class="stat text-success">{{ att_present }}</div>
+        <span class="text-muted">present students</span>
+      </div>
+      <div class="progress mb-2" style="height: 6px;">
+        <div class="progress-bar bg-success" role="progressbar"
+             style="width: {% if active_student_count > 0 %}{% widthratio att_present active_student_count 100 %}{% else %}0{% endif %}%;"></div>
+      </div>
+      <div class="d-flex justify-content-between small text-muted">
+        <span><b>{{ att_absent }}</b> absent · <b>{{ att_leave }}</b> leave</span>
+        <a href="{% url 'attendance' %}" class="text-decoration-none">Mark &rarr;</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Pending Action Items Card -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="card p-3 h-100 card-hover bg-white">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Alerts & Actions</span>
+        {% if pending_leaves_count > 0 or open_complaints_count > 0 or overdue_fees_count > 0 %}
+          <span class="badge text-bg-danger rounded-pill">Action Needed</span>
+        {% else %}
+          <span class="badge text-bg-success rounded-pill">All Clear</span>
+        {% endif %}
+      </div>
+      <div class="d-flex align-items-baseline gap-2 mb-2">
+        <div class="stat" style="color:#d90429;">{{ pending_leaves_count }}</div>
+        <span class="text-muted">pending leaves</span>
+      </div>
+      <div class="d-flex flex-wrap gap-2 mb-2 small">
+        <span class="badge text-bg-light border text-dark">⚠️ {{ open_complaints_count }} open complaints</span>
+        <span class="badge text-bg-light border text-danger">💳 {{ overdue_fees_count }} overdue fees</span>
+      </div>
+      <div class="d-flex justify-content-between small text-muted mt-auto">
+        <span>Balance: <b>₹{{ total_balance_amount }}</b></span>
+        <a href="{% url 'leaves' %}" class="text-decoration-none">Review &rarr;</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CHARTS ROW 1: Pie / Donut Charts (Rooms, Attendance, Students) -->
+<div class="row g-3 mb-4">
+  <!-- Chart 1: Room & Bed Occupancy Pie -->
+  <div class="col-12 col-lg-4">
+    <div class="card p-3 h-100 bg-white">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">🛏️ Room & Bed Distribution</h6>
+        <span class="badge text-bg-light border">{{ total_beds }} Beds</span>
+      </div>
+      <div class="chart-box d-flex justify-content-center align-items-center">
+        <canvas id="roomPieChart"></canvas>
+      </div>
+      <div class="mt-3 pt-2 border-top">
+        <div class="row text-center g-2 small">
+          <div class="col-4">
+            <div class="fw-bold" style="color:#0b2545;">{{ occupied_beds }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Occupied</div>
+          </div>
+          <div class="col-4">
+            <div class="fw-bold text-success">{{ free_beds }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Available</div>
+          </div>
+          <div class="col-4">
+            <div class="fw-bold text-danger">{{ blacklisted_beds }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Maintenance</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart 2: Today's Attendance Pie -->
+  <div class="col-12 col-lg-4">
+    <div class="card p-3 h-100 bg-white">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">📋 Today's Attendance</h6>
+        <span class="badge text-bg-light border">{{ today|date:"d M" }}</span>
+      </div>
+      <div class="chart-box d-flex justify-content-center align-items-center">
+        <canvas id="attendancePieChart"></canvas>
+      </div>
+      <div class="mt-3 pt-2 border-top">
+        <div class="row text-center g-2 small">
+          <div class="col-3">
+            <div class="fw-bold text-success">{{ att_present }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Present</div>
+          </div>
+          <div class="col-3">
+            <div class="fw-bold text-danger">{{ att_absent }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Absent</div>
+          </div>
+          <div class="col-3">
+            <div class="fw-bold text-warning">{{ att_leave }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Leave</div>
+          </div>
+          <div class="col-3">
+            <div class="fw-bold text-secondary">{{ att_unmarked }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Unmarked</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart 3: Student Housing Status Pie -->
+  <div class="col-12 col-lg-4">
+    <div class="card p-3 h-100 bg-white">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">👥 Student Status</h6>
+        <span class="badge text-bg-light border">{{ active_student_count }} Active</span>
+      </div>
+      <div class="chart-box d-flex justify-content-center align-items-center">
+        <canvas id="studentPieChart"></canvas>
+      </div>
+      <div class="mt-3 pt-2 border-top">
+        <div class="row text-center g-2 small">
+          <div class="col-4">
+            <div class="fw-bold text-primary">{{ allocated_count }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Housed</div>
+          </div>
+          <div class="col-4">
+            <div class="fw-bold text-warning">{{ unallocated_count }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">No Room</div>
+          </div>
+          <div class="col-4">
+            <div class="fw-bold text-secondary">{{ inactive_student_count }}</div>
+            <div class="text-muted" style="font-size:0.75rem;">Left/Inactive</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CHARTS ROW 2: Block-by-Block Comparison & Financials -->
+<div class="row g-3 mb-4">
+  <!-- Bar Chart: Block-wise Capacity & Occupancy -->
+  <div class="col-12 col-lg-8">
+    <div class="card p-3 h-100 bg-white">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">🏢 Block Occupancy Breakdown</h6>
+          <span class="text-secondary small">Comparison of occupied beds versus available capacity per hostel block</span>
+        </div>
+        <a href="{% url 'rooms' %}" class="btn btn-sm btn-outline-secondary">All Rooms</a>
+      </div>
+      <div class="chart-box-bar mt-2">
+        <canvas id="blockBarChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fee Collection & Financial Progress Widget -->
+  <div class="col-12 col-lg-4">
+    <div class="card p-3 h-100 bg-white">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">💳 Fee Collection Progress</h6>
+        <span class="badge text-bg-light border">₹{{ total_fee_amount }} Total</span>
+      </div>
+
+      <div class="mb-3">
+        <div class="d-flex justify-content-between small mb-1">
+          <span class="text-secondary">Collection Rate</span>
+          <span class="fw-bold text-success">{{ fee_paid_pct }}% Collected</span>
+        </div>
+        <div class="progress" style="height: 12px; border-radius: 6px;">
+          <div class="progress-bar bg-success" role="progressbar" style="width: {{ fee_paid_pct }}%;"></div>
+        </div>
+      </div>
+
+      <ul class="list-group list-group-flush small mb-3">
+        <li class="list-group-item d-flex justify-content-between px-0 py-2">
+          <span class="text-muted">Total Invoiced Fees</span>
+          <span class="fw-bold">₹{{ total_fee_amount }}</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between px-0 py-2">
+          <span class="text-success fw-semibold">✓ Total Collected</span>
+          <span class="fw-bold text-success">₹{{ total_paid_amount }}</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between px-0 py-2">
+          <span class="text-danger fw-semibold">⚠️ Pending Balance</span>
+          <span class="fw-bold text-danger">₹{{ total_balance_amount }}</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between px-0 py-2">
+          <span class="text-muted">Overdue Accounts</span>
+          <span class="badge text-bg-danger rounded-pill">{{ overdue_fees_count }} overdue</span>
+        </li>
+      </ul>
+
+      <div class="mt-auto">
+        <a href="{% url 'fees' %}" class="btn btn-sm btn-outline-primary w-100 fw-semibold">
+          Open Fee Management &rarr;
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- OPERATIONAL WIDGETS ROW: Leaves, Complaints, Meal Menu -->
+<div class="row g-3 mb-4">
+  <!-- Widget 1: Pending Leave Requests -->
+  <div class="col-12 col-lg-4">
+    <div class="card h-100 bg-white">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small" style="color:var(--navy);">Pending Leaves ({{ pending_leaves_count }})</span>
+        <a href="{% url 'leaves' %}" class="small text-decoration-none">View All</a>
+      </div>
+      <div class="p-2">
+        {% for lv in pending_leaves %}
+          <div class="p-2 mb-2 border rounded bg-light d-flex justify-content-between align-items-center gap-2">
+            <div>
+              <div class="fw-semibold text-dark small">{{ lv.student.user.display_name }} ({{ lv.student.roll_no }})</div>
+              <div class="text-secondary" style="font-size:0.75rem;">
+                {{ lv.from_date|date:"d M" }} &rarr; {{ lv.to_date|date:"d M" }} · {{ lv.reason|truncatechars:25 }}
+              </div>
+            </div>
+            <div class="d-flex gap-1">
+              <form method="post" action="{% url 'leave_decide' lv.pk 'approve' %}" class="d-inline">
+                {% csrf_token %}
+                <button class="btn btn-sm btn-success py-0 px-2" title="Approve">✓</button>
+              </form>
+              <form method="post" action="{% url 'leave_decide' lv.pk 'reject' %}" class="d-inline">
+                {% csrf_token %}
+                <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Reject">✕</button>
+              </form>
+            </div>
+          </div>
+        {% empty %}
+          <div class="text-center text-muted py-4 small">
+            ✓ No pending leave requests to approve.
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Widget 2: Open Student Complaints -->
+  <div class="col-12 col-lg-4">
+    <div class="card h-100 bg-white">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small" style="color:var(--navy);">Open Complaints ({{ open_complaints_count }})</span>
+        <a href="{% url 'complaints' %}" class="small text-decoration-none">View All</a>
+      </div>
+      <div class="p-2">
+        {% for c in open_complaints %}
+          <div class="p-2 mb-2 border rounded bg-light">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="fw-semibold text-dark small">{{ c.title|truncatechars:30 }}</span>
+              <span class="badge text-bg-warning" style="font-size:0.7rem;">{{ c.get_status_display }}</span>
+            </div>
+            <div class="text-secondary" style="font-size:0.75rem;">
+              By {{ c.student.user.display_name }} ({{ c.student.room|default:'No room' }}) · {{ c.created_at|date:"d M" }}
+            </div>
+          </div>
+        {% empty %}
+          <div class="text-center text-muted py-4 small">
+            ✓ No open student complaints.
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Widget 3: Today's Meal Menu -->
+  <div class="col-12 col-lg-4">
+    <div class="card h-100 bg-white">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small" style="color:var(--navy);">🍲 Today's Meal Menu</span>
+        <a href="{% url 'menu_manage' %}" class="small text-decoration-none">Manage Menu</a>
+      </div>
+      <div class="p-2">
+        {% for m in today_menu %}
+          <div class="p-2 mb-2 border rounded bg-light d-flex align-items-center gap-2">
+            <span class="badge text-bg-primary rounded-pill px-2 py-1" style="font-size:0.75rem;">
+              {{ m.get_meal_display }}
+            </span>
+            <span class="small text-dark fw-medium">{{ m.items }}</span>
+          </div>
+        {% empty %}
+          <div class="text-center text-muted py-4 small">
+            Menu has not been configured for today yet.
+            <div class="mt-2"><a href="{% url 'menu_manage' %}" class="btn btn-sm btn-outline-secondary">Add Meal Menu</a></div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Chart.js Initialization Script -->
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  // Chart Colors
+  var navyColor = '#0b2545';
+  var greenColor = '#198754';
+  var redColor = '#dc3545';
+  var yellowColor = '#ffc107';
+  var grayColor = '#adb5bd';
+  var blueColor = '#0d6efd';
+  var orangeColor = '#fd7e14';
+
+  // 1. Room & Bed Occupancy Doughnut
+  var roomCtx = document.getElementById('roomPieChart');
+  if (roomCtx) {
+    new Chart(roomCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Occupied Beds', 'Available Beds', 'Maintenance Beds'],
+        datasets: [{
+          data: [{{ occupied_beds }}, {{ free_beds }}, {{ blacklisted_beds }}],
+          backgroundColor: [navyColor, greenColor, redColor],
+          borderWidth: 2,
+          borderColor: '#ffffff',
+          hoverOffset: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 } }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                var total = {{ total_beds }} || 1;
+                var val = context.parsed || 0;
+                var pct = Math.round((val / total) * 100);
+                return ' ' + context.label + ': ' + val + ' beds (' + pct + '%)';
+              }
+            }
+          }
+        },
+        cutout: '68%'
+      }
+    });
+  }
+
+  // 2. Today's Attendance Doughnut
+  var attCtx = document.getElementById('attendancePieChart');
+  if (attCtx) {
+    new Chart(attCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Present', 'Absent', 'On Leave', 'Unmarked'],
+        datasets: [{
+          data: [{{ att_present }}, {{ att_absent }}, {{ att_leave }}, {{ att_unmarked }}],
+          backgroundColor: [greenColor, redColor, yellowColor, grayColor],
+          borderWidth: 2,
+          borderColor: '#ffffff',
+          hoverOffset: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 } }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                var total = {{ active_student_count }} || 1;
+                var val = context.parsed || 0;
+                var pct = Math.round((val / total) * 100);
+                return ' ' + context.label + ': ' + val + ' students (' + pct + '%)';
+              }
+            }
+          }
+        },
+        cutout: '68%'
+      }
+    });
+  }
+
+  // 3. Student Housing Status Doughnut
+  var studentCtx = document.getElementById('studentPieChart');
+  if (studentCtx) {
+    new Chart(studentCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Allocated to Room', 'Awaiting Room', 'Checked Out'],
+        datasets: [{
+          data: [{{ allocated_count }}, {{ unallocated_count }}, {{ inactive_student_count }}],
+          backgroundColor: [blueColor, orangeColor, '#6c757d'],
+          borderWidth: 2,
+          borderColor: '#ffffff',
+          hoverOffset: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 } }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                var total = ({{ active_student_count }} + {{ inactive_student_count }}) || 1;
+                var val = context.parsed || 0;
+                var pct = Math.round((val / total) * 100);
+                return ' ' + context.label + ': ' + val + ' (' + pct + '%)';
+              }
+            }
+          }
+        },
+        cutout: '68%'
+      }
+    });
+  }
+
+  // 4. Block-by-Block Occupancy Bar Chart
+  var blockCtx = document.getElementById('blockBarChart');
+  if (blockCtx) {
+    new Chart(blockCtx, {
+      type: 'bar',
+      data: {
+        labels: [{% for b in block_labels %}'Block {{ b }}'{% if not forloop.last %}, {% endif %}{% endfor %}],
+        datasets: [
+          {
+            label: 'Occupied Beds',
+            data: [{% for v in block_occupied %}{{ v }}{% if not forloop.last %}, {% endif %}{% endfor %}],
+            backgroundColor: navyColor,
+            borderRadius: 6
+          },
+          {
+            label: 'Available Free Beds',
+            data: [{% for v in block_free %}{{ v }}{% if not forloop.last %}, {% endif %}{% endfor %}],
+            backgroundColor: greenColor,
+            borderRadius: 6
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            grid: { display: false }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { precision: 0 }
+          }
+        },
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { boxWidth: 14, font: { size: 12 } }
+          }
+        }
+      }
+    });
+  }
+});
+</script>
 {% endblock %}

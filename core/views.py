@@ -216,19 +216,120 @@ def allocation_vacate(request, pk):
 def home(request):
     u = request.user
     if u.role in STAFF:
-        students = m.Student.objects.filter(is_active=True)
-        beds = sum(r.capacity for r in m.Room.objects.all())
-        occ = m.RoomAllocation.objects.filter(end_date__isnull=True).count()
         today = date.today()
-        marked = m.Attendance.objects.filter(date=today).count()
+
+        # Student metrics
+        all_students = m.Student.objects.select_related("user")
+        active_students = all_students.filter(is_active=True)
+        active_student_count = active_students.count()
+        inactive_student_count = all_students.filter(is_active=False).count()
+
+        # Allocations
+        allocated_student_ids = set(m.RoomAllocation.objects.filter(end_date__isnull=True).values_list("student_id", flat=True))
+        allocated_count = len(allocated_student_ids)
+        unallocated_count = max(0, active_student_count - allocated_count)
+
+        # Rooms & Beds
+        all_rooms = list(m.Room.objects.all())
+        total_rooms = len(all_rooms)
+        total_beds = sum(r.capacity for r in all_rooms)
+        occupied_beds = allocated_count
+        blacklisted_rooms = [r for r in all_rooms if r.is_blacklisted]
+        blacklisted_beds = sum(r.capacity for r in blacklisted_rooms)
+        free_beds = max(0, total_beds - occupied_beds - blacklisted_beds)
+        effective_capacity = total_beds - blacklisted_beds
+        occupancy_pct = round(100 * occupied_beds / effective_capacity) if effective_capacity > 0 else 0
+
+        # Block-wise stats for bar chart
+        block_dict = {}
+        for r in all_rooms:
+            b = block_dict.setdefault(r.block, {"rooms": 0, "capacity": 0, "occupied": 0, "free": 0})
+            b["rooms"] += 1
+            b["capacity"] += r.capacity
+            b["occupied"] += r.occupied
+            b["free"] = max(0, b["capacity"] - b["occupied"])
+
+        block_labels = sorted(block_dict.keys())
+        block_capacities = [block_dict[k]["capacity"] for k in block_labels]
+        block_occupied = [block_dict[k]["occupied"] for k in block_labels]
+        block_free = [block_dict[k]["free"] for k in block_labels]
+
+        # Attendance metrics for today
+        today_att = m.Attendance.objects.filter(date=today)
+        att_marked_count = today_att.count()
+        att_present = today_att.filter(status="P").count()
+        att_absent = today_att.filter(status="A").count()
+        att_leave = today_att.filter(status="L").count()
+        att_unmarked = max(0, active_student_count - att_marked_count)
+        att_total_eval = att_present + att_absent
+        today_att_pct = round(100 * att_present / att_total_eval) if att_total_eval > 0 else (100 if att_present > 0 else 0)
+
+        # Pending items & alerts
+        pending_leaves = list(m.LeaveRequest.objects.filter(status="Pending").select_related("student__user").order_by("from_date")[:4])
+        pending_leaves_count = m.LeaveRequest.objects.filter(status="Pending").count()
+        open_complaints = list(m.Complaint.objects.exclude(status="Resolved").select_related("student__user").order_by("-created_at")[:4])
+        open_complaints_count = m.Complaint.objects.exclude(status="Resolved").count()
+
+        # Fees
+        all_fees = list(m.Fee.objects.all())
+        total_fee_amount = sum(f.amount for f in all_fees)
+        total_balance_amount = sum(f.balance for f in all_fees)
+        total_paid_amount = max(0, total_fee_amount - total_balance_amount)
+        fee_paid_pct = round(100 * total_paid_amount / total_fee_amount) if total_fee_amount > 0 else 100
+        overdue_fees_count = sum(1 for x in all_fees if x.due_date and x.due_date < today and x.balance > 0)
+
+        # Today's menu
+        today_menu = list(m.MealMenu.objects.filter(day=today.weekday()))
+
+        # Backward compatibility for any template referencing stats
         stats = [
-            ("Students staying", students.count(), "students"), ("Beds free", beds - occ, "rooms"),
-            ("Leave requests waiting", m.LeaveRequest.objects.filter(status="Pending").count(), "leaves"),
-            ("Open complaints", m.Complaint.objects.exclude(status="Resolved").count(), "complaints"),
-            ("Attendance marked today", f"{marked}/{students.count()}", "attendance"),
-            ("Fees overdue", sum(1 for x in m.Fee.objects.filter(due_date__lt=today) if x.balance > 0), "fees"),
+            ("Students staying", active_student_count, "students"),
+            ("Beds free", free_beds, "rooms"),
+            ("Leave requests waiting", pending_leaves_count, "leaves"),
+            ("Open complaints", open_complaints_count, "complaints"),
+            ("Attendance marked today", f"{att_marked_count}/{active_student_count}", "attendance"),
+            ("Fees overdue", overdue_fees_count, "fees"),
         ]
-        return show(request, "dashboard", stats=stats)
+
+        return show(
+            request,
+            "dashboard",
+            stats=stats,
+            today=today,
+            active_student_count=active_student_count,
+            inactive_student_count=inactive_student_count,
+            allocated_count=allocated_count,
+            unallocated_count=unallocated_count,
+            total_rooms=total_rooms,
+            total_beds=total_beds,
+            occupied_beds=occupied_beds,
+            free_beds=free_beds,
+            blacklisted_beds=blacklisted_beds,
+            blacklisted_rooms_count=len(blacklisted_rooms),
+            occupancy_pct=occupancy_pct,
+            block_labels=block_labels,
+            block_capacities=block_capacities,
+            block_occupied=block_occupied,
+            block_free=block_free,
+            att_marked_count=att_marked_count,
+            att_present=att_present,
+            att_absent=att_absent,
+            att_leave=att_leave,
+            att_unmarked=att_unmarked,
+            today_att_pct=today_att_pct,
+            pending_leaves=pending_leaves,
+            pending_leaves_count=pending_leaves_count,
+            open_complaints=open_complaints,
+            open_complaints_count=open_complaints_count,
+            total_fee_amount=total_fee_amount,
+            total_paid_amount=total_paid_amount,
+            total_balance_amount=total_balance_amount,
+            fee_paid_pct=fee_paid_pct,
+            overdue_fees_count=overdue_fees_count,
+            today_menu=today_menu,
+            badge=badge,
+        )
+
     if u.role == "student":
         return show(request, "overview", **overview(u.student, u))
     children = u.parent.children.select_related("user") if hasattr(u, "parent") else []
@@ -241,10 +342,28 @@ def overview(s, user):
     today = date.today()
     aud = ["all", "student" if user.role == "student" else "parent"]
     menu = m.MealMenu.objects.filter(day=today.weekday())
-    return dict(s=s, room=s.room, pct=s.attendance_percent(), balance=s.fee_balance, menu=menu,
-                complaints=s.complaints.exclude(status="Resolved").count(),
-                recent=s.attendance.all()[:10], fees=s.fees.prefetch_related("payments"),
-                notices=m.Announcement.objects.filter(audience__in=aud)[:5], badge=badge)
+
+    # Attendance statistics for student
+    att_qs = s.attendance.all()
+    p_count = att_qs.filter(status="P").count()
+    a_count = att_qs.filter(status="A").count()
+    l_count = att_qs.filter(status="L").count()
+
+    return dict(
+        s=s,
+        room=s.room,
+        pct=s.attendance_percent(),
+        p_count=p_count,
+        a_count=a_count,
+        l_count=l_count,
+        balance=s.fee_balance,
+        menu=menu,
+        complaints=s.complaints.exclude(status="Resolved").count(),
+        recent=att_qs[:10],
+        fees=s.fees.prefetch_related("payments"),
+        notices=m.Announcement.objects.filter(audience__in=aud)[:5],
+        badge=badge,
+    )
 
 
 @role_required("parent")
