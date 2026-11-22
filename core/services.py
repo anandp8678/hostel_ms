@@ -1,11 +1,13 @@
 from datetime import date, datetime
+import calendar
+from decimal import Decimal
 import re
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from .models import Parent, Room, RoomAllocation, Student, User
+from .models import Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
 
 
 def _split(name):
@@ -563,3 +565,97 @@ def import_rooms_csv(rows):
         "errors": errors,
     }
 
+
+
+def calculate_student_monthly_fee(student, year, month, config=None):
+    """
+    Calculates monthly hostel and mess fee for a student.
+    - Fixed rent: default ₹1500 (from config)
+    - Food charge: days_in_month * food_rate_per_day (default ₹130/day)
+    - Mess cut: checks consecutive absent days.
+      If absent for >= mess_cut_min_days (default 3 consecutive days),
+      reduces mess_cut_rate_per_day (default ₹130, food amount for one day).
+    All parameters are fully configurable via FeeConfig and editable by warden.
+    """
+    if config is None:
+        config = FeeConfig.get_config()
+
+    _, num_days = calendar.monthrange(year, month)
+    start_date = date(year, month, 1)
+    end_date = date(year, month, num_days)
+
+    # Attendance map for the month
+    att_qs = student.attendance.filter(date__gte=start_date, date__lte=end_date)
+    att_map = {a.date: a.status for a in att_qs}
+
+    # Detect absent streaks
+    absent_types = {"A"}
+    if config.count_leaves:
+        absent_types.add("L")
+
+    all_streaks = []
+    current_streak = []
+
+    for day_num in range(1, num_days + 1):
+        cur_date = date(year, month, day_num)
+        st = att_map.get(cur_date)
+        if st in absent_types:
+            current_streak.append(cur_date)
+        else:
+            if current_streak:
+                all_streaks.append(current_streak)
+                current_streak = []
+    if current_streak:
+        all_streaks.append(current_streak)
+
+    min_days = max(1, config.mess_cut_min_days)
+    qualifying_streaks = [s for s in all_streaks if len(s) >= min_days]
+    under_threshold_streaks = [s for s in all_streaks if len(s) < min_days]
+
+    # Calculate mess cut days
+    if config.mess_cut_mode == "per_streak":
+        # 1 day cut per 3 consecutive absent days
+        mess_cut_days = sum(len(s) // min_days for s in qualifying_streaks)
+    else:
+        # Full cut for every day in a qualifying consecutive streak
+        mess_cut_days = sum(len(s) for s in qualifying_streaks)
+
+    rent_amount = Decimal(str(config.rent_amount))
+    food_rate = Decimal(str(config.food_rate_per_day))
+    food_amount = Decimal(str(round(Decimal(num_days) * food_rate, 2)))
+    mess_cut_rate = Decimal(str(config.mess_cut_rate_per_day))
+    mess_cut_amount = Decimal(str(round(Decimal(mess_cut_days) * mess_cut_rate, 2)))
+    total_amount = max(Decimal("0.00"), rent_amount + food_amount - mess_cut_amount)
+
+    qualifying_details = []
+    for s in qualifying_streaks:
+        if len(s) == 1:
+            qualifying_details.append(f"{s[0].strftime('%d %b')}")
+        else:
+            qualifying_details.append(f"{s[0].strftime('%d %b')}–{s[-1].strftime('%d %b')} ({len(s)} consecutive days)")
+
+    under_threshold_details = []
+    for s in under_threshold_streaks:
+        if len(s) == 1:
+            under_threshold_details.append(f"{s[0].strftime('%d %b')}")
+        else:
+            under_threshold_details.append(f"{s[0].strftime('%d %b')}–{s[-1].strftime('%d %b')} ({len(s)} days)")
+
+    return {
+        "year": year,
+        "month": month,
+        "month_str": f"{year:04d}-{month:02d}",
+        "month_label": date(year, month, 1).strftime("%B %Y"),
+        "num_days": num_days,
+        "rent_amount": rent_amount,
+        "food_rate": food_rate,
+        "food_amount": food_amount,
+        "total_absent_days": sum(len(s) for s in all_streaks),
+        "qualifying_streaks": qualifying_streaks,
+        "qualifying_details": qualifying_details,
+        "under_threshold_details": under_threshold_details,
+        "mess_cut_days": mess_cut_days,
+        "mess_cut_rate": mess_cut_rate,
+        "mess_cut_amount": mess_cut_amount,
+        "total_amount": total_amount,
+    }

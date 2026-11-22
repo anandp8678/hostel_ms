@@ -24,6 +24,8 @@ urlpatterns = [
     path("leaves/", v.leaves, name="leaves"),
     path("leaves/<int:pk>/<str:decision>/", v.leave_decide, name="leave_decide"),
     path("allocations/<int:pk>/vacate/", v.allocation_vacate, name="allocation_vacate"),
+    path("fees/structure/", v.fee_structure, name="fee_structure"),
+    path("fees/calculate/", v.fees_calculate_monthly, name="fees_calculate_monthly"),
     path("fees/new/", v.fee_create, name="fees_new"),
     path("fees/<int:fee_id>/pay/", v.payment_new, name="payment_new"),
     path("wardens/new/", v.warden_new, name="wardens_new"),
@@ -32,6 +34,8 @@ urlpatterns = [
     path("me/attendance/", v.my_attendance, name="my_attendance"),
     path("me/leave/", v.my_leaves, name="my_leaves"),
     path("me/complaints/", v.my_complaints, name="my_complaints"),
+    path("me/complaints/<int:pk>/resolve/", v.my_complaint_resolve, name="my_complaint_resolve"),
+    path("me/complaints/<int:pk>/reopen/", v.my_complaint_reopen, name="my_complaint_reopen"),
     path("me/fees/", v.my_fees, name="my_fees"),
 ]
 special = {("fees", "new"), ("wardens", "new"), ("students", "new"), ("complaints", "new"), ("rooms", "list")}

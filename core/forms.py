@@ -128,10 +128,45 @@ class LeaveForm(MF):
         fields = ["from_date", "to_date", "reason"]
 
 
+class FeeConfigForm(MF):
+    class Meta:
+        model = m.FeeConfig
+        fields = [
+            "rent_amount",
+            "food_rate_per_day",
+            "mess_cut_min_days",
+            "mess_cut_rate_per_day",
+            "mess_cut_mode",
+            "count_leaves",
+        ]
+        labels = {
+            "rent_amount": "Fixed Monthly Rent (₹)",
+            "food_rate_per_day": "Food Rate per Day (₹)",
+            "mess_cut_min_days": "Consecutive Absent Days for Mess Cut",
+            "mess_cut_rate_per_day": "Mess Cut Deduction Rate per Day (₹)",
+            "mess_cut_mode": "Mess Cut Calculation Rule",
+            "count_leaves": "Include Approved Leaves as Absence for Mess Cut",
+        }
+        help_texts = {
+            "rent_amount": "Default fixed hostel room rent per student per month (e.g. ₹1500).",
+            "food_rate_per_day": "Daily food / mess charge (e.g. ₹130).",
+            "mess_cut_min_days": "Minimum consecutive absent days required to qualify for mess cut (default: 3 days).",
+            "mess_cut_rate_per_day": "Amount to reduce per eligible day (default: ₹130 = daily food rate).",
+        }
+
+
 class FeeForm(MF):
     class Meta:
         model = m.Fee
-        fields = ["student", "title", "amount", "due_date"]
+        fields = ["student", "title", "rent_amount", "food_amount", "mess_cut_days", "mess_cut_amount", "amount", "due_date", "notes"]
+        labels = {
+            "rent_amount": "Room Rent (₹)",
+            "food_amount": "Food Charges (₹)",
+            "mess_cut_days": "Mess Cut Days",
+            "mess_cut_amount": "Mess Cut Deduction (₹)",
+            "amount": "Total Net Payable (₹)",
+            "notes": "Breakdown Notes / Remarks",
+        }
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
@@ -140,6 +175,17 @@ class FeeForm(MF):
         self.fields["student"].queryset = m.Student.objects.filter(is_active=True)
         if self.instance.pk:
             self.fields["student"].disabled = True
+
+    def clean(self):
+        cd = super().clean()
+        rent = cd.get("rent_amount") or 0
+        food = cd.get("food_amount") or 0
+        mess_cut = cd.get("mess_cut_amount") or 0
+        amt = cd.get("amount")
+        if (rent or food) and (amt is None or amt == 0):
+            cd["amount"] = max(0, rent + food - mess_cut)
+            self.instance.amount = cd["amount"]
+        return cd
 
 
 class PaymentForm(MF):

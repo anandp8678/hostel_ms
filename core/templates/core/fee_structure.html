@@ -1,0 +1,140 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 style="color:var(--navy)" class="mb-1">⚙️ Hostel Fee Structure & Mess Cut Settings</h4>
+    <p class="text-secondary small mb-0">Configure fixed monthly rent, daily food rates, and attendance-based mess cut deduction rules.</p>
+  </div>
+  <div>
+    <a href="{% url 'fees_calculate_monthly' %}" class="btn btn-outline-primary me-2">⚡ Calculate Monthly Fees</a>
+    <a href="{% url 'fees' %}" class="btn btn-outline-secondary">&larr; Back to Fees</a>
+  </div>
+</div>
+
+<div class="row g-4">
+  <!-- Left column: Settings Form -->
+  <div class="col-12 col-lg-7">
+    <div class="card p-4 bg-white border-0 shadow-sm">
+      <h5 class="fw-bold mb-3" style="color:var(--navy);">Edit Fee Structure Parameters</h5>
+      <form method="post">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Fixed Room Rent (₹)</label>
+            <div class="input-group">
+              <span class="input-group-text">₹</span>
+              {{ form.rent_amount }}
+            </div>
+            <div class="form-text small text-muted">Fixed monthly room rent charged to each resident (e.g. ₹1500).</div>
+            {% if form.rent_amount.errors %}<div class="text-danger small">{{ form.rent_amount.errors|join:", " }}</div>{% endif %}
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Food Rate per Day (₹)</label>
+            <div class="input-group">
+              <span class="input-group-text">₹</span>
+              {{ form.food_rate_per_day }}
+            </div>
+            <div class="form-text small text-muted">Base food and dining cost per resident per day (e.g. ₹130).</div>
+            {% if form.food_rate_per_day.errors %}<div class="text-danger small">{{ form.food_rate_per_day.errors|join:", " }}</div>{% endif %}
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Consecutive Absent Days for Mess Cut</label>
+            <div class="input-group">
+              {{ form.mess_cut_min_days }}
+              <span class="input-group-text">days</span>
+            </div>
+            <div class="form-text small text-muted">Consecutive absence streak required to qualify for mess cut (default: 3 days).</div>
+            {% if form.mess_cut_min_days.errors %}<div class="text-danger small">{{ form.mess_cut_min_days.errors|join:", " }}</div>{% endif %}
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Mess Cut Deduction Rate (₹)</label>
+            <div class="input-group">
+              <span class="input-group-text">₹</span>
+              {{ form.mess_cut_rate_per_day }}
+            </div>
+            <div class="form-text small text-muted">Amount deducted for each mess cut day (e.g. ₹130 = daily food rate).</div>
+            {% if form.mess_cut_rate_per_day.errors %}<div class="text-danger small">{{ form.mess_cut_rate_per_day.errors|join:", " }}</div>{% endif %}
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold">Mess Cut Calculation Mode</label>
+            {{ form.mess_cut_mode }}
+            <div class="form-text small text-muted">
+              Choose whether each 3-consecutive-day absent streak reduces 1 day's food charge (₹130 per 3-day streak) or grants a full rebate for all consecutive absent days.
+            </div>
+            {% if form.mess_cut_mode.errors %}<div class="text-danger small">{{ form.mess_cut_mode.errors|join:", " }}</div>{% endif %}
+          </div>
+
+          <div class="col-12">
+            <div class="form-check p-2 bg-light rounded">
+              {{ form.count_leaves }}
+              <label class="form-check-label ms-2 fw-semibold" for="{{ form.count_leaves.id_for_label }}">
+                Count approved leave days towards consecutive absence streak
+              </label>
+              <div class="form-text small text-muted ps-4">
+                When enabled, days marked as On Leave ('L') will be counted together with Absent ('A') towards the 3-day streak requirement.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 d-flex gap-2">
+          <button type="submit" class="btn btn-navy fw-bold px-4">Save Fee Structure</button>
+          <a href="{% url 'fees' %}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Right column: Policy Preview & Summary -->
+  <div class="col-12 col-lg-5">
+    <div class="card p-4 bg-white border-0 shadow-sm mb-4">
+      <h6 class="fw-bold text-uppercase text-secondary small tracking-wider mb-3">Active Policy Overview</h6>
+      
+      <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
+        <span class="text-secondary small">🏠 Fixed Monthly Rent</span>
+        <span class="fw-bold text-dark fs-5">₹{{ cfg.rent_amount }}</span>
+      </div>
+
+      <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
+        <span class="text-secondary small">🍽️ Daily Food Rate</span>
+        <span class="fw-bold text-dark fs-5">₹{{ cfg.food_rate_per_day }} <small class="text-muted fw-normal" style="font-size:0.75rem;">/ day</small></span>
+      </div>
+
+      <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
+        <span class="text-secondary small">✂️ Mess Cut Threshold</span>
+        <span class="badge text-bg-primary fs-6">{{ cfg.mess_cut_min_days }}+ Consecutive Days</span>
+      </div>
+
+      <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
+        <span class="text-secondary small">💵 Mess Cut Deduction</span>
+        <span class="fw-bold text-success fs-5">-₹{{ cfg.mess_cut_rate_per_day }} <small class="text-muted fw-normal" style="font-size:0.75rem;">/ rebate day</small></span>
+      </div>
+
+      <div class="d-flex align-items-center justify-content-between p-2 bg-light rounded">
+        <span class="text-secondary small">📜 Deduction Rule</span>
+        <span class="fw-semibold small text-end text-dark">{{ cfg.get_mess_cut_mode_display }}</span>
+      </div>
+    </div>
+
+    <!-- Example Breakdown Card -->
+    <div class="card p-4 border-0 shadow-sm" style="background: linear-gradient(135deg, #eef5fc 0%, #ffffff 100%);">
+      <h6 class="fw-bold text-dark mb-2">💡 Example Calculation (30-Day Month)</h6>
+      <ul class="list-unstyled small mb-3">
+        <li class="mb-1 text-secondary">• <b>Fixed Rent:</b> ₹{{ cfg.rent_amount }}</li>
+        <li class="mb-1 text-secondary">• <b>Base Food (30 days @ ₹{{ cfg.food_rate_per_day }}):</b> ₹3,900</li>
+        <li class="mb-1 text-secondary">• <b>Gross Billed:</b> ₹5,400</li>
+        <li class="mb-1 text-success">• <b>Mess Cut (Absent for 3 consecutive days):</b> -₹{{ cfg.mess_cut_rate_per_day }}</li>
+        <li class="pt-2 border-top fw-bold text-dark fs-6">• <b>Net Payable Bill:</b> ₹5,270</li>
+      </ul>
+      <p class="small text-muted mb-0">
+        <i>Note: If a student is absent for only 1 or 2 days, no mess cut is applied according to policy rules. When generating monthly bills, the warden can also override or adjust any student's bill manually.</i>
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

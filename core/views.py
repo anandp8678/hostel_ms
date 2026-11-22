@@ -1,4 +1,5 @@
 import csv
+from decimal import Decimal
 import re
 from datetime import date, timedelta
 from functools import wraps
@@ -20,9 +21,11 @@ from .services import (
     bulk_create_rooms,
     bulk_create_rooms_floors,
     bulk_create_rooms_from_list,
+    calculate_student_monthly_fee,
     import_allocations,
     import_rooms_csv,
     import_rows,
+    parse_date,
 )
 
 
@@ -155,9 +158,17 @@ V["complaints"] = crud("complaints", m.Complaint, f.ComplaintStaffForm, "Complai
 V["menu_manage"] = crud("menu_manage", m.MealMenu, f.MenuForm, "Meal menu", [
     ("Day", lambda x: x.get_day_display()), ("Meal", lambda x: x.get_meal_display()), ("Items", lambda x: x.items)])
 V["fees"] = crud("fees", m.Fee, f.FeeForm, "Fees", [
-    ("Student", lambda x: x.student), ("Fee", lambda x: x.title), ("Amount", lambda x: x.amount), ("Paid", lambda x: x.paid),
-    ("Balance", lambda x: x.balance), ("Due", lambda x: date_s(x.due_date)), ("Status", lambda x: badge(x.status))],
-    qs=lambda: m.Fee.objects.select_related("student__user").prefetch_related("payments"), actions=fee_actions, add_label="Add fee")
+    ("Student", lambda x: x.student),
+    ("Fee", lambda x: x.title),
+    ("Rent", lambda x: f"₹{x.rent_amount}" if x.rent_amount else "—"),
+    ("Food", lambda x: f"₹{x.food_amount}" if x.food_amount else "—"),
+    ("Mess Cut", lambda x: f"-₹{x.mess_cut_amount} ({x.mess_cut_days}d)" if x.mess_cut_amount else "—"),
+    ("Total", lambda x: f"₹{x.amount}"),
+    ("Paid", lambda x: f"₹{x.paid}"),
+    ("Balance", lambda x: f"₹{x.balance}"),
+    ("Due", lambda x: date_s(x.due_date)),
+    ("Status", lambda x: badge(x.status))],
+    qs=lambda: m.Fee.objects.select_related("student__user").prefetch_related("payments"), actions=fee_actions, add_label="Add custom fee")
 V["announcements"] = crud("announcements", m.Announcement, f.AnnouncementForm, "Announcements", [
     ("Title", lambda a: a.title), ("For", lambda a: a.get_audience_display()), ("Posted", lambda a: date_s(a.created_at))],
     add_label="Post")
@@ -188,10 +199,183 @@ def fee_create(request):
     if request.method == "POST" and form.is_valid():
         d = form.cleaned_data
         targets = [d["student"]] if d["student"] else list(m.Student.objects.filter(is_active=True))
-        m.Fee.objects.bulk_create([m.Fee(student=s, title=d["title"], amount=d["amount"], due_date=d["due_date"]) for s in targets])
+        m.Fee.objects.bulk_create([
+            m.Fee(
+                student=s,
+                title=d["title"],
+                amount=d["amount"],
+                due_date=d["due_date"],
+                rent_amount=d.get("rent_amount") or Decimal("0.00"),
+                food_amount=d.get("food_amount") or Decimal("0.00"),
+                mess_cut_days=d.get("mess_cut_days") or 0,
+                mess_cut_amount=d.get("mess_cut_amount") or Decimal("0.00"),
+                notes=d.get("notes") or "",
+            )
+            for s in targets
+        ])
         messages.success(request, f"Fee added for {len(targets)} student(s).")
         return redirect("fees")
     return show(request, "form", title="Add fee", form=form, back=reverse("fees"))
+
+
+@staff
+def fee_structure(request):
+    """Allows wardens and admins to configure fixed rent, food daily rates, and mess cut rules."""
+    cfg = m.FeeConfig.get_config()
+    form = f.FeeConfigForm(request.POST or None, instance=cfg)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Fee structure and mess cut settings updated successfully.")
+        return redirect("fee_structure")
+    return render(request, "core/fee_structure.html", {
+        "title": "Fee Structure & Mess Cut Rules",
+        "form": form,
+        "cfg": cfg,
+    })
+
+
+@staff
+def fees_calculate_monthly(request):
+    """
+    Scans attendance records for consecutive absent days (>= 3 days),
+    calculates monthly hostel rent, food charges, and mess cut rebates.
+    Allows the warden to adjust any student's figures directly before saving bills.
+    """
+    cfg = m.FeeConfig.get_config()
+    today = date.today()
+
+    # Determine selected month
+    month_param = request.POST.get("month") or request.GET.get("month")
+    if month_param:
+        try:
+            parts = month_param.split("-")
+            year = int(parts[0])
+            month = int(parts[1])
+            selected_date = date(year, month, 1)
+        except (ValueError, IndexError):
+            selected_date = date(today.year, today.month, 1)
+            year, month = selected_date.year, selected_date.month
+    else:
+        selected_date = date(today.year, today.month, 1)
+        year, month = selected_date.year, selected_date.month
+
+    month_str = f"{year:04d}-{month:02d}"
+    month_label = selected_date.strftime("%B %Y")
+
+    # Generate available months list (current + past 11 months)
+    available_months = []
+    y, m_num = today.year, today.month
+    for _ in range(12):
+        d_val = date(y, m_num, 1)
+        available_months.append((d_val.strftime("%Y-%m"), d_val.strftime("%B %Y")))
+        if m_num == 1:
+            m_num = 12
+            y -= 1
+        else:
+            m_num -= 1
+
+    active_students = list(m.Student.objects.filter(is_active=True).select_related("user").prefetch_related("allocations__room"))
+
+    # Handle generation/saving of bills
+    if request.method == "POST" and "save_fees" in request.POST:
+        selected_student_ids = request.POST.getlist("selected_students")
+        due_date_str = request.POST.get("due_date")
+        title = (request.POST.get("title") or f"Hostel & Mess Fee - {month_label}").strip()
+        due_date = parse_date(due_date_str) if due_date_str else (selected_date + timedelta(days=39)).replace(day=10)
+
+        created_count = 0
+        updated_count = 0
+
+        for sid_str in selected_student_ids:
+            try:
+                sid = int(sid_str)
+                student = next((s for s in active_students if s.pk == sid), None)
+                if not student:
+                    continue
+
+                rent_val = Decimal(request.POST.get(f"rent_{sid}", str(cfg.rent_amount)))
+                food_val = Decimal(request.POST.get(f"food_{sid}", "0"))
+                mess_days_val = int(request.POST.get(f"mess_days_{sid}", "0"))
+                mess_cut_val = Decimal(request.POST.get(f"mess_cut_{sid}", "0"))
+                total_val = Decimal(request.POST.get(f"total_{sid}", str(max(Decimal("0.00"), rent_val + food_val - mess_cut_val))))
+
+                notes = f"Rent: ₹{rent_val} | Food: ₹{food_val} | Mess Cut: -₹{mess_cut_val} ({mess_days_val}d)"
+
+                existing = m.Fee.objects.filter(student=student, month=month_str).first()
+                if existing:
+                    existing.title = title
+                    existing.rent_amount = rent_val
+                    existing.food_amount = food_val
+                    existing.mess_cut_days = mess_days_val
+                    existing.mess_cut_amount = mess_cut_val
+                    existing.amount = total_val
+                    existing.due_date = due_date
+                    existing.notes = notes
+                    existing.save()
+                    updated_count += 1
+                else:
+                    m.Fee.objects.create(
+                        student=student,
+                        title=title,
+                        month=month_str,
+                        rent_amount=rent_val,
+                        food_amount=food_val,
+                        mess_cut_days=mess_days_val,
+                        mess_cut_amount=mess_cut_val,
+                        amount=total_val,
+                        due_date=due_date,
+                        notes=notes,
+                    )
+                    created_count += 1
+            except Exception:
+                continue
+
+        msg = f"Hostel & Mess fee bills saved for {created_count + updated_count} student(s) for {month_label}."
+        if updated_count:
+            msg += f" ({updated_count} existing bills updated)."
+        messages.success(request, msg)
+        return redirect("fees")
+
+    existing_fees = {f.student_id: f for f in m.Fee.objects.filter(month=month_str)}
+
+    calc_rows = []
+    total_projected = Decimal("0.00")
+    total_mess_cut_all = Decimal("0.00")
+
+    for s in active_students:
+        calc = calculate_student_monthly_fee(s, year, month, config=cfg)
+        ex = existing_fees.get(s.pk)
+        row = {
+            "student": s,
+            "room": s.room,
+            "calc": calc,
+            "existing_fee": ex,
+            "rent": ex.rent_amount if ex and ex.rent_amount else calc["rent_amount"],
+            "food": ex.food_amount if ex and ex.food_amount else calc["food_amount"],
+            "mess_days": ex.mess_cut_days if ex else calc["mess_cut_days"],
+            "mess_cut": ex.mess_cut_amount if ex and ex.mess_cut_amount else calc["mess_cut_amount"],
+            "total": ex.amount if ex else calc["total_amount"],
+        }
+        calc_rows.append(row)
+        total_projected += row["total"]
+        total_mess_cut_all += row["mess_cut"]
+
+    default_due = (selected_date + timedelta(days=39)).replace(day=10)
+
+    context = {
+        "title": f"Monthly Fee & Mess Cut Calculation · {month_label}",
+        "cfg": cfg,
+        "month_str": month_str,
+        "month_label": month_label,
+        "available_months": available_months,
+        "calc_rows": calc_rows,
+        "default_title": f"Hostel & Mess Fee - {month_label}",
+        "default_due": default_due.strftime("%Y-%m-%d"),
+        "total_students": len(active_students),
+        "total_projected": total_projected,
+        "total_mess_cut_all": total_mess_cut_all,
+    }
+    return render(request, "core/fees_calculate_monthly.html", context)
 
 
 @staff
@@ -403,6 +587,7 @@ def overview(s, user):
     # Leaves and complaints
     recent_leaves = list(s.leaves.all()[:5])
     open_complaints_count = s.complaints.exclude(status="Resolved").count()
+    my_complaints_list = list(s.complaints.all()[:3])
 
     # Wardens for emergency / inquiries
     wardens = list(m.User.objects.filter(role="warden", is_active=True))
@@ -425,6 +610,7 @@ def overview(s, user):
         fee_paid_pct=fee_paid_pct,
         menu=menu,
         complaints=open_complaints_count,
+        my_complaints=my_complaints_list,
         recent=att_qs[:10],
         recent_leaves=recent_leaves,
         fees=fees,
@@ -1079,12 +1265,52 @@ def my_complaints(request):
     s = _mine(request)
     form = f.ComplaintForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        c = form.save(commit=False); c.student = s; c.save()
-        messages.success(request, "Complaint submitted.")
+        c = form.save(commit=False)
+        c.student = s
+        c.save()
+        messages.success(request, "Complaint submitted to hostel administration.")
         return redirect("my_complaints")
-    rows = [(date_s(c.created_at), c.title, badge(c.status), c.staff_note or "—") for c in s.complaints.all()]
-    return show(request, "plain", title="Complaints", headers=["Filed", "Title", "Status", "Warden's note"], rows=rows,
-                form=form, form_title="New complaint", button="Submit complaint")
+
+    complaints_list = list(s.complaints.all())
+    return show(
+        request,
+        "my_complaints",
+        title="Hostel Complaints & Maintenance Desk",
+        form=form,
+        complaints=complaints_list,
+        total_count=len(complaints_list),
+        open_count=sum(1 for x in complaints_list if x.status != "Resolved"),
+        resolved_count=sum(1 for x in complaints_list if x.status == "Resolved"),
+        badge=badge,
+    )
+
+
+@role_required("student")
+@require_POST
+def my_complaint_resolve(request, pk):
+    s = _mine(request)
+    c = get_object_or_404(m.Complaint, pk=pk, student=s)
+    if c.status == "Resolved":
+        messages.info(request, f"Complaint '{c.title}' is already marked as solved.")
+    else:
+        c.status = "Resolved"
+        c.save(update_fields=["status"])
+        messages.success(request, f"Complaint '{c.title}' has been marked as solved. Thank you!")
+    return redirect(request.POST.get("next") or "my_complaints")
+
+
+@role_required("student")
+@require_POST
+def my_complaint_reopen(request, pk):
+    s = _mine(request)
+    c = get_object_or_404(m.Complaint, pk=pk, student=s)
+    if c.status != "Resolved":
+        messages.info(request, f"Complaint '{c.title}' is currently {c.status}.")
+    else:
+        c.status = "In Progress"
+        c.save(update_fields=["status"])
+        messages.success(request, f"Complaint '{c.title}' reopened for staff review.")
+    return redirect(request.POST.get("next") or "my_complaints")
 
 
 @role_required("student")
@@ -1103,9 +1329,26 @@ def my_leaves(request):
 @role_required("student")
 def my_fees(request):
     s = _mine(request)
-    rows = [(x.title, x.amount, x.paid, x.balance, date_s(x.due_date), badge(x.status)) for x in s.fees.all()]
-    return show(request, "plain", title="Fees", headers=["Fee", "Amount", "Paid", "Balance", "Due", "Status"], rows=rows,
-                note="Pay at the warden's office; the warden records your payment here.")
+    rows = [
+        (
+            x.title,
+            f"₹{x.rent_amount}" if x.rent_amount else "—",
+            f"₹{x.food_amount}" if x.food_amount else "—",
+            f"-₹{x.mess_cut_amount} ({x.mess_cut_days}d)" if x.mess_cut_amount else "—",
+            f"₹{x.amount}",
+            f"₹{x.paid}",
+            f"₹{x.balance}",
+            date_s(x.due_date),
+            badge(x.status),
+        )
+        for x in s.fees.all()
+    ]
+    return show(
+        request, "plain", title="Fees & Mess Bill Breakdown",
+        headers=["Fee Title", "Room Rent", "Food Charge", "Mess Cut Rebate", "Total Amount", "Paid", "Balance", "Due Date", "Status"],
+        rows=rows,
+        note="Hostel fee includes fixed room rent + daily food charge minus attendance-based mess cut (consecutive absences ≥ 3 days). Pay at the warden's office."
+    )
 
 
 @login_required

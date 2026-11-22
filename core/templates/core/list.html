@@ -3,6 +3,7 @@
 <div>{% if title == "Students" %}<a class="btn btn-outline-secondary me-2" href="{% url 'students_import' %}">Import CSV</a>{% endif %}
 {% if title == "Room allocations" %}<a class="btn btn-outline-secondary me-2" href="{% url 'allocations_import' %}">Import CSV</a>{% endif %}
 {% if title == "Rooms" %}<a class="btn btn-outline-secondary me-2" href="{% url 'rooms_bulk_add' %}">Bulk Add Rooms</a>{% endif %}
+{% if title == "Fees" %}<a class="btn btn-outline-primary me-2" href="{% url 'fees_calculate_monthly' %}">⚡ Calculate Monthly Fees</a><a class="btn btn-outline-secondary me-2" href="{% url 'fee_structure' %}">⚙️ Fee Structure & Mess Cut</a>{% endif %}
 {% if add %}<a class="btn btn-navy" href="{{ add }}">{{ add_label }}</a>{% endif %}</div></div>
 <div class="card"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
 <thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}<th></th></tr></thead><tbody>

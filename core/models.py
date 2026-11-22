@@ -1,5 +1,6 @@
 import re
 from datetime import date
+from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
@@ -228,14 +229,56 @@ class MealMenu(models.Model):
         ordering = ["day", "meal"]
 
 
+class FeeConfig(models.Model):
+    """Hostel fee structure configuration editable by warden and admin."""
+    rent_amount = models.DecimalField("Fixed Room Rent", max_digits=10, decimal_places=2, default=Decimal("1500.00"))
+    food_rate_per_day = models.DecimalField("Food Rate per Day", max_digits=10, decimal_places=2, default=Decimal("130.00"))
+    mess_cut_min_days = models.PositiveIntegerField("Min Consecutive Days for Mess Cut", default=3)
+    mess_cut_rate_per_day = models.DecimalField("Mess Cut Deduction per Day", max_digits=10, decimal_places=2, default=Decimal("130.00"))
+    MODE_CHOICES = [
+        ("per_streak", "1 day food cut (₹130) per 3 consecutive absent days"),
+        ("per_day", "Full mess cut: Deduct daily rate for all days in a qualifying consecutive streak (≥ min days)"),
+    ]
+    mess_cut_mode = models.CharField(max_length=20, choices=MODE_CHOICES, default="per_streak")
+    count_leaves = models.BooleanField("Count approved leave days towards consecutive absence", default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def get_config(cls):
+        cfg = cls.objects.first()
+        if not cfg:
+            cfg = cls.objects.create(
+                rent_amount=Decimal("1500.00"),
+                food_rate_per_day=Decimal("130.00"),
+                mess_cut_min_days=3,
+                mess_cut_rate_per_day=Decimal("130.00"),
+                mess_cut_mode="per_streak",
+                count_leaves=True,
+            )
+        return cfg
+
+    def __str__(self):
+        return f"Fee Structure (Rent: ₹{self.rent_amount}, Food/Day: ₹{self.food_rate_per_day}, Mess Cut: {self.mess_cut_min_days}+ days @ ₹{self.mess_cut_rate_per_day})"
+
+
 class Fee(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="fees")
     title = models.CharField(max_length=100)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     due_date = models.DateField()
+    month = models.CharField("Billing month (YYYY-MM)", max_length=7, blank=True)
+    rent_amount = models.DecimalField("Fixed Rent", max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    food_amount = models.DecimalField("Food Charge", max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    mess_cut_days = models.PositiveIntegerField("Mess Cut Days", default=0)
+    mess_cut_amount = models.DecimalField("Mess Cut Deduction", max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    notes = models.CharField("Notes / Breakdown", max_length=255, blank=True)
 
     class Meta:
         ordering = ["due_date"]
+
+    @property
+    def has_breakdown(self):
+        return bool(self.rent_amount > 0 or self.food_amount > 0 or self.mess_cut_amount > 0)
 
     @property
     def paid(self):

@@ -2,16 +2,19 @@ import csv
 import io
 from datetime import date
 
+from decimal import Decimal
+
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Attendance, Parent, Room, RoomAllocation, Student, User
+from core.models import Attendance, Complaint, Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
     bulk_create_rooms_floors,
     bulk_create_rooms_from_list,
+    calculate_student_monthly_fee,
     find_room,
     find_student,
     import_allocations,
@@ -784,5 +787,267 @@ class StudentRoommatesAndDirectoryTests(TestCase):
         self.assertIn("/login/", resp.url)
 
 
+class StudentComplaintResolutionTests(TestCase):
+    def setUp(self):
+        # Create Student 1
+        u1 = User.objects.create_user(username="student_c1", password="Pw1", role="student", first_name="Asha")
+        self.student1 = Student.objects.create(user=u1, roll_no="CMP101")
+
+        # Create Student 2
+        u2 = User.objects.create_user(username="student_c2", password="Pw2", role="student", first_name="Rahul")
+        self.student2 = Student.objects.create(user=u2, roll_no="CMP102")
+
+        # Create Complaint for Student 1
+        self.comp1 = Complaint.objects.create(
+            student=self.student1,
+            title="Fan not working",
+            description="The regulator is broken and fan is stuck at high speed.",
+            status="Submitted"
+        )
+
+    def test_student_can_view_complaints_page_and_submit_new(self):
+        c = Client()
+        c.force_login(self.student1.user)
+
+        resp = c.get(reverse("my_complaints"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Fan not working")
+        self.assertContains(resp, "Submitted")
+        self.assertContains(resp, "Mark as Solved")
+
+        # Submit new complaint
+        post_resp = c.post(reverse("my_complaints"), {
+            "title": "Water leakage in tap",
+            "description": "Bathroom tap is leaking continuously."
+        })
+        self.assertEqual(post_resp.status_code, 302)
+        self.assertTrue(Complaint.objects.filter(title="Water leakage in tap", student=self.student1).exists())
+
+    def test_student_can_mark_complaint_as_solved_after_admin_status_change(self):
+        c = Client()
+        c.force_login(self.student1.user)
+
+        # Admin / Warden notices and changes status to 'In Progress' with a staff note
+        self.comp1.status = "In Progress"
+        self.comp1.staff_note = "Electrician scheduled for today at 3:00 PM."
+        self.comp1.save()
+
+        # Student views complaint
+        resp = c.get(reverse("my_complaints"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "In Progress")
+        self.assertContains(resp, "Electrician scheduled for today at 3:00 PM.")
+        self.assertContains(resp, "Mark as Solved")
+
+        # Student marks complaint as resolved
+        resolve_resp = c.post(reverse("my_complaint_resolve", args=[self.comp1.pk]))
+        self.assertEqual(resolve_resp.status_code, 302)
+
+        # Verify status in DB
+        self.comp1.refresh_from_db()
+        self.assertEqual(self.comp1.status, "Resolved")
+
+        # Page now displays resolved badge
+        resp_after = c.get(reverse("my_complaints"))
+        self.assertContains(resp_after, "✓ Resolved")
+
+    def test_student_cannot_resolve_other_student_complaint(self):
+        c = Client()
+        c.force_login(self.student2.user)  # Student 2 attempts to resolve Student 1's complaint
+
+        resp = c.post(reverse("my_complaint_resolve", args=[self.comp1.pk]))
+        self.assertEqual(resp.status_code, 404)
+        self.comp1.refresh_from_db()
+        self.assertEqual(self.comp1.status, "Submitted")  # remains unchanged
 
 
+
+
+
+
+
+
+class FeeStructureAndMessCutTests(TestCase):
+    def setUp(self):
+        # Create Warden
+        self.warden_user = User.objects.create_user(
+            username="warden1", password="password123", role="warden", is_staff=True, first_name="Warden", last_name="Chief"
+        )
+        # Create Student
+        self.student_user = User.objects.create_user(
+            username="stud101", password="password123", role="student", first_name="Rahul", last_name="Sharma"
+        )
+        self.student = Student.objects.create(user=self.student_user, roll_no="CS101", is_active=True)
+        # Room
+        self.room = Room.objects.create(block="G", number="101", capacity=2)
+        RoomAllocation.objects.create(student=self.student, room=self.room, start_date=date(2026, 1, 1))
+
+    def test_fee_config_defaults_and_warden_edit(self):
+        cfg = FeeConfig.get_config()
+        self.assertEqual(cfg.rent_amount, Decimal("1500.00"))
+        self.assertEqual(cfg.food_rate_per_day, Decimal("130.00"))
+        self.assertEqual(cfg.mess_cut_min_days, 3)
+        self.assertEqual(cfg.mess_cut_rate_per_day, Decimal("130.00"))
+
+        c = Client()
+        c.force_login(self.warden_user)
+        resp = c.get(reverse("fee_structure"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "1500.00")
+        self.assertContains(resp, "130.00")
+
+        # Warden updates fee parameters
+        post_resp = c.post(reverse("fee_structure"), {
+            "rent_amount": "1650.00",
+            "food_rate_per_day": "140.00",
+            "mess_cut_min_days": "3",
+            "mess_cut_rate_per_day": "140.00",
+            "mess_cut_mode": "per_streak",
+            "count_leaves": True,
+        })
+        self.assertEqual(post_resp.status_code, 302)
+        cfg.refresh_from_db()
+        self.assertEqual(cfg.rent_amount, Decimal("1650.00"))
+        self.assertEqual(cfg.food_rate_per_day, Decimal("140.00"))
+        self.assertEqual(cfg.mess_cut_rate_per_day, Decimal("140.00"))
+
+    def test_mess_cut_consecutive_absent_days_rule(self):
+        # Month: November 2026 (30 days)
+        # 1. Full attendance -> no mess cut
+        calc_full = calculate_student_monthly_fee(self.student, 2026, 11)
+        self.assertEqual(calc_full["rent_amount"], Decimal("1500.00"))
+        self.assertEqual(calc_full["food_amount"], Decimal("3900.00"))  # 30 * 130
+        self.assertEqual(calc_full["mess_cut_days"], 0)
+        self.assertEqual(calc_full["mess_cut_amount"], Decimal("0.00"))
+        self.assertEqual(calc_full["total_amount"], Decimal("5400.00"))
+
+        # 2. Absent for 2 consecutive days -> below threshold of 3 days -> 0 mess cut
+        Attendance.objects.create(student=self.student, date=date(2026, 11, 4), status="A")
+        Attendance.objects.create(student=self.student, date=date(2026, 11, 5), status="A")
+        calc_2d = calculate_student_monthly_fee(self.student, 2026, 11)
+        self.assertEqual(calc_2d["mess_cut_days"], 0)
+        self.assertEqual(calc_2d["mess_cut_amount"], Decimal("0.00"))
+
+        # 3. Absent for 3 consecutive days -> qualifies!
+        Attendance.objects.create(student=self.student, date=date(2026, 11, 6), status="A")
+        calc_3d = calculate_student_monthly_fee(self.student, 2026, 11)
+        # Per streak mode (default): 1 day cut of ₹130
+        self.assertEqual(calc_3d["mess_cut_days"], 1)
+        self.assertEqual(calc_3d["mess_cut_amount"], Decimal("130.00"))
+        self.assertEqual(calc_3d["total_amount"], Decimal("5270.00"))  # 1500 + 3900 - 130
+
+        # 4. Another single absence later in the month (e.g. Nov 20) -> does not form 3 consecutive days
+        Attendance.objects.create(student=self.student, date=date(2026, 11, 20), status="A")
+        calc_extra = calculate_student_monthly_fee(self.student, 2026, 11)
+        self.assertEqual(calc_extra["mess_cut_days"], 1)  # still 1 from the 3-day streak
+        self.assertEqual(calc_extra["mess_cut_amount"], Decimal("130.00"))
+
+    def test_mess_cut_full_cut_mode(self):
+        cfg = FeeConfig.get_config()
+        cfg.mess_cut_mode = "per_day"
+        cfg.save()
+
+        # Absent for 3 consecutive days: Nov 10, 11, 12
+        for d in (10, 11, 12):
+            Attendance.objects.create(student=self.student, date=date(2026, 11, d), status="A")
+
+        calc = calculate_student_monthly_fee(self.student, 2026, 11, config=cfg)
+        self.assertEqual(calc["mess_cut_days"], 3)
+        self.assertEqual(calc["mess_cut_amount"], Decimal("390.00"))  # 3 * 130
+        self.assertEqual(calc["total_amount"], Decimal("5010.00"))  # 1500 + 3900 - 390
+
+    def test_warden_generate_monthly_fees_and_manual_override(self):
+        # Mark 3 consecutive absences
+        for d in (5, 6, 7):
+            Attendance.objects.create(student=self.student, date=date(2026, 11, d), status="A")
+
+        c = Client()
+        c.force_login(self.warden_user)
+
+        # GET calculation page
+        resp = c.get(reverse("fees_calculate_monthly") + "?month=2026-11")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Rahul Sharma")
+        self.assertContains(resp, "1500.00")
+        self.assertContains(resp, "3900.00")
+        self.assertContains(resp, "130.00")
+
+        # Warden modifies the rent to 1400 and mess cut to 260 for this student
+        post_data = {
+            "save_fees": "1",
+            "month": "2026-11",
+            "title": "Hostel & Mess Fee - November 2026",
+            "due_date": "2026-12-10",
+            "selected_students": [str(self.student.pk)],
+            f"rent_{self.student.pk}": "1400.00",
+            f"food_{self.student.pk}": "3900.00",
+            f"mess_days_{self.student.pk}": "2",
+            f"mess_cut_{self.student.pk}": "260.00",
+            f"total_{self.student.pk}": "5040.00",
+        }
+        gen_resp = c.post(reverse("fees_calculate_monthly"), post_data)
+        self.assertEqual(gen_resp.status_code, 302)
+
+        # Verify Fee created in DB with warden's edited values
+        fee = Fee.objects.filter(student=self.student, month="2026-11").first()
+        self.assertIsNotNone(fee)
+        self.assertEqual(fee.rent_amount, Decimal("1400.00"))
+        self.assertEqual(fee.food_amount, Decimal("3900.00"))
+        self.assertEqual(fee.mess_cut_days, 2)
+        self.assertEqual(fee.mess_cut_amount, Decimal("260.00"))
+        self.assertEqual(fee.amount, Decimal("5040.00"))
+
+    def test_student_can_view_fee_breakdown_with_mess_cut(self):
+        fee = Fee.objects.create(
+            student=self.student,
+            title="Hostel & Mess Fee - November 2026",
+            month="2026-11",
+            rent_amount=Decimal("1500.00"),
+            food_amount=Decimal("3900.00"),
+            mess_cut_days=1,
+            mess_cut_amount=Decimal("130.00"),
+            amount=Decimal("5270.00"),
+            due_date=date(2026, 12, 10),
+        )
+
+        c = Client()
+        c.force_login(self.student_user)
+
+        # Student checks /me/fees/
+        resp = c.get(reverse("my_fees"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Hostel &amp; Mess Fee - November 2026")
+        self.assertContains(resp, "₹1500.00")
+        self.assertContains(resp, "₹3900.00")
+        self.assertContains(resp, "-₹130.00")
+        self.assertContains(resp, "₹5270.00")
+
+    def test_warden_can_edit_existing_fee(self):
+        fee = Fee.objects.create(
+            student=self.student,
+            title="Hostel Fee",
+            rent_amount=Decimal("1500.00"),
+            food_amount=Decimal("3900.00"),
+            mess_cut_amount=Decimal("0.00"),
+            amount=Decimal("5400.00"),
+            due_date=date(2026, 12, 10),
+        )
+
+        c = Client()
+        c.force_login(self.warden_user)
+
+        # Warden edits the fee to grant a mess cut
+        edit_resp = c.post(reverse("fees_edit", args=[fee.pk]), {
+            "title": "Hostel Fee (Adjusted)",
+            "rent_amount": "1500.00",
+            "food_amount": "3900.00",
+            "mess_cut_days": "1",
+            "mess_cut_amount": "130.00",
+            "amount": "5270.00",
+            "due_date": "2026-12-10",
+        })
+        self.assertEqual(edit_resp.status_code, 302)
+        fee.refresh_from_db()
+        self.assertEqual(fee.mess_cut_days, 1)
+        self.assertEqual(fee.mess_cut_amount, Decimal("130.00"))
+        self.assertEqual(fee.amount, Decimal("5270.00"))

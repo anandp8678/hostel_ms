@@ -1,0 +1,283 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+  <div>
+    <h4 style="color:var(--navy)" class="mb-1">⚡ Calculate Monthly Fees & Mess Cut</h4>
+    <p class="text-secondary small mb-0">
+      Automated calculation based on attendance: Fixed Rent ₹{{ cfg.rent_amount }} + Food ({{ calc_rows.0.calc.num_days|default:30 }} days @ ₹{{ cfg.food_rate_per_day }}/day) minus Mess Cut (absent ≥ {{ cfg.mess_cut_min_days }} consecutive days).
+    </p>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <!-- Month Selector -->
+    <form method="get" class="d-flex align-items-center gap-2">
+      <label class="small text-secondary fw-semibold text-nowrap">Month:</label>
+      <select name="month" class="form-select form-select-sm" onchange="this.form.submit()">
+        {% for m_val, m_lbl in available_months %}
+          <option value="{{ m_val }}" {% if m_val == month_str %}selected{% endif %}>{{ m_lbl }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    <a href="{% url 'fee_structure' %}" class="btn btn-sm btn-outline-secondary text-nowrap">⚙️ Settings</a>
+    <a href="{% url 'fees' %}" class="btn btn-sm btn-outline-secondary text-nowrap">&larr; Fees</a>
+  </div>
+</div>
+
+<!-- Policy Alert Callout -->
+<div class="alert alert-info py-2 px-3 mb-4 d-flex flex-wrap justify-content-between align-items-center gap-2">
+  <div class="small">
+    <b>Active Fee Policy:</b> Fixed Rent: <b>₹{{ cfg.rent_amount }}</b> · Food Rate: <b>₹{{ cfg.food_rate_per_day }}/day</b> · Mess Cut Threshold: <b>{{ cfg.mess_cut_min_days }}+ consecutive absent days</b> (Rebate: <b>-₹{{ cfg.mess_cut_rate_per_day }}</b> per eligible day/streak).
+  </div>
+  <a href="{% url 'fee_structure' %}" class="btn btn-sm btn-info text-dark fw-semibold py-0 px-2" style="font-size:0.8rem;">Edit Policy</a>
+</div>
+
+<!-- Summary Cards -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card p-3 bg-white border-0 shadow-sm text-center">
+      <div class="text-secondary small">Active Students</div>
+      <div class="stat mt-1" style="font-size: 1.5rem;">{{ total_students }}</div>
+      <div class="text-muted small" style="font-size: 0.75rem;">Currently staying</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 bg-white border-0 shadow-sm text-center">
+      <div class="text-secondary small">Month Duration</div>
+      <div class="stat mt-1 text-primary" style="font-size: 1.5rem;">{{ calc_rows.0.calc.num_days|default:30 }} Days</div>
+      <div class="text-muted small" style="font-size: 0.75rem;">{{ month_label }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 bg-white border-0 shadow-sm text-center">
+      <div class="text-secondary small">Total Mess Cut Deductions</div>
+      <div class="stat mt-1 text-success" id="summaryTotalMessCut" style="font-size: 1.5rem;">-₹{{ total_mess_cut_all }}</div>
+      <div class="text-muted small" style="font-size: 0.75rem;">Calculated rebates</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 bg-white border-0 shadow-sm text-center">
+      <div class="text-secondary small">Projected Total Billed</div>
+      <div class="stat mt-1 text-dark" id="summaryTotalProjected" style="font-size: 1.5rem;">₹{{ total_projected }}</div>
+      <div class="text-muted small" style="font-size: 0.75rem;">Net payable total</div>
+    </div>
+  </div>
+</div>
+
+<!-- Calculation & Generation Form -->
+<form method="post" id="monthlyFeeForm">
+  {% csrf_token %}
+  <input type="hidden" name="month" value="{{ month_str }}">
+
+  <!-- Batch Settings Bar -->
+  <div class="card p-3 mb-3 bg-white border-0 shadow-sm">
+    <div class="row g-3 align-items-center">
+      <div class="col-12 col-md-5">
+        <label class="form-label small fw-semibold mb-1">Bill Title Pattern</label>
+        <input type="text" name="title" class="form-control form-control-sm" value="{{ default_title }}" required>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label small fw-semibold mb-1">Payment Due Date</label>
+        <input type="date" name="due_date" class="form-control form-control-sm" value="{{ default_due }}" required>
+      </div>
+      <div class="col-12 col-md-3 text-md-end pt-md-3">
+        <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="toggleSelectAll(true)">Select All</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleSelectAll(false)">Deselect All</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Student Breakdown Table -->
+  <div class="card bg-white border-0 shadow-sm overflow-hidden mb-4">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 px-3 border-bottom">
+      <span class="fw-bold small" style="color:var(--navy);">Resident Calculation Breakdown & Warden Adjustment Table</span>
+      <span class="text-muted small">Warden can directly edit any Rent, Food, or Mess Cut value below</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0" id="calculationTable" style="font-size: 0.88rem;">
+        <thead>
+          <tr class="table-light">
+            <th style="width: 40px;" class="text-center">
+              <input type="checkbox" id="masterCheckbox" class="form-check-input" checked onclick="toggleSelectAll(this.checked)">
+            </th>
+            <th>Resident / Roll No</th>
+            <th>Room</th>
+            <th style="min-width: 220px;">Attendance & Absence Streaks</th>
+            <th style="width: 120px;">Rent (₹)</th>
+            <th style="width: 130px;">Food (₹)</th>
+            <th style="width: 100px;">Mess Days</th>
+            <th style="width: 130px;">Mess Cut (₹)</th>
+            <th style="width: 140px;">Total (₹)</th>
+            <th style="width: 110px;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in calc_rows %}
+            {% with s=r.student c=r.calc %}
+              <tr id="row_{{ s.pk }}">
+                <td class="text-center">
+                  <input type="checkbox" name="selected_students" value="{{ s.pk }}" class="form-check-input student-check" checked onchange="updateSummaryTotals()">
+                </td>
+                <td>
+                  <div class="fw-bold text-dark">{{ s.user.display_name }}</div>
+                  <div class="text-muted small" style="font-size:0.75rem;">Roll: {{ s.roll_no }}</div>
+                </td>
+                <td>
+                  {% if r.room %}
+                    <span class="badge text-bg-light border text-dark">{{ r.room }}</span>
+                  {% else %}
+                    <span class="text-muted small">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div class="small">
+                    {% if c.total_absent_days == 0 %}
+                      <span class="badge text-bg-success-subtle text-success border border-success-subtle">✓ 100% Present</span>
+                    {% else %}
+                      <span class="text-muted">Absent: {{ c.total_absent_days }}d</span>
+                      {% if c.qualifying_details %}
+                        <div class="mt-1">
+                          {% for q in c.qualifying_details %}
+                            <span class="badge text-bg-success" title="Qualifies for Mess Cut (≥{{ cfg.mess_cut_min_days }} consecutive days)">
+                              ✂️ {{ q }}
+                            </span>
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+                      {% if c.under_threshold_details %}
+                        <div class="mt-1">
+                          {% for u in c.under_threshold_details %}
+                            <span class="badge text-bg-secondary" title="Below {{ cfg.mess_cut_min_days }} consecutive days threshold (no cut)">
+                              {{ u }}
+                            </span>
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+                    {% endif %}
+                  </div>
+                </td>
+                <td>
+                  <input type="number" step="0.01" class="form-control form-control-sm rent-field"
+                         name="rent_{{ s.pk }}" id="rent_{{ s.pk }}" value="{{ r.rent }}"
+                         oninput="recalculateRow({{ s.pk }})" required>
+                </td>
+                <td>
+                  <input type="number" step="0.01" class="form-control form-control-sm food-field"
+                         name="food_{{ s.pk }}" id="food_{{ s.pk }}" value="{{ r.food }}"
+                         oninput="recalculateRow({{ s.pk }})" required>
+                  <div class="text-muted text-end" style="font-size:0.68rem;">{{ c.num_days }}d @ ₹{{ cfg.food_rate_per_day }}</div>
+                </td>
+                <td>
+                  <input type="number" min="0" class="form-control form-control-sm mess-days-field text-center"
+                         name="mess_days_{{ s.pk }}" id="mess_days_{{ s.pk }}" value="{{ r.mess_days }}"
+                         oninput="onMessDaysChanged({{ s.pk }})">
+                </td>
+                <td>
+                  <input type="number" step="0.01" class="form-control form-control-sm mess-cut-field text-danger fw-semibold"
+                         name="mess_cut_{{ s.pk }}" id="mess_cut_{{ s.pk }}" value="{{ r.mess_cut }}"
+                         oninput="recalculateRow({{ s.pk }})">
+                </td>
+                <td>
+                  <input type="number" step="0.01" class="form-control form-control-sm total-field fw-bold text-dark"
+                         name="total_{{ s.pk }}" id="total_{{ s.pk }}" value="{{ r.total }}"
+                         oninput="updateSummaryTotals()">
+                </td>
+                <td>
+                  {% if r.existing_fee %}
+                    <span class="badge text-bg-warning text-dark" title="Existing bill will be updated">
+                      Update (₹{{ r.existing_fee.amount }})
+                    </span>
+                  {% else %}
+                    <span class="badge text-bg-primary">New Bill</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endwith %}
+          {% empty %}
+            <tr>
+              <td colspan="10" class="text-center text-secondary py-4">No active students found staying in the hostel.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Bottom Action Sticky Bar -->
+  <div class="card p-3 bg-white border-0 shadow-sm d-flex flex-row justify-content-between align-items-center">
+    <div class="text-secondary small">
+      <span id="selectedCountDisplay" class="fw-bold text-dark">{{ total_students }}</span> students selected for bill generation.
+    </div>
+    <div>
+      <a href="{% url 'fees' %}" class="btn btn-outline-secondary me-2">Cancel</a>
+      <button type="submit" name="save_fees" class="btn btn-navy px-4 py-2 fw-bold">
+        ✓ Save & Generate Fee Bills
+      </button>
+    </div>
+  </div>
+</form>
+
+<script>
+const MESS_CUT_RATE = parseFloat("{{ cfg.mess_cut_rate_per_day }}") || 130.0;
+
+function recalculateRow(studentId) {
+  const rentEl = document.getElementById("rent_" + studentId);
+  const foodEl = document.getElementById("food_" + studentId);
+  const cutEl = document.getElementById("mess_cut_" + studentId);
+  const totalEl = document.getElementById("total_" + studentId);
+
+  const rent = parseFloat(rentEl.value) || 0;
+  const food = parseFloat(foodEl.value) || 0;
+  const cut = parseFloat(cutEl.value) || 0;
+
+  const total = Math.max(0, rent + food - cut);
+  totalEl.value = total.toFixed(2);
+
+  updateSummaryTotals();
+}
+
+function onMessDaysChanged(studentId) {
+  const daysEl = document.getElementById("mess_days_" + studentId);
+  const cutEl = document.getElementById("mess_cut_" + studentId);
+  const days = parseInt(daysEl.value, 10) || 0;
+
+  cutEl.value = (days * MESS_CUT_RATE).toFixed(2);
+  recalculateRow(studentId);
+}
+
+function toggleSelectAll(checked) {
+  const checkboxes = document.querySelectorAll(".student-check");
+  checkboxes.forEach(cb => { cb.checked = checked; });
+  const master = document.getElementById("masterCheckbox");
+  if (master) master.checked = checked;
+  updateSummaryTotals();
+}
+
+function updateSummaryTotals() {
+  let totalBilled = 0;
+  let totalMessCut = 0;
+  let selectedCount = 0;
+
+  const rows = document.querySelectorAll("#calculationTable tbody tr");
+  rows.forEach(row => {
+    const cb = row.querySelector(".student-check");
+    if (cb && cb.checked) {
+      selectedCount++;
+      const cutField = row.querySelector(".mess-cut-field");
+      const totalField = row.querySelector(".total-field");
+      if (cutField) totalMessCut += parseFloat(cutField.value) || 0;
+      if (totalField) totalBilled += parseFloat(totalField.value) || 0;
+    }
+  });
+
+  const projEl = document.getElementById("summaryTotalProjected");
+  const cutEl = document.getElementById("summaryTotalMessCut");
+  const countEl = document.getElementById("selectedCountDisplay");
+
+  if (projEl) projEl.textContent = "₹" + totalBilled.toFixed(2);
+  if (cutEl) cutEl.textContent = "-₹" + totalMessCut.toFixed(2);
+  if (countEl) countEl.textContent = selectedCount;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  updateSummaryTotals();
+});
+</script>
+{% endblock %}
