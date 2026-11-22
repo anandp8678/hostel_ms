@@ -1,6 +1,6 @@
 import csv
 import io
-from datetime import date
+from datetime import date, timedelta
 
 from decimal import Decimal
 
@@ -1051,3 +1051,105 @@ class FeeStructureAndMessCutTests(TestCase):
         self.assertEqual(fee.mess_cut_days, 1)
         self.assertEqual(fee.mess_cut_amount, Decimal("130.00"))
         self.assertEqual(fee.amount, Decimal("5270.00"))
+
+    def test_late_fine_accumulation_every_5_days(self):
+        # Bill with base rent ₹1500 + food ₹3900 - mess cut ₹130 = ₹5270
+        due = date(2026, 11, 10)
+        fee = Fee.objects.create(
+            student=self.student,
+            title="Hostel & Mess Fee - November 2026",
+            rent_amount=Decimal("1500.00"),
+            food_amount=Decimal("3900.00"),
+            mess_cut_amount=Decimal("130.00"),
+            base_amount=Decimal("5270.00"),
+            amount=Decimal("5270.00"),
+            due_date=due,
+        )
+
+        # 0 days overdue (on due date): fine is 0
+        self.assertEqual(fee.calculate_late_fine(as_of=due), Decimal("0.00"))
+
+        # 4 days overdue: fine is 0
+        self.assertEqual(fee.calculate_late_fine(as_of=date(2026, 11, 14)), Decimal("0.00"))
+
+        # 5 days overdue (after 5 days): fine of ₹300 added
+        self.assertEqual(fee.calculate_late_fine(as_of=date(2026, 11, 15)), Decimal("300.00"))
+        fee.sync_late_fine(as_of=date(2026, 11, 15))
+        self.assertEqual(fee.fine_amount, Decimal("300.00"))
+        self.assertEqual(fee.amount, Decimal("5570.00"))
+        self.assertEqual(fee.balance, Decimal("5570.00"))
+
+        # 9 days overdue: fine remains ₹300
+        self.assertEqual(fee.calculate_late_fine(as_of=date(2026, 11, 19)), Decimal("300.00"))
+
+        # 10 days overdue (another 5 days): fine becomes ₹600
+        self.assertEqual(fee.calculate_late_fine(as_of=date(2026, 11, 20)), Decimal("600.00"))
+        fee.sync_late_fine(as_of=date(2026, 11, 20))
+        self.assertEqual(fee.fine_amount, Decimal("600.00"))
+        self.assertEqual(fee.amount, Decimal("5870.00"))
+
+        # 15 days overdue: fine becomes ₹900
+        self.assertEqual(fee.calculate_late_fine(as_of=date(2026, 11, 25)), Decimal("900.00"))
+        fee.sync_late_fine(as_of=date(2026, 11, 25))
+        self.assertEqual(fee.fine_amount, Decimal("900.00"))
+        self.assertEqual(fee.amount, Decimal("6170.00"))
+
+    def test_warden_can_waive_late_fine(self):
+        due = date(2026, 11, 10)
+        fee = Fee.objects.create(
+            student=self.student,
+            title="Hostel & Mess Fee - November 2026",
+            base_amount=Decimal("5270.00"),
+            amount=Decimal("5270.00"),
+            due_date=due,
+        )
+        # 5 days overdue -> fine is 300
+        fee.sync_late_fine(as_of=date(2026, 11, 15))
+        self.assertEqual(fee.fine_amount, Decimal("300.00"))
+        self.assertEqual(fee.amount, Decimal("5570.00"))
+
+        c = Client()
+        c.force_login(self.warden_user)
+
+        # Warden waives fine
+        resp = c.post(reverse("fee_waive_fine", args=[fee.pk]))
+        self.assertEqual(resp.status_code, 302)
+
+        fee.refresh_from_db()
+        self.assertTrue(fee.fine_waived)
+        self.assertEqual(fee.fine_amount, Decimal("0.00"))
+        self.assertEqual(fee.amount, Decimal("5270.00"))
+
+    def test_payment_with_late_fine(self):
+        due = date.today() - timedelta(days=5)
+        fee = Fee.objects.create(
+            student=self.student,
+            title="Hostel & Mess Fee - November 2026",
+            base_amount=Decimal("5270.00"),
+            amount=Decimal("5270.00"),
+            due_date=due,
+        )
+        fee.sync_late_fine()
+        self.assertEqual(fee.fine_amount, Decimal("300.00"))
+        self.assertEqual(fee.amount, Decimal("5570.00"))
+
+        c = Client()
+        c.force_login(self.warden_user)
+
+        # Payment initial balance includes fine
+        get_resp = c.get(reverse("payment_new", args=[fee.pk]))
+        self.assertEqual(get_resp.status_code, 200)
+        self.assertContains(get_resp, "5570.00")
+
+        # Record payment of 5570
+        pay_resp = c.post(reverse("payment_new", args=[fee.pk]), {
+            "amount": "5570.00",
+            "paid_on": str(date.today()),
+            "method": "Bank Transfer",
+            "reference": "TXN12345",
+        })
+        self.assertEqual(pay_resp.status_code, 302)
+
+        fee.refresh_from_db()
+        self.assertEqual(fee.balance, Decimal("0.00"))
+        self.assertEqual(fee.status, "Paid")

@@ -612,6 +612,11 @@
                     · <span class="text-success fw-semibold">Mess Cut: -₹{{ x.mess_cut_amount }} ({{ x.mess_cut_days }}d)</span>
                   {% endif %}
                 {% endif %}
+                {% if x.fine_amount > 0 %}
+                  · <span class="text-danger fw-semibold">Late Fine: +₹{{ x.fine_amount }} ({{ x.overdue_days }}d overdue)</span>
+                {% elif x.fine_waived %}
+                  · <span class="text-muted fw-semibold">Late Fine: Waived</span>
+                {% endif %}
               </div>
             </div>
             <div class="text-end">

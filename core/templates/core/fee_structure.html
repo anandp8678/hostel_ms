@@ -80,6 +80,32 @@
               </div>
             </div>
           </div>
+
+          <!-- Late Fine Rules Section -->
+          <div class="col-12 mt-4 pt-3 border-top">
+            <h6 class="fw-bold mb-2" style="color:var(--navy);">⚠️ Overdue Late Fine Configuration</h6>
+            <p class="small text-muted mb-3">If a student fails to pay before the due date, a recurring fine is automatically added for every 5 overdue days.</p>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Late Fine Amount (₹)</label>
+            <div class="input-group">
+              <span class="input-group-text">₹</span>
+              {{ form.late_fine_amount }}
+            </div>
+            <div class="form-text small text-muted">Additional fine charged for every overdue interval (default: ₹300).</div>
+            {% if form.late_fine_amount.errors %}<div class="text-danger small">{{ form.late_fine_amount.errors|join:", " }}</div>{% endif %}
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Fine Interval (Days)</label>
+            <div class="input-group">
+              {{ form.late_fine_interval_days }}
+              <span class="input-group-text">days</span>
+            </div>
+            <div class="form-text small text-muted">Number of days after which an additional fine is added (default: 5 days).</div>
+            {% if form.late_fine_interval_days.errors %}<div class="text-danger small">{{ form.late_fine_interval_days.errors|join:", " }}</div>{% endif %}
+          </div>
         </div>
 
         <div class="mt-4 d-flex gap-2">
@@ -115,9 +141,14 @@
         <span class="fw-bold text-success fs-5">-₹{{ cfg.mess_cut_rate_per_day }} <small class="text-muted fw-normal" style="font-size:0.75rem;">/ rebate day</small></span>
       </div>
 
-      <div class="d-flex align-items-center justify-content-between p-2 bg-light rounded">
+      <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
         <span class="text-secondary small">📜 Deduction Rule</span>
         <span class="fw-semibold small text-end text-dark">{{ cfg.get_mess_cut_mode_display }}</span>
+      </div>
+
+      <div class="d-flex align-items-center justify-content-between p-2 bg-light rounded border border-danger-subtle">
+        <span class="text-danger small fw-semibold">⚠️ Overdue Late Fine</span>
+        <span class="fw-bold text-danger fs-6">+₹{{ cfg.late_fine_amount }} <small class="text-muted fw-normal" style="font-size:0.75rem;">/ every {{ cfg.late_fine_interval_days }}d</small></span>
       </div>
     </div>
 
@@ -129,10 +160,12 @@
         <li class="mb-1 text-secondary">• <b>Base Food (30 days @ ₹{{ cfg.food_rate_per_day }}):</b> ₹3,900</li>
         <li class="mb-1 text-secondary">• <b>Gross Billed:</b> ₹5,400</li>
         <li class="mb-1 text-success">• <b>Mess Cut (Absent for 3 consecutive days):</b> -₹{{ cfg.mess_cut_rate_per_day }}</li>
-        <li class="pt-2 border-top fw-bold text-dark fs-6">• <b>Net Payable Bill:</b> ₹5,270</li>
+        <li class="mb-1 fw-bold text-dark">• <b>Base Net Amount (On-time):</b> ₹5,270</li>
+        <li class="pt-2 border-top text-danger fw-semibold">• <b>Unpaid 5 days past due:</b> +₹{{ cfg.late_fine_amount }} fine &rarr; <b>₹5,570</b></li>
+        <li class="text-danger fw-semibold">• <b>Unpaid 10 days past due:</b> +₹{{ cfg.late_fine_amount|add:cfg.late_fine_amount }} fine &rarr; <b>₹5,870</b></li>
       </ul>
       <p class="small text-muted mb-0">
-        <i>Note: If a student is absent for only 1 or 2 days, no mess cut is applied according to policy rules. When generating monthly bills, the warden can also override or adjust any student's bill manually.</i>
+        <i>Note: If a student is absent for only 1 or 2 days, no mess cut is applied according to policy rules. Fines accumulate every 5 overdue days. Wardens can waive or edit late fines for any resident.</i>
       </p>
     </div>
   </div>

@@ -136,7 +136,18 @@ def alloc_actions(a):
 
 
 def fee_actions(fee):
-    return [("Record payment", reverse("payment_new", args=[fee.pk]), False, "")] if fee.balance > 0 else []
+    acts = []
+    if fee.balance > 0:
+        acts.append(("Record payment", reverse("payment_new", args=[fee.pk]), False, ""))
+    if fee.fine_amount > 0 and not fee.fine_waived:
+        acts.append(("Waive fine", reverse("fee_waive_fine", args=[fee.pk]), True, f"Waive late fine of ₹{fee.fine_amount} for {fee.student}?"))
+    return acts
+
+
+def fee_list_qs():
+    for f_obj in m.Fee.objects.filter(due_date__lt=date.today()):
+        f_obj.sync_late_fine()
+    return m.Fee.objects.select_related("student__user").prefetch_related("payments")
 
 
 V = {}
@@ -163,12 +174,13 @@ V["fees"] = crud("fees", m.Fee, f.FeeForm, "Fees", [
     ("Rent", lambda x: f"₹{x.rent_amount}" if x.rent_amount else "—"),
     ("Food", lambda x: f"₹{x.food_amount}" if x.food_amount else "—"),
     ("Mess Cut", lambda x: f"-₹{x.mess_cut_amount} ({x.mess_cut_days}d)" if x.mess_cut_amount else "—"),
+    ("Late Fine", lambda x: f"+₹{x.fine_amount} ({x.overdue_days}d late)" if x.fine_amount > 0 else ("Waived" if x.fine_waived else "—")),
     ("Total", lambda x: f"₹{x.amount}"),
     ("Paid", lambda x: f"₹{x.paid}"),
     ("Balance", lambda x: f"₹{x.balance}"),
     ("Due", lambda x: date_s(x.due_date)),
     ("Status", lambda x: badge(x.status))],
-    qs=lambda: m.Fee.objects.select_related("student__user").prefetch_related("payments"), actions=fee_actions, add_label="Add custom fee")
+    qs=fee_list_qs, actions=fee_actions, add_label="Add custom fee")
 V["announcements"] = crud("announcements", m.Announcement, f.AnnouncementForm, "Announcements", [
     ("Title", lambda a: a.title), ("For", lambda a: a.get_audience_display()), ("Posted", lambda a: date_s(a.created_at))],
     add_label="Post")
@@ -381,6 +393,7 @@ def fees_calculate_monthly(request):
 @staff
 def payment_new(request, fee_id):
     fee = get_object_or_404(m.Fee, pk=fee_id)
+    fee.sync_late_fine()
     form = f.PaymentForm(request.POST or None, initial={"amount": fee.balance})
     form.instance.fee = fee
     if request.method == "POST" and form.is_valid():
@@ -390,6 +403,17 @@ def payment_new(request, fee_id):
         messages.success(request, "Payment recorded.")
         return redirect("fees")
     return show(request, "form", title=f"Record payment · {fee.student} · {fee.title} (balance {fee.balance})", form=form, back=reverse("fees"))
+
+
+@staff
+@require_POST
+def fee_waive_fine(request, pk):
+    """Allows wardens or admins to waive the late fine for a student."""
+    fee = get_object_or_404(m.Fee, pk=pk)
+    fee.fine_waived = True
+    fee.sync_late_fine(save=True)
+    messages.success(request, f"Late fine waived for {fee.student}. Total fee adjusted to ₹{fee.amount}.")
+    return redirect("fees")
 
 
 @staff
@@ -1329,12 +1353,15 @@ def my_leaves(request):
 @role_required("student")
 def my_fees(request):
     s = _mine(request)
+    for f_obj in s.fees.filter(due_date__lt=date.today()):
+        f_obj.sync_late_fine()
     rows = [
         (
             x.title,
             f"₹{x.rent_amount}" if x.rent_amount else "—",
             f"₹{x.food_amount}" if x.food_amount else "—",
             f"-₹{x.mess_cut_amount} ({x.mess_cut_days}d)" if x.mess_cut_amount else "—",
+            f"+₹{x.fine_amount} ({x.overdue_days}d late)" if x.fine_amount > 0 else ("Waived" if x.fine_waived else "—"),
             f"₹{x.amount}",
             f"₹{x.paid}",
             f"₹{x.balance}",
@@ -1345,9 +1372,9 @@ def my_fees(request):
     ]
     return show(
         request, "plain", title="Fees & Mess Bill Breakdown",
-        headers=["Fee Title", "Room Rent", "Food Charge", "Mess Cut Rebate", "Total Amount", "Paid", "Balance", "Due Date", "Status"],
+        headers=["Fee Title", "Room Rent", "Food Charge", "Mess Cut Rebate", "Late Fine", "Total Amount", "Paid", "Balance", "Due Date", "Status"],
         rows=rows,
-        note="Hostel fee includes fixed room rent + daily food charge minus attendance-based mess cut (consecutive absences ≥ 3 days). Pay at the warden's office."
+        note="Hostel fees must be settled before due date. A late fine of ₹300 is charged for every 5 days past due."
     )
 
 

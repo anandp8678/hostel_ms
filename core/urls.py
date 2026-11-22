@@ -28,6 +28,7 @@ urlpatterns = [
     path("fees/calculate/", v.fees_calculate_monthly, name="fees_calculate_monthly"),
     path("fees/new/", v.fee_create, name="fees_new"),
     path("fees/<int:fee_id>/pay/", v.payment_new, name="payment_new"),
+    path("fees/<int:pk>/waive-fine/", v.fee_waive_fine, name="fee_waive_fine"),
     path("wardens/new/", v.warden_new, name="wardens_new"),
     path("reports/", v.reports, name="reports"),
     path("menu/", v.menu, name="menu"),

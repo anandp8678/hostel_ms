@@ -138,6 +138,8 @@ class FeeConfigForm(MF):
             "mess_cut_rate_per_day",
             "mess_cut_mode",
             "count_leaves",
+            "late_fine_amount",
+            "late_fine_interval_days",
         ]
         labels = {
             "rent_amount": "Fixed Monthly Rent (₹)",
@@ -146,24 +148,36 @@ class FeeConfigForm(MF):
             "mess_cut_rate_per_day": "Mess Cut Deduction Rate per Day (₹)",
             "mess_cut_mode": "Mess Cut Calculation Rule",
             "count_leaves": "Include Approved Leaves as Absence for Mess Cut",
+            "late_fine_amount": "Late Fine Amount (₹)",
+            "late_fine_interval_days": "Late Fine Overdue Interval (Days)",
         }
         help_texts = {
             "rent_amount": "Default fixed hostel room rent per student per month (e.g. ₹1500).",
             "food_rate_per_day": "Daily food / mess charge (e.g. ₹130).",
             "mess_cut_min_days": "Minimum consecutive absent days required to qualify for mess cut (default: 3 days).",
             "mess_cut_rate_per_day": "Amount to reduce per eligible day (default: ₹130 = daily food rate).",
+            "late_fine_amount": "Fine charged for every overdue interval (e.g. ₹300).",
+            "late_fine_interval_days": "Overdue days threshold interval (e.g. every 5 days: after 5 days past due -> +₹300, after 10 days -> +₹600).",
         }
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        for f_name in ["late_fine_amount", "late_fine_interval_days", "count_leaves"]:
+            if f_name in self.fields:
+                self.fields[f_name].required = False
 
 
 class FeeForm(MF):
     class Meta:
         model = m.Fee
-        fields = ["student", "title", "rent_amount", "food_amount", "mess_cut_days", "mess_cut_amount", "amount", "due_date", "notes"]
+        fields = ["student", "title", "rent_amount", "food_amount", "mess_cut_days", "mess_cut_amount", "fine_amount", "fine_waived", "amount", "due_date", "notes"]
         labels = {
             "rent_amount": "Room Rent (₹)",
             "food_amount": "Food Charges (₹)",
             "mess_cut_days": "Mess Cut Days",
             "mess_cut_amount": "Mess Cut Deduction (₹)",
+            "fine_amount": "Late Fine (₹)",
+            "fine_waived": "Waive Late Fine",
             "amount": "Total Net Payable (₹)",
             "notes": "Breakdown Notes / Remarks",
         }
@@ -175,16 +189,32 @@ class FeeForm(MF):
         self.fields["student"].queryset = m.Student.objects.filter(is_active=True)
         if self.instance.pk:
             self.fields["student"].disabled = True
+        for f_name in ["rent_amount", "food_amount", "mess_cut_days", "mess_cut_amount", "fine_amount", "fine_waived", "notes"]:
+            if f_name in self.fields:
+                self.fields[f_name].required = False
 
     def clean(self):
         cd = super().clean()
         rent = cd.get("rent_amount") or 0
         food = cd.get("food_amount") or 0
         mess_cut = cd.get("mess_cut_amount") or 0
+        fine = cd.get("fine_amount") or 0
+        waived = cd.get("fine_waived")
+        if waived:
+            fine = 0
+            cd["fine_amount"] = 0
+            self.instance.fine_amount = 0
         amt = cd.get("amount")
         if (rent or food) and (amt is None or amt == 0):
-            cd["amount"] = max(0, rent + food - mess_cut)
+            base = max(0, rent + food - mess_cut)
+            cd["base_amount"] = base
+            cd["amount"] = base + fine
+            self.instance.base_amount = base
             self.instance.amount = cd["amount"]
+        elif amt is not None:
+            if cd.get("base_amount") is None or cd.get("base_amount") == 0:
+                cd["base_amount"] = max(0, amt - fine)
+                self.instance.base_amount = cd["base_amount"]
         return cd
 
 

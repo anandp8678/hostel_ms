@@ -241,6 +241,8 @@ class FeeConfig(models.Model):
     ]
     mess_cut_mode = models.CharField(max_length=20, choices=MODE_CHOICES, default="per_streak")
     count_leaves = models.BooleanField("Count approved leave days towards consecutive absence", default=True)
+    late_fine_amount = models.DecimalField("Late fine amount", max_digits=10, decimal_places=2, default=Decimal("300.00"), blank=True)
+    late_fine_interval_days = models.PositiveIntegerField("Fine interval in days", default=5, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod
@@ -254,11 +256,13 @@ class FeeConfig(models.Model):
                 mess_cut_rate_per_day=Decimal("130.00"),
                 mess_cut_mode="per_streak",
                 count_leaves=True,
+                late_fine_amount=Decimal("300.00"),
+                late_fine_interval_days=5,
             )
         return cfg
 
     def __str__(self):
-        return f"Fee Structure (Rent: ₹{self.rent_amount}, Food/Day: ₹{self.food_rate_per_day}, Mess Cut: {self.mess_cut_min_days}+ days @ ₹{self.mess_cut_rate_per_day})"
+        return f"Fee Structure (Rent: ₹{self.rent_amount}, Food/Day: ₹{self.food_rate_per_day}, Mess Cut: {self.mess_cut_min_days}+ days @ ₹{self.mess_cut_rate_per_day}, Fine: ₹{self.late_fine_amount}/{self.late_fine_interval_days}d)"
 
 
 class Fee(models.Model):
@@ -267,10 +271,13 @@ class Fee(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     due_date = models.DateField()
     month = models.CharField("Billing month (YYYY-MM)", max_length=7, blank=True)
-    rent_amount = models.DecimalField("Fixed Rent", max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    food_amount = models.DecimalField("Food Charge", max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    mess_cut_days = models.PositiveIntegerField("Mess Cut Days", default=0)
-    mess_cut_amount = models.DecimalField("Mess Cut Deduction", max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    rent_amount = models.DecimalField("Fixed Rent", max_digits=10, decimal_places=2, default=Decimal("0.00"), blank=True)
+    food_amount = models.DecimalField("Food Charge", max_digits=10, decimal_places=2, default=Decimal("0.00"), blank=True)
+    mess_cut_days = models.PositiveIntegerField("Mess Cut Days", default=0, blank=True)
+    mess_cut_amount = models.DecimalField("Mess Cut Deduction", max_digits=10, decimal_places=2, default=Decimal("0.00"), blank=True)
+    base_amount = models.DecimalField("Base Fee Amount", max_digits=10, decimal_places=2, default=Decimal("0.00"), blank=True)
+    fine_amount = models.DecimalField("Late Fine Amount", max_digits=10, decimal_places=2, default=Decimal("0.00"), blank=True)
+    fine_waived = models.BooleanField("Waive Late Fine", default=False, blank=True)
     notes = models.CharField("Notes / Breakdown", max_length=255, blank=True)
 
     class Meta:
@@ -278,7 +285,81 @@ class Fee(models.Model):
 
     @property
     def has_breakdown(self):
-        return bool(self.rent_amount > 0 or self.food_amount > 0 or self.mess_cut_amount > 0)
+        return bool(self.rent_amount > 0 or self.food_amount > 0 or self.mess_cut_amount > 0 or self.fine_amount > 0)
+
+    @property
+    def overdue_days(self):
+        if not self.due_date or self.due_date >= date.today():
+            return 0
+        return (date.today() - self.due_date).days
+
+    def calculate_late_fine(self, as_of=None):
+        """
+        Calculates the late fine: ₹300 fine charged for every 5 days overdue.
+        e.g., 1-4 days: ₹0, 5-9 days: ₹300, 10-14 days: ₹600, etc.
+        """
+        if self.fine_waived or not self.due_date:
+            return Decimal("0.00")
+        if as_of is None:
+            as_of = date.today()
+        if as_of <= self.due_date:
+            return Decimal("0.00")
+
+        # If already paid in full on or before due date, no fine
+        paid_on_time = self.payments.filter(paid_on__lte=self.due_date).aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
+        target_base = self.base_amount if self.base_amount > 0 else (self.amount - self.fine_amount)
+        if paid_on_time >= target_base and target_base > 0:
+            return Decimal("0.00")
+
+        # If already fully settled (paid >= amount), don't grow further
+        if self.paid >= self.amount and self.amount > 0:
+            return self.fine_amount
+
+        days = (as_of - self.due_date).days
+        if days < 5:
+            return Decimal("0.00")
+
+        cfg = FeeConfig.get_config()
+        interval = max(1, cfg.late_fine_interval_days or 5)
+        rate = cfg.late_fine_amount or Decimal("300.00")
+        periods = days // interval
+        return Decimal(periods) * rate
+
+    def sync_late_fine(self, save=True, as_of=None):
+        """
+        Synchronizes late fine onto the fee.
+        If overdue for >= 5 days, an additional ₹300 fine per 5 days is added to the amount.
+        """
+        if self.fine_waived:
+            if self.fine_amount > 0:
+                self.amount = max(Decimal("0.00"), self.amount - self.fine_amount)
+                self.fine_amount = Decimal("0.00")
+            if save and self.pk:
+                Fee.objects.filter(pk=self.pk).update(fine_waived=True, fine_amount=Decimal("0.00"), amount=self.amount)
+            return Decimal("0.00")
+
+        expected_fine = self.calculate_late_fine(as_of=as_of)
+        if self.base_amount <= 0:
+            self.base_amount = max(Decimal("0.00"), self.amount - self.fine_amount)
+
+        if expected_fine != self.fine_amount:
+            self.fine_amount = expected_fine
+            self.amount = self.base_amount + self.fine_amount
+            if save and self.pk:
+                Fee.objects.filter(pk=self.pk).update(base_amount=self.base_amount, fine_amount=self.fine_amount, amount=self.amount, fine_waived=self.fine_waived)
+        return self.fine_amount
+
+    def save(self, *args, **kwargs):
+        if self.base_amount <= 0:
+            if self.rent_amount > 0 or self.food_amount > 0:
+                self.base_amount = max(Decimal("0.00"), self.rent_amount + self.food_amount - self.mess_cut_amount)
+            else:
+                self.base_amount = max(Decimal("0.00"), self.amount - self.fine_amount)
+        if self.fine_waived:
+            self.fine_amount = Decimal("0.00")
+        if self.base_amount > 0 and self.amount == 0:
+            self.amount = self.base_amount + self.fine_amount
+        super().save(*args, **kwargs)
 
     @property
     def paid(self):
