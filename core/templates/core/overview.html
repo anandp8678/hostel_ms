@@ -1,106 +1,547 @@
 {% extends "core/base.html" %}{% block content %}
-<!-- Student Header Card -->
+<!-- Top Header Card -->
 <div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
     <div>
       <div class="d-flex align-items-center gap-2 mb-1">
-        <h4 class="mb-0 fw-bold" style="color:var(--navy);">{{ s.user.display_name }}</h4>
-        <span class="badge text-bg-primary rounded-pill">Room {{ room|default:"Unallocated" }}</span>
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">
+          {% if parent_view %}Parent Portal · {{ s.user.display_name }}{% else %}Welcome back, {{ s.user.first_name }}!{% endif %}
+        </h4>
+        <span class="badge {% if parent_view %}text-bg-info text-dark{% else %}text-bg-primary{% endif %} rounded-pill">
+          {% if parent_view %}Parent View{% else %}Student Resident{% endif %}
+        </span>
+        <span class="badge text-bg-light border text-dark rounded-pill">
+          Room {{ room|default:"Unallocated" }}
+        </span>
       </div>
       <div class="text-secondary small">
         Roll No: <b>{{ s.roll_no }}</b> · Course: <b>{{ s.course|default:"Not specified" }}</b>
-        {% if parent_view and siblings.count > 1 %}
-          · Siblings: {% for x in siblings %}<a href="{% url 'child' x.pk %}" class="badge text-bg-light border text-decoration-none">{{ x.user.first_name }}</a> {% endfor %}
+        {% if parent_view and all_children|length > 1 %}
+          <div class="mt-2 d-flex align-items-center gap-2">
+            <span class="small fw-semibold text-dark">Switch Ward:</span>
+            {% for child in all_children %}
+              <a href="{% url 'child' child.pk %}"
+                 class="badge {% if child.pk == s.pk %}text-bg-primary{% else %}text-bg-light border text-decoration-none text-dark{% endif %} py-1 px-2">
+                {{ child.user.first_name }} ({{ child.roll_no }})
+              </a>
+            {% endfor %}
+          </div>
         {% endif %}
       </div>
     </div>
 
-    <!-- Quick Action Buttons for Student -->
+    <!-- Quick Action Shortcut Buttons -->
     <div class="d-flex flex-wrap gap-2">
-      <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'my_attendance' %}">
-        📅 View Attendance
-      </a>
-      <a class="btn btn-sm btn-outline-primary" href="{% url 'my_leaves' %}">
-        ✈️ Request Leave
-      </a>
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_complaints' %}">
-        💬 File Complaint
-      </a>
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_fees' %}">
-        💳 Fee Dues
-      </a>
+      {% if parent_view %}
+        <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'menu' %}">
+          🍲 Mess Menu
+        </a>
+        {% if wardens %}
+          <a class="btn btn-sm btn-outline-primary fw-semibold" href="#wardenContacts">
+            📞 Warden Contacts
+          </a>
+        {% endif %}
+      {% else %}
+        <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'my_attendance' %}">
+          📅 Attendance
+        </a>
+        <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'my_leaves' %}">
+          ✈️ Request Leave
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_complaints' %}">
+          💬 Complaints
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_fees' %}">
+          💳 Fee Dues
+        </a>
+      {% endif %}
     </div>
   </div>
 </div>
 
-<!-- 4 Key Metric Cards for Student -->
+<!-- 4 Key Metric KPI Summary Cards -->
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3">
+  <!-- 1. Room & Block Card -->
+  <div class="col-12 col-sm-6 col-xl-3">
     <div class="card p-3 h-100 card-hover bg-white">
-      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">Allocated Room</div>
-      <div class="stat text-dark">
-        {% if room %}{{ room }}{% else %}<span class="text-muted small">None</span>{% endif %}
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Accommodation</span>
+        {% if room %}
+          <span class="badge text-bg-success rounded-pill">Block {{ room.block }}</span>
+        {% else %}
+          <span class="badge text-bg-warning rounded-pill">Pending</span>
+        {% endif %}
+      </div>
+      <div class="d-flex align-items-baseline gap-2 mb-2">
+        <div class="stat text-dark">
+          {% if room %}{{ room }}{% else %}<span class="text-muted fs-5">Unassigned</span>{% endif %}
+        </div>
+      </div>
+      <div class="progress mb-2" style="height: 6px;">
+        <div class="progress-bar bg-primary" role="progressbar"
+             style="width: {% if room %}{% widthratio room.occupied room.capacity 100 %}{% else %}0{% endif %}%;"></div>
       </div>
       <div class="small text-muted mt-auto">
-        {% if room %}Hostel Block {{ room.block }}{% else %}Awaiting assignment{% endif %}
+        {% if room %}
+          <b>{{ room.occupied }}</b> of <b>{{ room.capacity }}</b> beds occupied ({{ roommates|length }} roommate{{ roommates|length|pluralize }})
+        {% else %}
+          Awaiting room allocation by warden
+        {% endif %}
       </div>
     </div>
   </div>
 
-  <div class="col-6 col-lg-3">
+  <!-- 2. Attendance % Card -->
+  <div class="col-12 col-sm-6 col-xl-3">
     <div class="card p-3 h-100 card-hover bg-white">
-      <div class="d-flex justify-content-between align-items-center mb-1">
-        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Attendance</span>
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Attendance Rate</span>
         {% if pct is not None %}
           <span class="badge {% if pct >= 75 %}text-bg-success{% elif pct >= 50 %}text-bg-warning{% else %}text-bg-danger{% endif %} rounded-pill">
             {{ pct }}%
           </span>
+        {% else %}
+          <span class="badge text-bg-secondary rounded-pill">No logs</span>
         {% endif %}
       </div>
-      <div class="stat {% if pct is not None and pct >= 75 %}text-success{% elif pct is not None and pct < 75 %}text-danger{% endif %}">
-        {% if pct is None %}—{% else %}{{ pct }}%{% endif %}
+      <div class="d-flex align-items-baseline gap-2 mb-2">
+        <div class="stat {% if pct is not None and pct >= 75 %}text-success{% elif pct is not None and pct < 75 %}text-danger{% endif %}">
+          {% if pct is None %}—{% else %}{{ pct }}%{% endif %}
+        </div>
+        <span class="text-muted small">cumulative</span>
       </div>
-      <div class="progress my-1" style="height: 5px;">
+      <div class="progress mb-2" style="height: 6px;">
         <div class="progress-bar {% if pct >= 75 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
              role="progressbar" style="width: {{ pct|default:0 }}%;"></div>
       </div>
-      <div class="small text-muted">
-        {{ p_count }} Present · {{ a_count }} Absent · {{ l_count }} Leave
+      <div class="small text-muted mt-auto">
+        <b>{{ p_count }}</b> Present · <b>{{ a_count }}</b> Absent · <b>{{ l_count }}</b> Leave
       </div>
     </div>
   </div>
 
-  <div class="col-6 col-lg-3">
+  <!-- 3. Fee Ledger Card -->
+  <div class="col-12 col-sm-6 col-xl-3">
     <div class="card p-3 h-100 card-hover bg-white">
-      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">Pending Fees</div>
-      <div class="stat {% if balance > 0 %}text-danger{% else %}text-success{% endif %}">
-        ₹{{ balance }}
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Fee Balance</span>
+        {% if balance > 0 %}
+          <span class="badge text-bg-danger rounded-pill">Dues Pending</span>
+        {% else %}
+          <span class="badge text-bg-success rounded-pill">✓ All Clear</span>
+        {% endif %}
+      </div>
+      <div class="d-flex align-items-baseline gap-2 mb-2">
+        <div class="stat {% if balance > 0 %}text-danger{% else %}text-success{% endif %}">
+          ₹{{ balance }}
+        </div>
+      </div>
+      <div class="progress mb-2" style="height: 6px;">
+        <div class="progress-bar bg-info" role="progressbar" style="width: {{ fee_paid_pct }}%;"></div>
       </div>
       <div class="small text-muted mt-auto">
-        {% if balance > 0 %}<span class="text-danger fw-semibold">Outstanding dues</span>{% else %}<span class="text-success fw-semibold">✓ All cleared</span>{% endif %}
+        {% if balance > 0 %}
+          ₹{{ total_paid }} paid of ₹{{ total_fee }} total billed
+        {% else %}
+          All hostel fees are fully settled
+        {% endif %}
       </div>
     </div>
   </div>
 
-  <div class="col-6 col-lg-3">
+  <!-- 4. Today's Hostel Roll Call Status Card -->
+  <div class="col-12 col-sm-6 col-xl-3">
     <div class="card p-3 h-100 card-hover bg-white">
-      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">Open Complaints</div>
-      <div class="stat {% if complaints > 0 %}text-warning{% else %}text-dark{% endif %}">
-        {{ complaints }}
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Today's Roll Call</span>
+        <span class="badge text-bg-light border text-muted rounded-pill">{{ today|date:"d M" }}</span>
+      </div>
+      <div class="d-flex align-items-center gap-2 mb-2">
+        {% if today_status == 'P' %}
+          <div class="stat text-success fs-3">✓ Present</div>
+        {% elif today_status == 'A' %}
+          <div class="stat text-danger fs-3">✕ Absent</div>
+        {% elif today_status == 'L' %}
+          <div class="stat text-warning fs-3">⏱ On Leave</div>
+        {% else %}
+          <div class="stat text-muted fs-4">⏳ Pending</div>
+        {% endif %}
+      </div>
+      <div class="progress mb-2" style="height: 6px;">
+        <div class="progress-bar {% if today_status == 'P' %}bg-success{% elif today_status == 'A' %}bg-danger{% elif today_status == 'L' %}bg-warning{% else %}bg-secondary{% endif %}"
+             role="progressbar" style="width: {% if today_status %}100{% else %}25{% endif %}%;"></div>
       </div>
       <div class="small text-muted mt-auto">
-        {% if complaints > 0 %}In progress by warden{% else %}No open issues{% endif %}
+        {% if today_status == 'P' %}
+          Confirmed present in hostel during roll call
+        {% elif today_status == 'A' %}
+          <span class="text-danger fw-semibold">Marked absent — please verify with warden</span>
+        {% elif today_status == 'L' %}
+          Currently on approved hostel leave
+        {% else %}
+          Daily roll call has not been recorded yet today
+        {% endif %}
       </div>
     </div>
   </div>
 </div>
 
-<!-- Widgets Row: Meals, Attendance, Fees, Announcements -->
-<div class="row g-3">
+<!-- Interactive Pie & Doughnut Charts Row -->
+<div class="row g-4 mb-4">
+  <!-- Chart 1: Attendance Breakdown (Doughnut) -->
+  <div class="col-12 col-lg-6">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">📊 Attendance Distribution</h6>
+          <small class="text-muted">Breakdown of all recorded hostel attendance days</small>
+        </div>
+        {% if pct is not None %}
+          <span class="badge {% if pct >= 75 %}text-bg-success{% elif pct >= 50 %}text-bg-warning{% else %}text-bg-danger{% endif %} rounded-pill">
+            {{ pct }}% Overall
+          </span>
+        {% endif %}
+      </div>
+
+      {% if total_att > 0 %}
+        <div class="chart-box my-2">
+          <canvas id="studentAttendanceChart"></canvas>
+        </div>
+        <div class="row text-center mt-2 pt-2 border-top g-2">
+          <div class="col-4">
+            <div class="small text-muted">Present</div>
+            <div class="fw-bold text-success">{{ p_count }} days</div>
+          </div>
+          <div class="col-4">
+            <div class="small text-muted">Absent</div>
+            <div class="fw-bold text-danger">{{ a_count }} days</div>
+          </div>
+          <div class="col-4">
+            <div class="small text-muted">Approved Leave</div>
+            <div class="fw-bold text-warning">{{ l_count }} days</div>
+          </div>
+        </div>
+        <div class="text-center mt-2">
+          {% if pct >= 75 %}
+            <span class="badge text-bg-success-subtle text-success border border-success-subtle px-2 py-1 small">
+              ✓ Compliant with mandatory 75% attendance criteria
+            </span>
+          {% elif pct is not None %}
+            <span class="badge text-bg-danger-subtle text-danger border border-danger-subtle px-2 py-1 small">
+              ⚠️ Warning: Attendance is below the required 75% threshold
+            </span>
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="d-flex flex-column align-items-center justify-content-center p-5 text-center text-muted">
+          <div class="fs-1 mb-2">📋</div>
+          <h6 class="text-dark">No Attendance Records Yet</h6>
+          <p class="small text-secondary mb-0">Daily roll call entries will appear here once marked by hostel staff.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Chart 2: Fee Ledger Breakdown (Doughnut) -->
+  <div class="col-12 col-lg-6">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">💳 Fee Payment Breakdown</h6>
+          <small class="text-muted">Total fees billed, payments credited, and pending dues</small>
+        </div>
+        <span class="badge {% if balance == 0 %}text-bg-success{% else %}text-bg-warning text-dark{% endif %} rounded-pill">
+          {{ fee_paid_pct }}% Paid
+        </span>
+      </div>
+
+      {% if total_fee > 0 %}
+        <div class="chart-box my-2">
+          <canvas id="studentFeeChart"></canvas>
+        </div>
+        <div class="row text-center mt-2 pt-2 border-top g-2">
+          <div class="col-4">
+            <div class="small text-muted">Total Billed</div>
+            <div class="fw-bold text-dark">₹{{ total_fee }}</div>
+          </div>
+          <div class="col-4">
+            <div class="small text-muted">Amount Paid</div>
+            <div class="fw-bold text-success">₹{{ total_paid }}</div>
+          </div>
+          <div class="col-4">
+            <div class="small text-muted">Balance Due</div>
+            <div class="fw-bold {% if balance > 0 %}text-danger{% else %}text-success{% endif %}">₹{{ balance }}</div>
+          </div>
+        </div>
+        <div class="text-center mt-2">
+          {% if balance == 0 %}
+            <span class="badge text-bg-success-subtle text-success border border-success-subtle px-2 py-1 small">
+              ✓ All hostel fees are settled with zero pending balance
+            </span>
+          {% else %}
+            <span class="badge text-bg-warning-subtle text-dark border border-warning-subtle px-2 py-1 small">
+              Pending fee dues of ₹{{ balance }} to be settled with hostel office
+            </span>
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="d-flex flex-column align-items-center justify-content-center p-5 text-center text-muted">
+          <div class="fs-1 mb-2">💳</div>
+          <h6 class="text-dark">No Fee Dues Assigned</h6>
+          <p class="small text-secondary mb-0">No fee charges have been posted for this resident account.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Middle Section: Room & Roommates + Warden Contacts / Leave Status -->
+<div class="row g-4 mb-4">
+  <!-- Room & Roommates Card -->
+  <div class="col-12 col-lg-6">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">🚪 Room & Roommates</h6>
+        <div class="d-flex align-items-center gap-2">
+          <a href="{% url 'student_rooms' %}" class="btn btn-sm btn-outline-primary fw-semibold" style="font-size: 0.75rem;">
+            🔍 All Rooms &rarr;
+          </a>
+          {% if room %}
+            <span class="badge text-bg-primary rounded-pill">Room {{ room }}</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if room %}
+        <div class="p-3 bg-light rounded-3 mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-bold text-dark">Hostel Block {{ room.block }} · Room {{ room.number }}</span>
+            <span class="badge text-bg-light border text-muted">Capacity: {{ room.capacity }} beds</span>
+          </div>
+          <div class="small text-secondary mb-2">
+            Occupied: <b>{{ room.occupied }}</b> beds · Vacant: <b>{{ room.vacancy }}</b> beds
+          </div>
+          <div class="progress" style="height: 6px;">
+            <div class="progress-bar bg-success" role="progressbar"
+                 style="width: {% widthratio room.occupied room.capacity 100 %}%;"></div>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="small fw-bold text-secondary text-uppercase tracking-wider mb-0">Roommates in this Room</h6>
+          <span class="text-muted" style="font-size: 0.72rem;">Tap name for emergency & parent contacts</span>
+        </div>
+
+        <div class="list-group list-group-flush">
+          {% for rm in roommates %}
+            <div class="list-group-item px-2 py-2 d-flex justify-content-between align-items-center rounded-2 mb-2 card-hover"
+                 role="button"
+                 data-bs-toggle="modal"
+                 data-bs-target="#roommateModal{{ rm.pk }}"
+                 style="cursor: pointer; background: #fafbfc; border: 1px solid #e9ecef;"
+                 title="Tap to view parent and emergency details">
+              <div class="d-flex align-items-center gap-2">
+                <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold"
+                     style="width: 36px; height: 36px; background: var(--navy); font-size: 0.85rem;">
+                  {{ rm.user.first_name|slice:":1" }}{{ rm.user.last_name|slice:":1" }}
+                </div>
+                <div>
+                  <div class="fw-bold text-dark small text-decoration-underline">{{ rm.user.display_name }}</div>
+                  <div class="text-muted" style="font-size: 0.75rem;">Roll: {{ rm.roll_no }} · {{ rm.course|default:"Resident" }}</div>
+                </div>
+              </div>
+              <span class="badge text-bg-primary-subtle text-primary border border-primary-subtle rounded-pill small">
+                👆 Emergency Info
+              </span>
+            </div>
+
+            <!-- Roommate Emergency & Parent Details Modal -->
+            <div class="modal fade" id="roommateModal{{ rm.pk }}" tabindex="-1" aria-labelledby="roommateModalLabel{{ rm.pk }}" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content border-0 shadow">
+                  <div class="modal-header text-white" style="background: var(--navy);">
+                    <h5 class="modal-title fs-6 fw-bold" id="roommateModalLabel{{ rm.pk }}">
+                      🚨 Roommate Details & Emergency Contact
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                  </div>
+                  <div class="modal-body p-4">
+                    <!-- Roommate Basic Info -->
+                    <div class="d-flex align-items-center gap-3 mb-3 p-3 bg-light rounded-3">
+                      <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold"
+                           style="width: 48px; height: 48px; background: var(--navy); font-size: 1.1rem;">
+                        {{ rm.user.first_name|slice:":1" }}{{ rm.user.last_name|slice:":1" }}
+                      </div>
+                      <div>
+                        <h5 class="mb-0 fw-bold text-dark">{{ rm.user.display_name }}</h5>
+                        <div class="text-secondary small">
+                          Roll No: <b>{{ rm.roll_no }}</b> · Course: <b>{{ rm.course|default:"Resident" }}</b>
+                        </div>
+                        <div class="text-muted small">
+                          Room <b>{{ room }}</b> · Hostel Block <b>{{ room.block }}</b>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Direct Roommate Phone -->
+                    <div class="mb-3">
+                      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-2">Roommate Phone</div>
+                      <div class="d-flex justify-content-between align-items-center p-2 border rounded bg-white">
+                        <div>
+                          <span class="fw-semibold text-dark">
+                            {% if rm.user.phone %}{{ rm.user.phone }}{% else %}<span class="text-muted">No phone recorded</span>{% endif %}
+                          </span>
+                        </div>
+                        {% if rm.user.phone %}
+                          <a href="tel:{{ rm.user.phone }}" class="btn btn-sm btn-outline-primary fw-semibold">
+                            📞 Call Roommate
+                          </a>
+                        {% endif %}
+                      </div>
+                    </div>
+
+                    <!-- Emergency / Parent Contact -->
+                    <div class="mb-3">
+                      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-2">Parent / Guardian Contact</div>
+                      <div class="p-3 border rounded bg-warning-subtle border-warning-subtle">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                          <div>
+                            <div class="fw-bold text-dark fs-6">
+                              {% if rm.parent %}{{ rm.parent.user.display_name }}{% else %}<span class="text-muted">Not on record</span>{% endif %}
+                            </div>
+                            <div class="text-muted small">Parent / Primary Guardian</div>
+                          </div>
+                          {% if rm.parent and rm.parent.user.phone %}
+                            <a href="tel:{{ rm.parent.user.phone }}" class="btn btn-sm btn-success fw-bold px-3">
+                              📞 Call Parent
+                            </a>
+                          {% endif %}
+                        </div>
+                        <div class="small text-dark">
+                          Emergency Phone Number: <b>{% if rm.parent and rm.parent.user.phone %}{{ rm.parent.user.phone }}{% else %}Contact Hostel Warden Office{% endif %}</b>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Urgency Notice -->
+                    <div class="alert alert-info py-2 px-3 mb-0 small">
+                      ℹ️ <b>Emergency Use Only:</b> Guardian contact details are provided strictly for health crises, sudden illness, or urgent situations. In any hostel emergency, immediately alert the hostel warden as well.
+                    </div>
+                  </div>
+                  <div class="modal-footer py-2">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          {% empty %}
+            <div class="text-muted small py-3 text-center bg-light rounded-3">
+              No other roommates are currently assigned to this room (single occupancy or open beds).
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-center py-4 text-muted">
+          <div class="fs-1 mb-2">🚪</div>
+          <h6 class="text-dark">Awaiting Room Allocation</h6>
+          <p class="small text-secondary mb-3">You have not been assigned to a hostel room yet. Please contact the hostel warden.</p>
+          <a href="{% url 'student_rooms' %}" class="btn btn-sm btn-outline-primary">Browse All Hostel Rooms &rarr;</a>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right Side: Warden Contacts (for parent) OR Recent Leaves (for student) -->
+  <div class="col-12 col-lg-6">
+    {% if parent_view %}
+      <!-- Warden & Hostel Support Desk Card for Parent -->
+      <div class="card p-3 h-100 bg-white border-0 shadow-sm" id="wardenContacts">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">📞 Hostel Wardens & Support Desk</h6>
+          <span class="badge text-bg-success rounded-pill">Parent Helpline</span>
+        </div>
+
+        <p class="small text-secondary mb-3">
+          For any inquiries regarding your ward's daily welfare, safety, leave verification, or medical concerns, you can contact the hostel warden directly:
+        </p>
+
+        <div class="list-group list-group-flush mb-3">
+          {% for w in wardens %}
+            <div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-bold text-dark small">{{ w.display_name }}</div>
+                <div class="text-muted" style="font-size: 0.75rem;">Hostel Warden · Duty Officer</div>
+              </div>
+              <div>
+                {% if w.phone %}
+                  <a href="tel:{{ w.phone }}" class="btn btn-sm btn-outline-success fw-semibold">
+                    📞 {{ w.phone }}
+                  </a>
+                {% else %}
+                  <span class="badge text-bg-light border text-muted">Contact via office</span>
+                {% endif %}
+              </div>
+            </div>
+          {% empty %}
+            <div class="list-group-item px-0 py-2 text-muted small">
+              Hostel office phone: <b>+91 (080) 2345-6789</b> (Mon–Sat: 8 AM to 8 PM)
+            </div>
+          {% endfor %}
+        </div>
+
+        <div class="p-3 bg-light rounded-3 mt-auto border">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge text-bg-primary rounded-pill">Hostel Guidelines</span>
+            <span class="small fw-semibold text-dark">Safety & Gate Timings</span>
+          </div>
+          <div class="small text-secondary">
+            Evening curfew is strictly <b>9:00 PM</b>. Overnight leaves require prior parent consent and approval through the warden portal.
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <!-- My Leave Requests Card for Student -->
+      <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">✈️ My Leave Requests</h6>
+          <a href="{% url 'my_leaves' %}" class="btn btn-sm btn-outline-primary fw-semibold">Request Leave &rarr;</a>
+        </div>
+
+        <div class="list-group list-group-flush mb-2">
+          {% for l in recent_leaves %}
+            <div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold text-dark small">{{ l.from_date|date:"d M" }} &rarr; {{ l.to_date|date:"d M Y" }}</div>
+                <div class="text-secondary" style="font-size:0.75rem;">{{ l.reason|truncatechars:40 }}</div>
+              </div>
+              <span class="badge {% if l.status == 'Approved' %}text-bg-success{% elif l.status == 'Pending' %}text-bg-warning text-dark{% else %}text-bg-danger{% endif %} rounded-pill">
+                {{ l.status }}
+              </span>
+            </div>
+          {% empty %}
+            <div class="text-muted small py-3 text-center">
+              No leave requests submitted yet.
+            </div>
+          {% endfor %}
+        </div>
+
+        <div class="mt-auto pt-2 border-top">
+          <div class="d-flex justify-content-between align-items-center small text-muted">
+            <span>Open complaints: <b>{{ complaints }}</b></span>
+            <a href="{% url 'my_complaints' %}" class="text-decoration-none">Complaints desk &rarr;</a>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Operational Widgets: Meals, Attendance Log, Fees, Announcements -->
+<div class="row g-4">
   <!-- Today's Meals Widget -->
-  <div class="col-lg-6">
-    <div class="card mb-3 bg-white h-100">
-      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+  <div class="col-12 col-lg-6">
+    <div class="card bg-white border-0 shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
         <span class="fw-bold small" style="color:var(--navy);">🍲 Today's Meal Menu</span>
         <a href="{% url 'menu' %}" class="small text-decoration-none">Full Week Menu &rarr;</a>
       </div>
@@ -117,12 +558,14 @@
     </div>
   </div>
 
-  <!-- Recent Attendance Widget -->
-  <div class="col-lg-6">
-    <div class="card mb-3 bg-white h-100">
-      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
-        <span class="fw-bold small" style="color:var(--navy);">📋 Recent Attendance Log</span>
-        <a href="{% url 'my_attendance' %}" class="small text-decoration-none">View All &rarr;</a>
+  <!-- Recent Attendance Log Widget -->
+  <div class="col-12 col-lg-6">
+    <div class="card bg-white border-0 shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
+        <span class="fw-bold small" style="color:var(--navy);">📋 Recent Attendance Log (Last 10 Records)</span>
+        {% if not parent_view %}
+          <a href="{% url 'my_attendance' %}" class="small text-decoration-none">Full History &rarr;</a>
+        {% endif %}
       </div>
       <ul class="list-group list-group-flush">
         {% for a in recent %}
@@ -139,18 +582,20 @@
             {% endif %}
           </li>
         {% empty %}
-          <li class="list-group-item text-secondary py-3 text-center small">No attendance records yet.</li>
+          <li class="list-group-item text-secondary py-3 text-center small">No attendance records recorded yet.</li>
         {% endfor %}
       </ul>
     </div>
   </div>
 
-  <!-- Fees Widget -->
-  <div class="col-lg-6">
-    <div class="card mb-3 bg-white h-100">
-      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+  <!-- Fees Invoices Widget -->
+  <div class="col-12 col-lg-6">
+    <div class="card bg-white border-0 shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
         <span class="fw-bold small" style="color:var(--navy);">💳 Fee Invoices & Dues</span>
-        <a href="{% url 'my_fees' %}" class="small text-decoration-none">Fee Details &rarr;</a>
+        {% if not parent_view %}
+          <a href="{% url 'my_fees' %}" class="small text-decoration-none">Fee Details &rarr;</a>
+        {% endif %}
       </div>
       <ul class="list-group list-group-flush">
         {% for x in fees %}
@@ -160,7 +605,7 @@
               <div class="text-muted" style="font-size:0.75rem;">Due: {{ x.due_date|date:"d M Y" }}</div>
             </div>
             <div class="text-end">
-              <span class="badge {% if x.balance == 0 %}text-bg-success{% else %}text-bg-warning{% endif %}">
+              <span class="badge {% if x.balance == 0 %}text-bg-success{% else %}text-bg-warning text-dark{% endif %}">
                 {{ x.status }} (Bal: ₹{{ x.balance }})
               </span>
             </div>
@@ -173,9 +618,9 @@
   </div>
 
   <!-- Announcements Widget -->
-  <div class="col-lg-6">
-    <div class="card mb-3 bg-white h-100">
-      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+  <div class="col-12 col-lg-6">
+    <div class="card bg-white border-0 shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
         <span class="fw-bold small" style="color:var(--navy);">📢 Notices & Announcements</span>
       </div>
       <ul class="list-group list-group-flush">
@@ -192,4 +637,97 @@
     </div>
   </div>
 </div>
+
+<!-- Chart.js Render Script -->
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  {% if total_att > 0 %}
+  // 1. Student Attendance Doughnut Chart
+  const attCtx = document.getElementById('studentAttendanceChart');
+  if (attCtx) {
+    new Chart(attCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Present', 'Absent', 'On Leave'],
+        datasets: [{
+          data: [{{ p_count }}, {{ a_count }}, {{ l_count }}],
+          backgroundColor: ['#198754', '#dc3545', '#ffc107'],
+          hoverBackgroundColor: ['#157347', '#bb2d3b', '#ffca2c'],
+          borderWidth: 2,
+          borderColor: '#ffffff'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '70%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              boxWidth: 12,
+              font: { size: 12 }
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const total = {{ total_att }};
+                const val = ctx.parsed;
+                const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+                return ' ' + ctx.label + ': ' + val + ' days (' + pct + '%)';
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+  {% endif %}
+
+  {% if total_fee > 0 %}
+  // 2. Student Fee Ledger Doughnut Chart
+  const feeCtx = document.getElementById('studentFeeChart');
+  if (feeCtx) {
+    new Chart(feeCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Amount Paid', 'Balance Due'],
+        datasets: [{
+          data: [{{ total_paid }}, {{ balance }}],
+          backgroundColor: ['#0d6efd', {% if balance > 0 %}'#fd7e14'{% else %}'#e9ecef'{% endif %}],
+          hoverBackgroundColor: ['#0b5ed7', {% if balance > 0 %}'#e36b0c'{% else %}'#dee2e6'{% endif %}],
+          borderWidth: 2,
+          borderColor: '#ffffff'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '70%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              boxWidth: 12,
+              font: { size: 12 }
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const total = {{ total_fee }};
+                const val = ctx.parsed;
+                const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+                return ' ' + ctx.label + ': ₹' + val + ' (' + pct + '%)';
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+  {% endif %}
+});
+</script>
 {% endblock %}

@@ -9,8 +9,8 @@ def nav(request):
         if u.role == "admin":
             items.append(("wardens", "Wardens"))
     elif u.role == "student":
-        items = [("home", "Dashboard"), ("my_attendance", "Attendance"), ("my_leaves", "Leave"), ("my_complaints", "Complaints"),
-                 ("my_fees", "Fees"), ("menu", "Meal menu")]
+        items = [("home", "Dashboard"), ("student_rooms", "Room directory"), ("my_attendance", "Attendance"),
+                 ("my_leaves", "Leave"), ("my_complaints", "Complaints"), ("my_fees", "Fees"), ("menu", "Meal menu")]
     else:
-        items = [("home", "My children"), ("menu", "Meal menu")]
+        items = [("home", "My children"), ("student_rooms", "Room directory"), ("menu", "Meal menu")]
     return {"nav_items": items}

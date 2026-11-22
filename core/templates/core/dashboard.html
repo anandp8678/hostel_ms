@@ -4,31 +4,62 @@
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
     <div>
       <div class="d-flex align-items-center gap-2 mb-1">
-        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Welcome back, {{ user.display_name }}</h4>
-        <span class="badge text-bg-primary rounded-pill">{{ user.get_role_display }}</span>
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">
+          {% if user.role == 'warden' %}Warden Desk · {{ user.display_name }}{% else %}Welcome back, {{ user.display_name }}{% endif %}
+        </h4>
+        <span class="badge {% if user.role == 'warden' %}text-bg-warning text-dark{% else %}text-bg-primary{% endif %} rounded-pill">
+          {{ user.get_role_display }}
+        </span>
       </div>
       <div class="text-secondary small">
-        Hostel Operations & Management Dashboard · <span class="fw-semibold text-dark">{{ today|date:"l, d F Y" }}</span>
+        {% if user.role == 'warden' %}
+          Hostel Resident Welfare & Daily Operations Desk · <span class="fw-semibold text-dark">{{ today|date:"l, d F Y" }}</span>
+        {% else %}
+          Hostel Operations & Management Dashboard · <span class="fw-semibold text-dark">{{ today|date:"l, d F Y" }}</span>
+        {% endif %}
       </div>
     </div>
 
     <!-- Quick Action Shortcut Buttons -->
     <div class="d-flex flex-wrap gap-2">
-      <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'attendance' %}">
-        📅 Mark Attendance
-      </a>
-      <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}">
-        📊 Past Attendance
-      </a>
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'students_new' %}">
-        ➕ Add Student
-      </a>
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'rooms_bulk_add' %}">
-        🚪 Bulk Add Rooms
-      </a>
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'fees_new' %}">
-        💰 Add Fee
-      </a>
+      {% if user.role == 'warden' %}
+        <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'attendance' %}">
+          📋 Roll Call
+        </a>
+        <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}">
+          📊 Past Attendance
+        </a>
+        <a class="btn btn-sm btn-outline-warning fw-semibold text-dark position-relative" href="{% url 'leaves' %}">
+          ✈️ Review Leaves
+          {% if pending_leaves_count > 0 %}<span class="badge text-bg-danger rounded-pill ms-1">{{ pending_leaves_count }}</span>{% endif %}
+        </a>
+        <a class="btn btn-sm btn-outline-danger fw-semibold position-relative" href="{% url 'complaints' %}">
+          💬 Complaints Desk
+          {% if open_complaints_count > 0 %}<span class="badge text-bg-danger rounded-pill ms-1">{{ open_complaints_count }}</span>{% endif %}
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'students' %}">
+          👥 Students
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'rooms' %}">
+          🚪 Rooms
+        </a>
+      {% else %}
+        <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'attendance' %}">
+          📅 Mark Attendance
+        </a>
+        <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}">
+          📊 Past Attendance
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'students_new' %}">
+          ➕ Add Student
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'rooms_bulk_add' %}">
+          🚪 Bulk Add Rooms
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'fees_new' %}">
+          💰 Add Fee
+        </a>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -102,7 +133,12 @@
              style="width: {% if active_student_count > 0 %}{% widthratio att_present active_student_count 100 %}{% else %}0{% endif %}%;"></div>
       </div>
       <div class="d-flex justify-content-between small text-muted">
-        <span><b>{{ att_absent }}</b> absent · <b>{{ att_leave }}</b> leave</span>
+        <span>
+          <b>{{ att_absent }}</b> absent · <b>{{ att_leave }}</b> leave
+          {% if att_absent > 0 %}
+            · <a href="{% url 'attendance_history' %}?status=A&month={{ today|date:'Y-m' }}" class="text-danger fw-semibold text-decoration-none">Review &rarr;</a>
+          {% endif %}
+        </span>
         <a href="{% url 'attendance' %}" class="text-decoration-none">Mark &rarr;</a>
       </div>
     </div>

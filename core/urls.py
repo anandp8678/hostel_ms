@@ -16,6 +16,7 @@ urlpatterns = [
     path("allocations/import/template/", v.allocation_import_template, name="allocations_import_template"),
     path("rooms/bulk/", v.room_bulk_add, name="rooms_bulk_add"),
     path("rooms/bulk/template/", v.room_bulk_template, name="rooms_bulk_template"),
+    path("rooms/directory/", v.student_rooms, name="student_rooms"),
     path("rooms/", v.room_list, name="rooms"),
     path("rooms/<int:pk>/toggle-blacklist/", v.room_toggle_blacklist, name="room_toggle_blacklist"),
     path("attendance/", v.attendance, name="attendance"),

@@ -332,35 +332,84 @@ def home(request):
 
     if u.role == "student":
         return show(request, "overview", **overview(u.student, u))
-    children = u.parent.children.select_related("user") if hasattr(u, "parent") else []
+    today = date.today()
+    children = list(u.parent.children.select_related("user") if hasattr(u, "parent") else [])
     if len(children) == 1:
         return redirect("child", children[0].pk)
-    return show(request, "children", children=children)
+    child_cards = []
+    for c in children:
+        today_att = c.attendance.filter(date=today).first()
+        child_cards.append({
+            "student": c,
+            "room": c.room,
+            "pct": c.attendance_percent(),
+            "balance": c.fee_balance,
+            "today_status": today_att.status if today_att else None,
+        })
+    return show(request, "children", children=child_cards, today=today)
 
 
 def overview(s, user):
     today = date.today()
     aud = ["all", "student" if user.role == "student" else "parent"]
-    menu = m.MealMenu.objects.filter(day=today.weekday())
+    menu = list(m.MealMenu.objects.filter(day=today.weekday()))
 
     # Attendance statistics for student
     att_qs = s.attendance.all()
     p_count = att_qs.filter(status="P").count()
     a_count = att_qs.filter(status="A").count()
     l_count = att_qs.filter(status="L").count()
+    total_att = p_count + a_count + l_count
+
+    # Today's attendance record
+    today_att = s.attendance.filter(date=today).first()
+    today_status = today_att.status if today_att else None
+
+    # Room and roommates
+    room = s.room
+    roommates = []
+    if room:
+        allocs = m.RoomAllocation.objects.filter(
+            room=room, end_date__isnull=True
+        ).exclude(student=s).select_related("student__user", "student__parent__user")
+        roommates = [a.student for a in allocs]
+
+    # Fee metrics
+    fees = list(s.fees.prefetch_related("payments"))
+    total_fee = sum(f.amount for f in fees)
+    total_paid = sum(f.paid for f in fees)
+    balance = s.fee_balance
+    fee_paid_pct = round(100 * total_paid / total_fee) if total_fee > 0 else (100 if total_fee == 0 else 0)
+
+    # Leaves and complaints
+    recent_leaves = list(s.leaves.all()[:5])
+    open_complaints_count = s.complaints.exclude(status="Resolved").count()
+
+    # Wardens for emergency / inquiries
+    wardens = list(m.User.objects.filter(role="warden", is_active=True))
 
     return dict(
         s=s,
-        room=s.room,
+        room=room,
+        roommates=roommates,
         pct=s.attendance_percent(),
         p_count=p_count,
         a_count=a_count,
         l_count=l_count,
-        balance=s.fee_balance,
+        total_att=total_att,
+        today_att=today_att,
+        today_status=today_status,
+        today=today,
+        total_fee=total_fee,
+        total_paid=total_paid,
+        balance=balance,
+        fee_paid_pct=fee_paid_pct,
         menu=menu,
-        complaints=s.complaints.exclude(status="Resolved").count(),
+        complaints=open_complaints_count,
         recent=att_qs[:10],
-        fees=s.fees.prefetch_related("payments"),
+        recent_leaves=recent_leaves,
+        fees=fees,
+        wardens=wardens,
         notices=m.Announcement.objects.filter(audience__in=aud)[:5],
         badge=badge,
     )
@@ -369,7 +418,16 @@ def overview(s, user):
 @role_required("parent")
 def child(request, pk):
     s = get_object_or_404(m.Student, pk=pk, parent__user=request.user)
-    return show(request, "overview", parent_view=True, siblings=request.user.parent.children.all(), **overview(s, request.user))
+    siblings = list(request.user.parent.children.exclude(pk=s.pk).select_related("user"))
+    all_children = list(request.user.parent.children.select_related("user"))
+    return show(
+        request,
+        "overview",
+        parent_view=True,
+        siblings=siblings,
+        all_children=all_children,
+        **overview(s, request.user),
+    )
 
 
 # ---------- staff workflows ----------
@@ -1035,3 +1093,61 @@ def menu(request):
         grid[x.day][x.meal] = x.items
     rows = [(name, *[grid[d][mk] for mk, _ in m.MealMenu.MEALS]) for d, name in m.MealMenu.DAYS]
     return show(request, "plain", title="Weekly meal menu", headers=["Day"] + [n for _, n in m.MealMenu.MEALS], rows=rows)
+
+
+@login_required
+def student_rooms(request):
+    from django.db.models import Prefetch
+
+    q = request.GET.get("q", "").strip()
+    block = request.GET.get("block", "").strip()
+
+    rooms_qs = m.Room.objects.all().prefetch_related(
+        Prefetch(
+            "allocations",
+            queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("student__user")
+        )
+    ).order_by("block", "number")
+
+    if block:
+        rooms_qs = rooms_qs.filter(block__iexact=block)
+
+    all_rooms = list(rooms_qs)
+    all_blocks = sorted(list(m.Room.objects.values_list("block", flat=True).distinct()))
+
+    if q:
+        q_lower = q.lower()
+        filtered = []
+        for r in all_rooms:
+            resident_names = [a.student.user.display_name for a in r.allocations.all()]
+            if (q_lower in str(r).lower() or
+                q_lower in r.block.lower() or
+                q_lower in r.number.lower() or
+                any(q_lower in name.lower() for name in resident_names)):
+                filtered.append(r)
+        all_rooms = filtered
+
+    room_items = []
+    for r in all_rooms:
+        residents = [a.student.user.display_name for a in r.allocations.all()]
+        room_items.append({
+            "room": r,
+            "room_str": str(r),
+            "block": r.block,
+            "number": r.number,
+            "capacity": r.capacity,
+            "occupied": len(residents),
+            "is_blacklisted": r.is_blacklisted,
+            "blacklist_reason": r.blacklist_reason,
+            "residents": residents,
+        })
+
+    return show(
+        request,
+        "student_rooms",
+        rooms=room_items,
+        total_rooms=len(room_items),
+        blocks=all_blocks,
+        selected_block=block,
+        q=q,
+    )

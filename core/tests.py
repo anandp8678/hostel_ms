@@ -6,7 +6,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Attendance, Room, RoomAllocation, Student, User
+from core.models import Attendance, Parent, Room, RoomAllocation, Student, User
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
@@ -695,6 +695,94 @@ class AttendanceMonthlyHistoryAndFilterTests(TestCase):
         self.assertEqual(resp2.status_code, 200)
         self.assertContains(resp2, "BS201")
         self.assertNotContains(resp2, "AK101")
+
+
+class StudentRoommatesAndDirectoryTests(TestCase):
+    def setUp(self):
+        # Create Room
+        self.room = Room.objects.create(block="A", number="101", capacity=2)
+        self.other_room = Room.objects.create(block="B", number="201", capacity=2)
+
+        # Create Parent 1 & Student 1
+        p_user1 = User.objects.create_user(username="p_mohan", password="Pw1", first_name="Mohan", last_name="Nair", phone="9876543210", role="parent")
+        self.parent1 = Parent.objects.create(user=p_user1)
+        s_user1 = User.objects.create_user(username="s_asha", password="Pw1", first_name="Asha", last_name="Nair", phone="9111111111", role="student")
+        self.student1 = Student.objects.create(user=s_user1, roll_no="CS101", course="CSE", parent=self.parent1)
+        RoomAllocation.objects.create(student=self.student1, room=self.room, start_date=date.today())
+
+        # Create Parent 2 & Student 2 (Roommate of Student 1)
+        p_user2 = User.objects.create_user(username="p_suresh", password="Pw2", first_name="Suresh", last_name="Menon", phone="9876543211", role="parent")
+        self.parent2 = Parent.objects.create(user=p_user2)
+        s_user2 = User.objects.create_user(username="s_rahul", password="Pw2", first_name="Rahul", last_name="Menon", phone="9222222222", role="student")
+        self.student2 = Student.objects.create(user=s_user2, roll_no="CS102", course="CSE", parent=self.parent2)
+        RoomAllocation.objects.create(student=self.student2, room=self.room, start_date=date.today())
+
+        # Create Student 3 in other room
+        s_user3 = User.objects.create_user(username="s_kiran", password="Pw3", first_name="Kiran", last_name="Kumar", role="student")
+        self.student3 = Student.objects.create(user=s_user3, roll_no="EC201", course="ECE")
+        RoomAllocation.objects.create(student=self.student3, room=self.other_room, start_date=date.today())
+
+    def test_student_dashboard_displays_roommate_emergency_and_parent_info(self):
+        c = Client()
+        c.force_login(self.student1.user)
+
+        resp = c.get(reverse("home"))
+        self.assertEqual(resp.status_code, 200)
+
+        # Should show allocated room
+        self.assertContains(resp, "A-101")
+        # Should show roommate Rahul Menon
+        self.assertContains(resp, "Rahul Menon")
+        # Should include roommate's roll number
+        self.assertContains(resp, "CS102")
+        # Should include roommate's parent name for urgency
+        self.assertContains(resp, "Suresh Menon")
+        # Should include roommate's parent emergency phone number
+        self.assertContains(resp, "9876543211")
+        # Should have call parent button link
+        self.assertContains(resp, "tel:9876543211")
+
+    def test_student_rooms_directory_access_and_search(self):
+        c = Client()
+        c.force_login(self.student1.user)
+
+        # Access directory
+        resp = c.get(reverse("student_rooms"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Hostel Rooms Directory")
+        # Contains room numbers
+        self.assertContains(resp, "A-101")
+        self.assertContains(resp, "B-201")
+        # Contains resident names
+        self.assertContains(resp, "Asha Nair")
+        self.assertContains(resp, "Rahul Menon")
+        self.assertContains(resp, "Kiran Kumar")
+
+        # Search by student name
+        resp_search_name = c.get(reverse("student_rooms") + "?q=Kiran")
+        self.assertEqual(resp_search_name.status_code, 200)
+        self.assertContains(resp_search_name, "B-201")
+        self.assertContains(resp_search_name, "Kiran Kumar")
+        self.assertNotContains(resp_search_name, "A-101")
+
+        # Search by room number
+        resp_search_room = c.get(reverse("student_rooms") + "?q=A-101")
+        self.assertEqual(resp_search_room.status_code, 200)
+        self.assertContains(resp_search_room, "A-101")
+        self.assertNotContains(resp_search_room, "B-201")
+
+        # Filter by block
+        resp_block = c.get(reverse("student_rooms") + "?block=A")
+        self.assertEqual(resp_block.status_code, 200)
+        self.assertContains(resp_block, "A-101")
+        self.assertNotContains(resp_block, "B-201")
+
+    def test_unauthenticated_user_redirected(self):
+        c = Client()
+        resp = c.get(reverse("student_rooms"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp.url)
+
 
 
 
