@@ -47,7 +47,7 @@
               <div class="p-2 bg-light rounded text-center">
                 <div class="text-secondary small" style="font-size:0.75rem;">Room Allocation</div>
                 <div class="fw-bold text-dark mt-1">
-                  {% if c.room %}{{ c.room }}{% else %}<span class="text-muted small">Unassigned</span>{% endif %}
+                  {% if c.room %}{{ c.room }} <span class="small text-muted fw-normal">({{ c.room.floor_name }})</span>{% else %}<span class="text-muted small">Unassigned</span>{% endif %}
                 </div>
               </div>
             </div>

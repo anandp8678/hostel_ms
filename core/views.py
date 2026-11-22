@@ -240,19 +240,31 @@ def home(request):
         effective_capacity = total_beds - blacklisted_beds
         occupancy_pct = round(100 * occupied_beds / effective_capacity) if effective_capacity > 0 else 0
 
-        # Block-wise stats for bar chart
-        block_dict = {}
+        # Floor-wise stats for bar chart (G=Ground, F=First, S=Second, etc.)
+        floor_dict = {}
         for r in all_rooms:
-            b = block_dict.setdefault(r.block, {"rooms": 0, "capacity": 0, "occupied": 0, "free": 0})
+            fl_label = r.floor_display
+            b = floor_dict.setdefault(fl_label, {"rooms": 0, "capacity": 0, "occupied": 0, "free": 0})
             b["rooms"] += 1
             b["capacity"] += r.capacity
             b["occupied"] += r.occupied
             b["free"] = max(0, b["capacity"] - b["occupied"])
 
-        block_labels = sorted(block_dict.keys())
-        block_capacities = [block_dict[k]["capacity"] for k in block_labels]
-        block_occupied = [block_dict[k]["occupied"] for k in block_labels]
-        block_free = [block_dict[k]["free"] for k in block_labels]
+        def floor_sort_key(label):
+            l = label.lower()
+            if "basement" in l: return -1
+            if "ground" in l or "(g)" in l: return 0
+            if "first" in l or "(f)" in l: return 1
+            if "second" in l or "(s)" in l: return 2
+            if "third" in l or "(t)" in l: return 3
+            if "fourth" in l or "(4)" in l: return 4
+            if "fifth" in l or "(5)" in l: return 5
+            return 100
+
+        block_labels = sorted(floor_dict.keys(), key=floor_sort_key)
+        block_capacities = [floor_dict[k]["capacity"] for k in block_labels]
+        block_occupied = [floor_dict[k]["occupied"] for k in block_labels]
+        block_free = [floor_dict[k]["free"] for k in block_labels]
 
         # Attendance metrics for today
         today_att = m.Attendance.objects.filter(date=today)
@@ -649,7 +661,8 @@ def room_list(request):
     elif status == "empty":
         rooms = [r for r in rooms if r.occupied == 0 and not r.is_blacklisted]
 
-    all_blocks = sorted(list(m.Room.objects.values_list("block", flat=True).distinct()))
+    distinct_blocks = sorted(list(m.Room.objects.values_list("block", flat=True).distinct()))
+    all_blocks = [{"code": b, "display": m.Room(block=b).floor_display} for b in distinct_blocks]
     all_causes = sorted(list(set(m.Room.objects.filter(is_blacklisted=True).exclude(blacklist_reason="").values_list("blacklist_reason", flat=True))))
 
     return show(
@@ -1113,7 +1126,8 @@ def student_rooms(request):
         rooms_qs = rooms_qs.filter(block__iexact=block)
 
     all_rooms = list(rooms_qs)
-    all_blocks = sorted(list(m.Room.objects.values_list("block", flat=True).distinct()))
+    distinct_blocks = sorted(list(m.Room.objects.values_list("block", flat=True).distinct()))
+    all_blocks = [{"code": b, "label": m.Room(block=b).floor_display} for b in distinct_blocks]
 
     if q:
         q_lower = q.lower()
@@ -1122,6 +1136,7 @@ def student_rooms(request):
             resident_names = [a.student.user.display_name for a in r.allocations.all()]
             if (q_lower in str(r).lower() or
                 q_lower in r.block.lower() or
+                q_lower in r.floor_name.lower() or
                 q_lower in r.number.lower() or
                 any(q_lower in name.lower() for name in resident_names)):
                 filtered.append(r)
@@ -1134,6 +1149,8 @@ def student_rooms(request):
             "room": r,
             "room_str": str(r),
             "block": r.block,
+            "floor_name": r.floor_name,
+            "floor_display": r.floor_display,
             "number": r.number,
             "capacity": r.capacity,
             "occupied": len(residents),

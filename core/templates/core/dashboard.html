@@ -265,15 +265,15 @@
   </div>
 </div>
 
-<!-- CHARTS ROW 2: Block-by-Block Comparison & Financials -->
+<!-- CHARTS ROW 2: Floor-by-Floor Comparison & Financials -->
 <div class="row g-3 mb-4">
-  <!-- Bar Chart: Block-wise Capacity & Occupancy -->
+  <!-- Bar Chart: Floor-wise Capacity & Occupancy -->
   <div class="col-12 col-lg-8">
     <div class="card p-3 h-100 bg-white">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <div>
-          <h6 class="mb-0 fw-bold" style="color:var(--navy);">🏢 Block Occupancy Breakdown</h6>
-          <span class="text-secondary small">Comparison of occupied beds versus available capacity per hostel block</span>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">🏢 Floor Occupancy Breakdown</h6>
+          <span class="text-secondary small">Comparison of occupied beds versus available capacity per floor (G = Ground Floor, F = First Floor, etc.)</span>
         </div>
         <a href="{% url 'rooms' %}" class="btn btn-sm btn-outline-secondary">All Rooms</a>
       </div>
@@ -549,13 +549,13 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // 4. Block-by-Block Occupancy Bar Chart
+  // 4. Floor-by-Floor Occupancy Bar Chart
   var blockCtx = document.getElementById('blockBarChart');
   if (blockCtx) {
     new Chart(blockCtx, {
       type: 'bar',
       data: {
-        labels: [{% for b in block_labels %}'Block {{ b }}'{% if not forloop.last %}, {% endif %}{% endfor %}],
+        labels: [{% for b in block_labels %}'{{ b }}'{% if not forloop.last %}, {% endif %}{% endfor %}],
         datasets: [
           {
             label: 'Occupied Beds',

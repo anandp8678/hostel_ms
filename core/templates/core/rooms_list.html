@@ -34,11 +34,11 @@
     </div>
 
     <div class="col-md-2">
-      <label class="form-label small fw-semibold text-secondary mb-1">Block</label>
+      <label class="form-label small fw-semibold text-secondary mb-1">Floor</label>
       <select name="block" class="form-select form-select-sm">
-        <option value="">All Blocks</option>
+        <option value="">All Floors</option>
         {% for b in all_blocks %}
-          <option value="{{ b }}" {% if filter_block == b %}selected{% endif %}>Block {{ b }}</option>
+          <option value="{{ b.code|default:b }}" {% if filter_block == b.code or filter_block == b %}selected{% endif %}>{{ b.display|default:b }}</option>
         {% endfor %}
       </select>
     </div>
@@ -134,7 +134,7 @@
           <tr>
             <th class="select-col">#</th>
             <th>Room</th>
-            <th>Block</th>
+            <th>Floor</th>
             <th>Capacity</th>
             <th>Occupied</th>
             <th>Vacant</th>
@@ -153,7 +153,7 @@
                   {{ r }}
                 </a>
               </td>
-              <td>Block {{ r.block }}</td>
+              <td>{{ r.floor_display }}</td>
               <td>{{ r.capacity }} bed{{ r.capacity|pluralize }}</td>
               <td>
                 {% if r.occupied > 0 %}

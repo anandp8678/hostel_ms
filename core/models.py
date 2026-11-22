@@ -93,6 +93,32 @@ class Room(models.Model):
         return max(0, self.capacity - self.occupied)
 
     @property
+    def floor_name(self):
+        b = str(self.block or "").strip().upper()
+        mapping = {
+            "G": "Ground Floor",
+            "F": "First Floor",
+            "S": "Second Floor",
+            "T": "Third Floor",
+            "B": "Basement",
+            "0": "Ground Floor",
+            "1": "First Floor",
+            "2": "Second Floor",
+            "3": "Third Floor",
+            "4": "Fourth Floor",
+            "5": "Fifth Floor",
+        }
+        return mapping.get(b, f"Floor {b}" if b else "Floor")
+
+    @property
+    def floor_display(self):
+        fn = self.floor_name
+        b = str(self.block or "").strip().upper()
+        if fn == f"Floor {b}":
+            return fn
+        return f"{fn} ({b})"
+
+    @property
     def raw_vacancy(self):
         return max(0, self.capacity - self.occupied)
 

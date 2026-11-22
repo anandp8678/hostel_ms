@@ -61,13 +61,13 @@
 
 <!-- 4 Key Metric KPI Summary Cards -->
 <div class="row g-3 mb-4">
-  <!-- 1. Room & Block Card -->
+  <!-- 1. Room & Floor Card -->
   <div class="col-12 col-sm-6 col-xl-3">
     <div class="card p-3 h-100 card-hover bg-white">
       <div class="d-flex justify-content-between align-items-start mb-2">
         <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Accommodation</span>
         {% if room %}
-          <span class="badge text-bg-success rounded-pill">Block {{ room.block }}</span>
+          <span class="badge text-bg-success rounded-pill">{{ room.floor_name }}</span>
         {% else %}
           <span class="badge text-bg-warning rounded-pill">Pending</span>
         {% endif %}
@@ -315,7 +315,7 @@
       {% if room %}
         <div class="p-3 bg-light rounded-3 mb-3">
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <span class="fw-bold text-dark">Hostel Block {{ room.block }} · Room {{ room.number }}</span>
+            <span class="fw-bold text-dark">{{ room.floor_display }} · Room {{ room.number }}</span>
             <span class="badge text-bg-light border text-muted">Capacity: {{ room.capacity }} beds</span>
           </div>
           <div class="small text-secondary mb-2">

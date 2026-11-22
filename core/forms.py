@@ -66,12 +66,12 @@ class RoomForm(MF):
         model = m.Room
         fields = ["block", "number", "capacity", "is_blacklisted", "blacklist_reason"]
         labels = {
-            "block": "Block (prefix, e.g. A)",
-            "number": "Room number (e.g. 101, displays as A-101)",
+            "block": "Floor / Prefix (e.g. G for Ground, F for 1st)",
+            "number": "Room number (e.g. 101, displays as G-101)",
         }
         help_texts = {
-            "block": "Block acts as the room prefix (e.g. Block A + Room 101 -> A-101).",
-            "number": "Enter room number (e.g. 101). If entered as A-101, the prefix is formatted automatically.",
+            "block": "Floor prefix indicates the floor: G = Ground Floor, F = First Floor, S = Second Floor, etc. (e.g. Floor G + Room 101 -> G-101).",
+            "number": "Enter room number (e.g. 101). If entered as G-101, the prefix is formatted automatically.",
         }
 
     def clean(self):
@@ -178,9 +178,9 @@ class RoomBulkAddForm(BS, forms.Form):
     mode = forms.ChoiceField(choices=MODE_CHOICES, initial="count", required=False)
 
     # Count / Range mode fields
-    block = forms.CharField(max_length=20, initial="A", required=False, label="Block (e.g. A, displays as prefix A-)")
+    block = forms.CharField(max_length=20, initial="G", required=False, label="Floor / Prefix (G for Ground, F for 1st, S for 2nd)")
     count_block = forms.CharField(max_length=20, required=False)
-    start_number = forms.CharField(max_length=20, initial="101", required=False, label="Starting room number (e.g. 101 -> A-101)")
+    start_number = forms.CharField(max_length=20, initial="101", required=False, label="Starting room number (e.g. 101 -> G-101)")
     count = forms.IntegerField(min_value=1, initial=10, required=False, label="Number of rooms to add (amount)")
     end_number = forms.CharField(max_length=20, required=False, label="Or ending room number (optional)")
     capacity = forms.IntegerField(min_value=1, initial=2, required=False, label="Capacity per room")
@@ -188,14 +188,14 @@ class RoomBulkAddForm(BS, forms.Form):
     prefix = forms.CharField(max_length=10, required=False, widget=forms.HiddenInput)
 
     # Floor mode fields
-    floor_block = forms.CharField(max_length=20, initial="A", required=False, label="Block")
+    floor_block = forms.CharField(max_length=20, initial="G", required=False, label="Floor Prefix")
     start_floor = forms.IntegerField(min_value=0, initial=1, required=False, label="From floor")
     end_floor = forms.IntegerField(min_value=0, initial=3, required=False, label="To floor")
     rooms_per_floor = forms.IntegerField(min_value=1, initial=10, required=False, label="Rooms per floor")
     floor_capacity = forms.IntegerField(min_value=1, initial=2, required=False, label="Capacity per room")
 
     # List mode fields
-    list_block = forms.CharField(max_length=20, initial="A", required=False, label="Default Block")
+    list_block = forms.CharField(max_length=20, initial="G", required=False, label="Default Floor Prefix")
     list_capacity = forms.IntegerField(min_value=1, initial=2, required=False, label="Capacity per room")
     room_list = forms.CharField(widget=forms.Textarea(attrs={"rows": 4, "placeholder": "e.g. 101, 102, 103, 104\nor one per line"}),
                                 required=False, label="Room numbers")
