@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Attendance, Complaint, Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
+from core.models import Announcement, Attendance, Complaint, Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
@@ -1337,3 +1337,130 @@ class RoomSectionWardenAdminTests(TestCase):
         # Student cannot access /students/<pk>/
         resp2 = c.get(reverse("student_detail", args=[self.student.pk]))
         self.assertEqual(resp2.status_code, 403)
+
+
+class RoomAnnouncementAndFloorFilterTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin_anc", password="AdminPassword123", role="admin", is_staff=True
+        )
+        self.warden = User.objects.create_user(
+            username="warden_anc", password="WardenPassword123", role="warden", is_staff=True
+        )
+
+        self.room_g1 = Room.objects.create(block="G", number="101", capacity=2)
+        self.room_g2 = Room.objects.create(block="G", number="102", capacity=2)
+        self.room_f1 = Room.objects.create(block="F", number="101", capacity=2)
+        self.room_f2 = Room.objects.create(block="F", number="102", capacity=2)
+
+        self.student_g1 = onboard_student(name="Gaurav Sharma", roll_no="G101", room=self.room_g1)
+        self.student_g1.user.must_change_password = False
+        self.student_g1.user.save()
+        self.student_f1 = onboard_student(name="Farhan Khan", roll_no="F101", room=self.room_f1)
+        self.student_f1.user.must_change_password = False
+        self.student_f1.user.save()
+
+    def test_warden_can_post_and_view_room_announcement(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # 1. Post an announcement to Room G-101
+        resp = c.post(
+            reverse("room_announcement_create", args=[self.room_g1.pk]),
+            {
+                "title": "Room G-101 Cleanliness Inspection",
+                "body": "Inspection scheduled tomorrow morning at 10:00 AM.",
+                "audience": "student",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Announcement successfully posted to Room G-101 inmates!")
+
+        # 2. Verify announcement appears in Room G-101 detail
+        self.assertContains(resp, "Room G-101 Cleanliness Inspection")
+        self.assertContains(resp, "Inspection scheduled tomorrow morning at 10:00 AM.")
+        self.assertContains(resp, f"Posted by <b>{self.warden.display_name}</b>")
+
+        # 3. Verify database record
+        anc = Announcement.objects.filter(room=self.room_g1).first()
+        self.assertIsNotNone(anc)
+        self.assertEqual(anc.title, "Room G-101 Cleanliness Inspection")
+        self.assertEqual(anc.created_by, self.warden)
+
+    def test_room_announcement_visible_to_inmate_and_isolated_from_other_rooms(self):
+        # Create an announcement targeted to Room G-101
+        Announcement.objects.create(
+            room=self.room_g1,
+            title="Keep G-101 Windows Closed Tonight",
+            body="Rainstorm warning for Ground floor.",
+            audience="student",
+            created_by=self.warden,
+        )
+        # Create a general broadcast announcement
+        Announcement.objects.create(
+            room=None,
+            title="General Hostel Library Timings",
+            body="Library open until 11 PM.",
+            audience="all",
+            created_by=self.warden,
+        )
+
+        c = Client()
+
+        # Inmate of G-101 logs in:
+        c.force_login(self.student_g1.user)
+        resp_g1 = c.get(reverse("home"))
+        self.assertEqual(resp_g1.status_code, 200)
+        # Must see both the room-specific notice and the general notice
+        self.assertContains(resp_g1, "Keep G-101 Windows Closed Tonight")
+        self.assertContains(resp_g1, "Room G-101 Notice")
+        self.assertContains(resp_g1, "General Hostel Library Timings")
+        self.assertContains(resp_g1, "Hostel Notice")
+
+        # Inmate of F-101 logs in:
+        c.force_login(self.student_f1.user)
+        resp_f1 = c.get(reverse("home"))
+        self.assertEqual(resp_f1.status_code, 200)
+        # Must see the general notice
+        self.assertContains(resp_f1, "General Hostel Library Timings")
+        # Must NOT see Room G-101's private notice
+        self.assertNotContains(resp_f1, "Keep G-101 Windows Closed Tonight")
+
+    def test_warden_can_delete_room_announcement(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        anc = Announcement.objects.create(
+            room=self.room_g1,
+            title="Temporary Notice to Delete",
+            body="This will be deleted.",
+            audience="student",
+            created_by=self.warden,
+        )
+
+        resp = c.post(reverse("room_announcement_delete", args=[anc.pk]), follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Room announcement removed.")
+        self.assertFalse(Announcement.objects.filter(pk=anc.pk).exists())
+
+    def test_floor_pills_have_no_duplicates_in_views(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # In rooms directory (staff)
+        resp = c.get(reverse("rooms"))
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode("utf-8")
+        # Ensure only 1 button pill for Ground Floor (G) and 1 for First Floor (F)
+        # Check by counting block filter links with block=G and block=F
+        self.assertEqual(content.count("&block=G"), 1)
+        self.assertEqual(content.count("&block=F"), 1)
+
+        # In student rooms directory
+        resp2 = c.get(reverse("student_rooms"))
+        self.assertEqual(resp2.status_code, 200)
+        content2 = resp2.content.decode("utf-8")
+        self.assertEqual(content2.count("?block=G"), 1)
+        self.assertEqual(content2.count("?block=F"), 1)
+

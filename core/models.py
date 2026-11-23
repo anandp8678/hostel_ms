@@ -402,7 +402,14 @@ class Announcement(models.Model):
     title = models.CharField(max_length=150)
     body = models.TextField()
     audience = models.CharField(max_length=10, choices=AUDIENCE, default="all")
+    room = models.ForeignKey("Room", null=True, blank=True, on_delete=models.CASCADE, related_name="announcements")
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
+
+    def __str__(self):
+        if self.room:
+            return f"[{self.room}] {self.title}"
+        return self.title

@@ -651,7 +651,13 @@ def home(request):
 
 def overview(s, user):
     today = date.today()
-    aud = ["all", "student" if user.role == "student" else "parent"]
+    aud = ["all"]
+    if user.role == "student":
+        aud.append("student")
+    elif user.role == "parent":
+        aud.append("parent")
+    else:
+        aud.extend(["student", "parent"])
     menu = list(m.MealMenu.objects.filter(day=today.weekday()))
 
     # Attendance statistics for student
@@ -689,6 +695,15 @@ def overview(s, user):
     # Wardens for emergency / inquiries
     wardens = list(m.User.objects.filter(role="warden", is_active=True))
 
+    # Room-targeted and general announcements
+    if room:
+        notices_qs = m.Announcement.objects.filter(
+            Q(room=room, audience__in=aud) | Q(room__isnull=True, audience__in=aud)
+        )
+    else:
+        notices_qs = m.Announcement.objects.filter(room__isnull=True, audience__in=aud)
+    notices = list(notices_qs.select_related("room", "created_by").order_by("-created_at")[:10])
+
     return dict(
         s=s,
         room=room,
@@ -712,7 +727,7 @@ def overview(s, user):
         recent_leaves=recent_leaves,
         fees=fees,
         wardens=wardens,
-        notices=m.Announcement.objects.filter(audience__in=aud)[:5],
+        notices=notices,
         badge=badge,
     )
 
@@ -967,7 +982,14 @@ def room_list(request):
         rooms = [r for r in rooms if r.occupied == 0 and not r.is_blacklisted]
 
     distinct_blocks = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
-    all_blocks = [{"code": b, "display": m.Room(block=b).floor_display, "name": m.Room(block=b).floor_name} for b in distinct_blocks]
+    all_blocks = []
+    seen_displays = set()
+    for b in distinct_blocks:
+        rm_dummy = m.Room(block=b)
+        disp = rm_dummy.floor_display
+        if disp not in seen_displays:
+            seen_displays.add(disp)
+            all_blocks.append({"code": b, "display": disp, "name": rm_dummy.floor_name})
     all_causes = sorted(list(set(m.Room.objects.filter(is_blacklisted=True).exclude(blacklist_reason="").values_list("blacklist_reason", flat=True))))
 
     rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
@@ -1093,6 +1115,10 @@ def room_detail(request, pk):
         .order_by("-end_date")[:10]
     )
 
+    room_announcements = list(
+        room.announcements.select_related("created_by").order_by("-created_at")
+    )
+
     return show(
         request,
         "room_detail",
@@ -1102,9 +1128,47 @@ def room_detail(request, pk):
         active_complaints=active_complaints,
         resolved_complaints=resolved_complaints,
         past_allocs=past_allocs,
+        room_announcements=room_announcements,
         total_inmates=len(inmates),
         today=today,
     )
+
+
+@staff
+@require_POST
+def room_announcement_create(request, pk):
+    room = get_object_or_404(m.Room, pk=pk)
+    title = request.POST.get("title", "").strip()
+    body = request.POST.get("body", "").strip()
+    audience = request.POST.get("audience", "student").strip()
+    if audience not in ("student", "parent", "all"):
+        audience = "student"
+
+    if not title or not body:
+        messages.error(request, "Please enter both a title and details for the announcement.")
+        return redirect("room_detail", pk=room.pk)
+
+    m.Announcement.objects.create(
+        room=room,
+        title=title,
+        body=body,
+        audience=audience,
+        created_by=request.user,
+    )
+    messages.success(request, f"Announcement successfully posted to Room {room} inmates!")
+    return redirect("room_detail", pk=room.pk)
+
+
+@staff
+@require_POST
+def room_announcement_delete(request, pk):
+    anc = get_object_or_404(m.Announcement, pk=pk)
+    room_pk = anc.room_id
+    anc.delete()
+    messages.success(request, "Room announcement removed.")
+    if room_pk:
+        return redirect("room_detail", pk=room_pk)
+    return redirect("announcements")
 
 
 @staff
@@ -1652,7 +1716,14 @@ def student_rooms(request):
     sort_by = request.GET.get("sort", "floor_asc").strip()
 
     distinct_codes = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
-    all_blocks = [{"code": b, "label": m.Room(block=b).floor_display, "name": m.Room(block=b).floor_name} for b in distinct_codes]
+    all_blocks = []
+    seen_displays = set()
+    for b in distinct_codes:
+        rm_dummy = m.Room(block=b)
+        disp = rm_dummy.floor_display
+        if disp not in seen_displays:
+            seen_displays.add(disp)
+            all_blocks.append({"code": b, "label": disp, "name": rm_dummy.floor_name})
 
     rooms_qs = m.Room.objects.all().prefetch_related(
         Prefetch(

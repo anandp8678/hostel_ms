@@ -36,6 +36,10 @@
         </a>
       {% endif %}
 
+      <button type="button" class="btn btn-sm btn-outline-primary fw-semibold" onclick="openRoomAnnouncementModal()">
+        📢 Send Announcement
+      </button>
+
       <!-- 1-Click Toggle Maintenance / Blacklist -->
       <form method="post" action="{% url 'room_toggle_blacklist' room.pk %}" class="d-inline">
         {% csrf_token %}
@@ -423,7 +427,75 @@
   </div>
 </div>
 
-<!-- SECTION 3: WARDEN AUDIT LOG & PAST INMATES -->
+<!-- SECTION 3: ROOM ANNOUNCEMENTS -->
+<div class="card mb-4 bg-white border-0 shadow-sm" id="roomAnnouncementsSection">
+  <div class="card-header bg-white border-bottom py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <div class="d-flex align-items-center gap-2">
+        <h5 class="mb-0 fw-bold" style="color:var(--navy);">
+          📢 Room Announcements & Notices
+        </h5>
+        <span class="badge text-bg-primary rounded-pill">{{ room_announcements|length }}</span>
+      </div>
+      <span class="text-secondary small">
+        Direct notices and instructions sent specifically to residents of Room {{ room }}. Visible on their dashboard.
+      </span>
+    </div>
+    <div>
+      <button type="button" class="btn btn-sm btn-navy fw-semibold" onclick="openRoomAnnouncementModal()">
+        + Post Announcement to this Room
+      </button>
+    </div>
+  </div>
+
+  <div class="card-body p-4">
+    {% if room_announcements %}
+      <div class="row g-3">
+        {% for a in room_announcements %}
+          <div class="col-12 col-lg-6">
+            <div class="card h-100 border p-3 bg-white shadow-sm" style="border-left: 4px solid var(--navy) !important;">
+              <div class="d-flex justify-content-between align-items-start mb-2">
+                <h6 class="mb-0 fw-bold text-dark">{{ a.title }}</h6>
+                <span class="badge text-bg-light border text-dark rounded-pill">
+                  Audience: {{ a.get_audience_display }}
+                </span>
+              </div>
+              <p class="text-dark small mb-3 bg-light p-2 rounded">
+                {{ a.body }}
+              </p>
+              <div class="mt-auto d-flex justify-content-between align-items-center pt-2 border-top">
+                <div class="text-muted small">
+                  Posted by <b>{{ a.created_by.display_name|default:"Warden" }}</b> · {{ a.created_at|date:"d M Y, h:i A" }}
+                </div>
+                <form method="post" action="{% url 'room_announcement_delete' a.pk %}" class="d-inline" onsubmit="return confirm('Delete this room announcement?');">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2" title="Remove announcement">
+                    Delete
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="alert alert-light border py-3 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2 mb-0">
+        <div class="d-flex align-items-center gap-2">
+          <span class="fs-4">📢</span>
+          <div class="small">
+            <b>No announcements sent to Room {{ room }} yet.</b>
+            <span class="text-secondary">Use this to notify inmates about inspections, room cleanliness, or specific instructions.</span>
+          </div>
+        </div>
+        <button type="button" class="btn btn-sm btn-navy fw-semibold" onclick="openRoomAnnouncementModal()">
+          + Post Announcement
+        </button>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- SECTION 4: WARDEN AUDIT LOG & PAST INMATES -->
 <div class="card mb-4 bg-white border-0 shadow-sm">
   <div class="card-header bg-white border-bottom py-3">
     <h5 class="mb-0 fw-bold" style="color:var(--navy);">
@@ -517,7 +589,58 @@
   </div>
 </div>
 
+<!-- Post Room Announcement Modal -->
+<div class="modal fade" id="roomAnnouncementModal" tabindex="-1" aria-labelledby="roomAnnouncementModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{% url 'room_announcement_create' room.pk %}">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold" id="roomAnnouncementModalLabel" style="color:var(--navy);">
+            📢 Send Announcement to Room {{ room }}
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-secondary small mb-3">
+            This message will appear directly on the personal dashboards of all students currently residing in Room {{ room }}.
+          </p>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Notice Title:</label>
+            <input type="text" name="title" class="form-control" placeholder="e.g. Room Inspection Scheduled, Electrical Maintenance" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Target Audience:</label>
+            <select name="audience" class="form-select">
+              <option value="student" selected>Students only</option>
+              <option value="all">Students and Parents</option>
+              <option value="parent">Parents only</option>
+            </select>
+            <div class="form-text">Choose whether parents of inmates should also receive this notice.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Announcement Message:</label>
+            <textarea name="body" class="form-control" rows="4" placeholder="Enter instructions or notification details for Room {{ room }}..." required></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-navy btn-sm fw-semibold">📢 Post Announcement</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script>
+function openRoomAnnouncementModal() {
+  var modalEl = document.getElementById('roomAnnouncementModal');
+  if (modalEl && typeof bootstrap !== 'undefined') {
+    var modal = new bootstrap.Modal(modalEl);
+    modal.show();
+  }
+}
+
 function openMaintenanceModal() {
   var modalEl = document.getElementById('maintenanceModal');
   if (modalEl && typeof bootstrap !== 'undefined') {
