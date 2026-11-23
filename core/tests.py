@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Announcement, Attendance, Complaint, Fee, FeeConfig, MealMenu, Notification, Parent, Room, RoomAllocation, Student, User
+from core.models import Announcement, Attendance, Complaint, Fee, FeeConfig, LeaveRequest, MealMenu, Notification, Parent, Room, RoomAllocation, Student, User
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
@@ -1929,6 +1929,209 @@ class WeeklyFoodMenuTableTests(TestCase):
         resp = c.get(reverse("menu"))
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/login/", resp.url)
+
+
+class AdminSuspensionProcedureTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="super_admin", password="password123", role="admin", is_staff=True, first_name="Super", last_name="Admin"
+        )
+        self.warden = User.objects.create_user(
+            username="hostel_warden", password="password123", role="warden", is_staff=True, first_name="Hostel", last_name="Warden"
+        )
+        self.parent_user = User.objects.create_user(
+            username="parent_user", password="password123", role="parent", first_name="Parent", last_name="Kumar"
+        )
+        self.parent = Parent.objects.create(user=self.parent_user)
+        self.student_user = User.objects.create_user(
+            username="stud_susp", password="password123", role="student", first_name="Rohan", last_name="Kumar"
+        )
+        self.student = Student.objects.create(
+            user=self.student_user, roll_no="SUSP001", course="B.Tech", parent=self.parent, is_active=True
+        )
+        self.room = Room.objects.create(block="A", number="201", capacity=2)
+        RoomAllocation.objects.create(student=self.student, room=self.room, start_date=date(2026, 1, 1))
+
+    def test_admin_can_suspend_student_and_notifies_stakeholders(self):
+        c = Client()
+        c.force_login(self.admin)
+
+        resp = c.post(
+            reverse("student_suspend", args=[self.student.pk]),
+            {
+                "reason": "Hostel curfew violation and unauthorized damage to property.",
+                "start_date": str(date.today()),
+                "end_date": str(date.today() + timedelta(days=14)),
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.student.refresh_from_db()
+        self.assertTrue(self.student.is_suspended)
+        self.assertTrue(self.student.is_currently_suspended)
+        self.assertEqual(self.student.suspension_reason, "Hostel curfew violation and unauthorized damage to property.")
+        self.assertEqual(self.student.suspended_by, self.admin)
+
+        # Student notification
+        s_notif = Notification.objects.filter(recipient=self.student_user).first()
+        self.assertIsNotNone(s_notif)
+        self.assertIn("Suspended", s_notif.title)
+        self.assertIn("curfew violation", s_notif.message)
+
+        # Parent notification
+        p_notif = Notification.objects.filter(recipient=self.parent_user).first()
+        self.assertIsNotNone(p_notif)
+        self.assertIn("Ward Suspended", p_notif.title)
+        self.assertIn("Rohan Kumar", p_notif.message)
+
+        # Profile displays suspension banner and lift suspension button for Admin
+        prof_resp = c.get(reverse("student_detail", args=[self.student.pk]))
+        self.assertEqual(prof_resp.status_code, 200)
+        self.assertContains(prof_resp, "HOSTEL ENTRY BARRED")
+        self.assertContains(prof_resp, "Lift Suspension")
+
+    def test_warden_cannot_suspend_or_reinstate_student(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Warden tries to suspend -> 403 Forbidden
+        suspend_resp = c.post(
+            reverse("student_suspend", args=[self.student.pk]),
+            {"reason": "Attempt by warden"},
+        )
+        self.assertEqual(suspend_resp.status_code, 403)
+        self.student.refresh_from_db()
+        self.assertFalse(self.student.is_suspended)
+
+        # If student is suspended, warden tries to reinstate -> 403 Forbidden
+        self.student.is_suspended = True
+        self.student.save()
+        reinstate_resp = c.post(reverse("student_reinstate", args=[self.student.pk]))
+        self.assertEqual(reinstate_resp.status_code, 403)
+
+    def test_suspended_student_cannot_be_marked_present_in_attendance(self):
+        # Admin suspends student
+        self.student.is_suspended = True
+        self.student.suspension_reason = "Misconduct"
+        self.student.save()
+
+        c = Client()
+        c.force_login(self.warden)
+
+        # Check attendance page renders Barred badge for student
+        today = date.today()
+        get_att = c.get(reverse("attendance") + f"?date={today.isoformat()}")
+        self.assertEqual(get_att.status_code, 200)
+        self.assertContains(get_att, "Suspended (Entry Barred)")
+        self.assertContains(get_att, "Barred")
+
+        # Staff attempts to submit "P" (Present) for the suspended student
+        post_att = c.post(
+            reverse("attendance"),
+            {
+                "date": today.isoformat(),
+                f"s{self.student.pk}": "P",
+            },
+            follow=True,
+        )
+        self.assertEqual(post_att.status_code, 200)
+
+        # System enforces restriction: recorded as "A" (Absent) rather than "P"
+        att = Attendance.objects.filter(student=self.student, date=today).first()
+        self.assertIsNotNone(att)
+        self.assertEqual(att.status, "A")
+        self.assertContains(post_att, "barred from hostel entry")
+
+    def test_suspended_student_barred_from_submitting_leaves(self):
+        self.student.is_suspended = True
+        self.student.suspension_reason = "Suspension rule test"
+        self.student.save()
+
+        c = Client()
+        c.force_login(self.student_user)
+
+        # Student accesses leave request page
+        leave_resp = c.get(reverse("my_leaves"))
+        self.assertEqual(leave_resp.status_code, 200)
+        self.assertContains(leave_resp, "hostel resident access is currently suspended")
+
+        # Student attempts to post a leave request
+        post_leave = c.post(
+            reverse("my_leaves"),
+            {
+                "from_date": str(date.today()),
+                "to_date": str(date.today() + timedelta(days=2)),
+                "reason": "Going home",
+            },
+        )
+        # Should not create any leave request
+        self.assertEqual(LeaveRequest.objects.filter(student=self.student).count(), 0)
+
+    def test_admin_can_reinstate_student_and_lifts_restriction(self):
+        self.student.is_suspended = True
+        self.student.suspension_reason = "Disciplinary action"
+        self.student.save()
+
+        c = Client()
+        c.force_login(self.admin)
+
+        resp = c.post(reverse("student_reinstate", args=[self.student.pk]), follow=True)
+        self.assertEqual(resp.status_code, 200)
+
+        self.student.refresh_from_db()
+        self.assertFalse(self.student.is_suspended)
+        self.assertFalse(self.student.is_currently_suspended)
+        self.assertEqual(self.student.suspension_reason, "")
+
+        # Notifications sent
+        s_notif = Notification.objects.filter(recipient=self.student_user, title__contains="Suspension Lifted").first()
+        self.assertIsNotNone(s_notif)
+
+        p_notif = Notification.objects.filter(recipient=self.parent_user, title__contains="Suspension Lifted").first()
+        self.assertIsNotNone(p_notif)
+
+    def test_parent_sees_suspension_status_in_portal(self):
+        self.student.is_suspended = True
+        self.student.suspension_reason = "Disciplinary violation"
+        self.student.save()
+
+        c = Client()
+        c.force_login(self.parent_user)
+
+        # Single child: home redirects to child overview dashboard
+        resp = c.get(reverse("home"), follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "HOSTEL ENTRY BARRED")
+        self.assertContains(resp, "Resident Access Suspended")
+
+        # Multi-children: parent sees children list with suspension badge
+        u2 = User.objects.create_user(username="second_c", password="p", role="student", first_name="Aman", last_name="Kumar")
+        Student.objects.create(user=u2, roll_no="SUSP002", parent=self.parent)
+        resp_multi = c.get(reverse("home"))
+        self.assertEqual(resp_multi.status_code, 200)
+        self.assertContains(resp_multi, "Suspended")
+        self.assertContains(resp_multi, "Hostel Entry Barred")
+
+    def test_students_list_renders_properly_with_suspension_badge(self):
+        c = Client()
+        c.force_login(self.admin)
+
+        # Active student
+        resp = c.get(reverse("students"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Staying")
+
+        # Suspended student
+        self.student.is_suspended = True
+        self.student.suspension_reason = "Disciplinary violation"
+        self.student.save()
+
+        resp2 = c.get(reverse("students"))
+        self.assertEqual(resp2.status_code, 200)
+        self.assertContains(resp2, "Suspended")
+
+
 
 
 

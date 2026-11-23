@@ -12,6 +12,7 @@ from django.db.models import Prefetch, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
+from django.utils import timezone
 from django.utils.html import format_html, mark_safe
 from django.views.decorators.http import require_POST
 
@@ -49,7 +50,8 @@ def floor_order_key(b):
 STAFF = ("admin", "warden")
 BADGE = {"Paid": "success", "Resolved": "success", "Approved": "success", "Present": "success", "Unpaid": "secondary",
          "Submitted": "secondary", "Pending": "warning", "Under Review": "info", "In Progress": "primary",
-         "Partly paid": "info", "Overdue": "danger", "Rejected": "danger", "Absent": "danger", "On leave": "info"}
+         "Partly paid": "info", "Overdue": "danger", "Rejected": "danger", "Absent": "danger", "On leave": "info",
+         "Suspended": "danger", "Staying": "success", "Left": "secondary", "Active": "success"}
 
 
 def badge(t):
@@ -159,7 +161,7 @@ V = {}
 V["students"] = crud("students", m.Student, f.StudentEditForm, "Students", [
     ("Roll no.", lambda s: s.roll_no), ("Name", lambda s: s.user.display_name), ("Course", lambda s: s.course or "—"),
     ("Room", lambda s: s.room or "—"), ("Parent", lambda s: s.parent or "—"),
-    ("Status", lambda s: "Staying" if s.is_active else "Left")],
+    ("Status", lambda s: badge("Suspended") if s.is_currently_suspended else badge("Staying" if s.is_active else "Left"))],
     qs=lambda: m.Student.objects.select_related("user", "parent__user"),
     actions=lambda s: [("View Profile", reverse("student_detail", args=[s.pk]), False, "")],
     add_label="Add student")
@@ -1323,6 +1325,100 @@ def student_detail(request, pk):
     )
 
 
+@role_required("admin")
+@require_POST
+def student_suspend(request, pk):
+    s = get_object_or_404(m.Student.objects.select_related("user", "parent__user"), pk=pk)
+    reason = request.POST.get("reason", "").strip()
+    if not reason:
+        messages.error(request, "A reason is required to suspend a student.")
+        return redirect("student_detail", pk=pk)
+
+    start_date_str = request.POST.get("start_date", "").strip()
+    end_date_str = request.POST.get("end_date", "").strip()
+    start_date = parse_date(start_date_str) or date.today()
+    end_date = parse_date(end_date_str) if end_date_str else None
+
+    if end_date and end_date < start_date:
+        messages.error(request, "Suspension end date cannot be earlier than start date.")
+        return redirect("student_detail", pk=pk)
+
+    s.is_suspended = True
+    s.suspension_reason = reason
+    s.suspension_start = start_date
+    s.suspension_end = end_date
+    s.suspended_by = request.user
+    s.suspended_at = timezone.now()
+    s.save(update_fields=["is_suspended", "suspension_reason", "suspension_start", "suspension_end", "suspended_by", "suspended_at"])
+
+    # Notify student
+    notify_user(
+        recipient=s.user,
+        title="Hostel Resident Access Suspended",
+        message=f"You have been suspended from entering or residing in the hostel by Administration. Reason: {reason}.",
+        category="general",
+        link=reverse("home"),
+        actor=request.user,
+    )
+    # Notify parent if linked
+    if s.parent and s.parent.user:
+        notify_user(
+            recipient=s.parent.user,
+            title=f"Ward Suspended: {s.user.display_name}",
+            message=f"Your ward {s.user.display_name} ({s.roll_no}) has been suspended from entering the hostel by Administration. Reason: {reason}.",
+            category="general",
+            link=reverse("child", args=[s.pk]),
+            actor=request.user,
+        )
+
+    # Notify wardens
+    wardens = list(m.User.objects.filter(role="warden", is_active=True))
+    if wardens:
+        notify_users(
+            recipients=wardens,
+            title=f"Student Suspended: {s.user.display_name} ({s.roll_no})",
+            message=f"Suspension enacted by Admin {request.user.display_name}. Student is barred from hostel entry. Reason: {reason}.",
+            category="general",
+            link=reverse("student_detail", args=[s.pk]),
+            actor=request.user,
+        )
+
+    messages.success(request, f"Student {s.user.display_name} ({s.roll_no}) has been suspended. Entry to the hostel is barred.")
+    return redirect("student_detail", pk=pk)
+
+
+@role_required("admin")
+@require_POST
+def student_reinstate(request, pk):
+    s = get_object_or_404(m.Student.objects.select_related("user", "parent__user"), pk=pk)
+    s.is_suspended = False
+    s.suspension_reason = ""
+    s.suspension_start = None
+    s.suspension_end = None
+    s.save(update_fields=["is_suspended", "suspension_reason", "suspension_start", "suspension_end"])
+
+    notify_user(
+        recipient=s.user,
+        title="Hostel Suspension Lifted",
+        message="Your hostel suspension has been revoked by Administration. Entry and resident access are restored.",
+        category="general",
+        link=reverse("home"),
+        actor=request.user,
+    )
+    if s.parent and s.parent.user:
+        notify_user(
+            recipient=s.parent.user,
+            title=f"Suspension Lifted: {s.user.display_name}",
+            message=f"The hostel suspension for your ward {s.user.display_name} has been lifted. Hostel entry access is reinstated.",
+            category="general",
+            link=reverse("child", args=[s.pk]),
+            actor=request.user,
+        )
+
+    messages.success(request, f"Suspension lifted for {s.user.display_name}. Hostel entry access has been reinstated.")
+    return redirect("student_detail", pk=pk)
+
+
 @staff
 @require_POST
 def room_toggle_blacklist(request, pk):
@@ -1355,6 +1451,9 @@ def attendance(request):
     if request.method == "POST":
         for s in students:
             st = request.POST.get(f"s{s.pk}")
+            if s.is_currently_suspended and st == "P":
+                messages.warning(request, f"{s.user.display_name} is suspended by administration and barred from hostel entry. Attendance recorded as Absent.")
+                st = "A"
             if st in ("P", "A", "L"):
                 m.Attendance.objects.update_or_create(student=s, date=day, defaults={"status": st})
         messages.success(request, f"Attendance saved for {date_s(day)}.")
@@ -1370,9 +1469,10 @@ def attendance(request):
 
     # Day stats across ALL staying students (unfiltered)
     total_staying = len(students)
-    day_present = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else "P")) == "P")
-    day_absent = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else "P")) == "A")
-    day_leave = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else "P")) == "L")
+    day_suspended = sum(1 for s in students if s.is_currently_suspended)
+    day_present = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else ("A" if s.is_currently_suspended else "P"))) == "P")
+    day_absent = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else ("A" if s.is_currently_suspended else "P"))) == "A")
+    day_leave = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else ("A" if s.is_currently_suspended else "P"))) == "L")
     day_pct = round(100 * day_present / total_staying) if total_staying > 0 else 0
 
     # Filters
@@ -1382,7 +1482,7 @@ def attendance(request):
 
     rows = []
     for s in students:
-        st = existing.get(s.pk) or ("L" if s.pk in on_leave else "P")
+        st = existing.get(s.pk) or ("L" if s.pk in on_leave else ("A" if s.is_currently_suspended else "P"))
         s_room = student_rooms.get(s.pk)
         is_lv = s.pk in on_leave
 
@@ -1411,6 +1511,8 @@ def attendance(request):
             continue
         elif filter_status == "absent_or_leave" and st not in ("A", "L"):
             continue
+        elif filter_status == "suspended" and not s.is_currently_suspended:
+            continue
 
         rows.append((s, st, is_lv, s_room))
 
@@ -1428,6 +1530,7 @@ def attendance(request):
         is_today=is_today,
         saved=bool(existing),
         total_staying=total_staying,
+        day_suspended=day_suspended,
         day_present=day_present,
         day_absent=day_absent,
         day_leave=day_leave,
@@ -1892,6 +1995,10 @@ def my_complaint_reopen(request, pk):
 @role_required("student")
 def my_leaves(request):
     s = _mine(request)
+    if s.is_currently_suspended:
+        messages.error(request, "Your hostel resident access is currently suspended. Leave requests are disabled.")
+        rows = [(date_s(x.from_date), date_s(x.to_date), x.reason, badge(x.status)) for x in s.leaves.all()]
+        return show(request, "plain", title="Leave requests", headers=["From", "To", "Reason", "Status"], rows=rows)
     form = f.LeaveForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         lv = form.save(commit=False); lv.student = s; lv.save()

@@ -37,6 +37,14 @@ class Student(models.Model):
     parent = models.ForeignKey(Parent, null=True, blank=True, on_delete=models.SET_NULL, related_name="children")
     is_active = models.BooleanField("Currently staying", default=True)
 
+    # Suspension procedure (managed strictly by admin)
+    is_suspended = models.BooleanField("Suspended from hostel", default=False)
+    suspension_reason = models.TextField("Suspension reason", blank=True)
+    suspension_start = models.DateField("Suspension start date", null=True, blank=True)
+    suspension_end = models.DateField("Suspension end date", null=True, blank=True)
+    suspended_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    suspended_at = models.DateTimeField("Suspended at", null=True, blank=True)
+
     class Meta:
         ordering = ["roll_no"]
 
@@ -54,6 +62,17 @@ class Student(models.Model):
     @property
     def fee_balance(self):
         return sum(f.balance for f in self.fees.all())
+
+    @property
+    def is_currently_suspended(self):
+        if not self.is_suspended:
+            return False
+        today = date.today()
+        if self.suspension_start and today < self.suspension_start:
+            return False
+        if self.suspension_end and today > self.suspension_end:
+            return False
+        return True
 
     def attendance_percent(self):
         qs = self.attendance.exclude(status="L")

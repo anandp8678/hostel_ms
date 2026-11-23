@@ -30,7 +30,9 @@
               <div class="text-muted" style="font-size: 0.75rem;">Roll: {{ c.student.roll_no }}</div>
             </div>
           </div>
-          {% if c.today_status == 'P' %}
+          {% if c.student.is_currently_suspended %}
+            <span class="badge text-bg-danger rounded-pill">Suspended</span>
+          {% elif c.today_status == 'P' %}
             <span class="badge text-bg-success rounded-pill">Present Today</span>
           {% elif c.today_status == 'A' %}
             <span class="badge text-bg-danger rounded-pill">Absent</span>
@@ -42,6 +44,12 @@
         </div>
 
         <div class="card-body p-3">
+          {% if c.student.is_currently_suspended %}
+            <div class="alert alert-danger py-2 px-3 small mb-3">
+              <strong>Hostel Entry Barred:</strong> Student is currently suspended by administration.
+              <div class="text-danger-emphasis mt-1">Reason: {{ c.student.suspension_reason|default:"Disciplinary action" }}</div>
+            </div>
+          {% endif %}
           <div class="row g-2 mb-3">
             <div class="col-6">
               <div class="p-2 bg-light rounded text-center">

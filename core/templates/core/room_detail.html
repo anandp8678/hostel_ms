@@ -176,13 +176,20 @@
                     Roll No: <b>{{ s.roll_no }}</b> · Course: <b>{{ s.course|default:"Not specified" }}</b>
                   </div>
                 </div>
-                <span class="badge text-bg-primary rounded-pill">Bed {{ forloop.counter }}</span>
+                <div class="d-flex flex-column align-items-end gap-1">
+                  <span class="badge text-bg-primary rounded-pill">Bed {{ forloop.counter }}</span>
+                  {% if s.is_currently_suspended %}
+                    <span class="badge text-bg-danger" title="Suspended: {{ s.suspension_reason }}">Suspended</span>
+                  {% endif %}
+                </div>
               </div>
 
               <!-- Today's Attendance Badge (Warden Inspection) -->
               <div class="mb-2">
                 <span class="small fw-semibold text-muted text-uppercase tracking-wider me-1">Today's Attendance:</span>
-                {% if item.today_status == 'P' %}
+                {% if s.is_currently_suspended %}
+                  <span class="badge text-bg-danger">Entry Barred (Suspended)</span>
+                {% elif item.today_status == 'P' %}
                   <span class="badge text-bg-success">Present</span>
                 {% elif item.today_status == 'A' %}
                   <span class="badge text-bg-danger">Absent</span>
