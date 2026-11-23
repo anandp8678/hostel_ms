@@ -65,8 +65,11 @@
             </button>
           {% endif %}
         {% endif %}
+        <a class="btn btn-sm btn-outline-secondary fw-semibold" href="{% url 'students' %}">
+          ← Students
+        </a>
         <a class="btn btn-sm btn-outline-dark" href="{% if room %}{% url 'room_detail' room.pk %}{% else %}{% url 'rooms' %}{% endif %}">
-          ← Back
+          ← Room
         </a>
       {% elif parent_view %}
         <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'menu' %}">

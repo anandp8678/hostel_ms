@@ -803,6 +803,76 @@ def child(request, pk):
 
 # ---------- staff workflows ----------
 @staff
+def student_list(request):
+    q = request.GET.get("q", "").strip()
+    status_filter = request.GET.get("status", "all").strip().lower()
+    view_mode = request.GET.get("view", "grid").strip().lower()
+
+    students_qs = m.Student.objects.select_related("user", "parent__user").prefetch_related(
+        Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room"))
+    )
+
+    all_students = list(students_qs)
+    total_count = len(all_students)
+    staying_count = sum(1 for s in all_students if s.is_active and not s.is_currently_suspended)
+    suspended_count = sum(1 for s in all_students if s.is_currently_suspended)
+    left_count = sum(1 for s in all_students if not s.is_active)
+
+    students = all_students
+    if status_filter == "staying":
+        students = [s for s in students if s.is_active and not s.is_currently_suspended]
+    elif status_filter == "suspended":
+        students = [s for s in students if s.is_currently_suspended]
+    elif status_filter == "left":
+        students = [s for s in students if not s.is_active]
+
+    if q:
+        ql = q.lower()
+        students = [
+            s for s in students
+            if (ql in s.user.display_name.lower() or
+                ql in s.roll_no.lower() or
+                ql in (s.course or "").lower() or
+                (s.room and ql in str(s.room).lower()))
+        ]
+
+    table_rows = []
+    if view_mode == "table":
+        for s in students:
+            table_rows.append({
+                "student": s,
+                "cells": [
+                    s.roll_no,
+                    s.user.display_name,
+                    s.course or "—",
+                    s.room or "—",
+                    s.parent or "—",
+                    badge("Suspended") if s.is_currently_suspended else badge("Staying" if s.is_active else "Left"),
+                ],
+                "detail": reverse("student_detail", args=[s.pk]),
+                "edit": reverse("students_edit", args=[s.pk]),
+                "delete": reverse("students_delete", args=[s.pk]),
+            })
+
+    context = {
+        "title": "Students",
+        "students": students,
+        "total_count": total_count,
+        "staying_count": staying_count,
+        "suspended_count": suspended_count,
+        "left_count": left_count,
+        "q": q,
+        "status_filter": status_filter,
+        "view_mode": view_mode,
+        "table_rows": table_rows,
+        "table_headers": ["Roll no.", "Name", "Course", "Room", "Parent", "Status"],
+        "add": reverse("students_new"),
+        "add_label": "Add student",
+    }
+    return render(request, "core/students_list.html", context)
+
+
+@staff
 def student_new(request):
     form = f.StudentAddForm(request.POST or None)
     if request.method == "POST" and form.is_valid():

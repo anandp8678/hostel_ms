@@ -1,0 +1,272 @@
+{% extends "core/base.html" %}{% block content %}
+<style>
+  .student-box {
+    transition: all 0.2s ease-in-out;
+    border-radius: 12px;
+    background: #ffffff;
+    border: 1px solid rgba(11, 37, 69, 0.1);
+  }
+  .student-box:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 24px rgba(11, 37, 69, 0.12) !important;
+    border-color: var(--navy) !important;
+  }
+  .student-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #eef2f7;
+    color: var(--navy);
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.05rem;
+    letter-spacing: 0.5px;
+    border: 1px solid rgba(11, 37, 69, 0.08);
+  }
+  .student-avatar-suspended {
+    background: #fde8e8;
+    color: #c81e1e;
+    border-color: rgba(200, 30, 30, 0.2);
+  }
+</style>
+
+<!-- Students Directory Header -->
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Students Directory</h4>
+        <span class="badge text-bg-primary rounded-pill">{{ total_count }} Student{{ total_count|pluralize }}</span>
+        {% if suspended_count > 0 %}
+          <span class="badge text-bg-danger rounded-pill">{{ suspended_count }} Suspended</span>
+        {% endif %}
+      </div>
+      <div class="text-secondary small">
+        Tap anywhere on a student's box to view their full profile, attendance, fees, and room details.
+      </div>
+    </div>
+
+    <!-- Actions & View Mode -->
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <div class="btn-group" role="group" aria-label="View Mode">
+        <a href="?view=grid{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+           class="btn btn-sm {% if view_mode != 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
+          Boxes Grid
+        </a>
+        <a href="?view=table{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+           class="btn btn-sm {% if view_mode == 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
+          Table View
+        </a>
+      </div>
+      <a class="btn btn-sm btn-outline-secondary fw-semibold" href="{% url 'students_import' %}">Import CSV</a>
+      {% if add %}
+        <a class="btn btn-sm btn-navy fw-semibold" href="{{ add }}">{{ add_label }}</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Search & Status Filter Bar -->
+<div class="card p-3 mb-4 bg-white border-0 shadow-sm">
+  <form method="get" action="{% url 'students' %}" class="row g-2 align-items-center">
+    <input type="hidden" name="view" value="{{ view_mode }}">
+    
+    <!-- Quick Search Input -->
+    <div class="col-12 col-md-6 col-lg-5">
+      <div class="input-group">
+        <span class="input-group-text bg-light text-muted small">Search</span>
+        <input type="text" id="studentSearchInput" name="q" value="{{ q }}" class="form-control"
+               placeholder="Search by student name, roll no, or room..."
+               aria-label="Search students">
+        {% if q or status_filter != 'all' %}
+          <a href="{% url 'students' %}?view={{ view_mode }}" class="btn btn-outline-secondary" title="Reset filter">&times;</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Status Pills / Dropdown -->
+    <div class="col-12 col-md-6 col-lg-7 d-flex flex-wrap align-items-center gap-1 justify-content-md-end">
+      <span class="text-secondary small me-1">Status:</span>
+      <a href="?view={{ view_mode }}&status=all{% if q %}&q={{ q }}{% endif %}"
+         class="badge {% if status_filter == 'all' %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+        All ({{ total_count }})
+      </a>
+      <a href="?view={{ view_mode }}&status=staying{% if q %}&q={{ q }}{% endif %}"
+         class="badge {% if status_filter == 'staying' %}text-bg-success{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+        Staying ({{ staying_count }})
+      </a>
+      {% if suspended_count > 0 %}
+        <a href="?view={{ view_mode }}&status=suspended{% if q %}&q={{ q }}{% endif %}"
+           class="badge {% if status_filter == 'suspended' %}text-bg-danger{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          Suspended ({{ suspended_count }})
+        </a>
+      {% endif %}
+      {% if left_count > 0 %}
+        <a href="?view={{ view_mode }}&status=left{% if q %}&q={{ q }}{% endif %}"
+           class="badge {% if status_filter == 'left' %}text-bg-secondary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          Left ({{ left_count }})
+        </a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<!-- ========================================== -->
+<!-- MODE 1: STUDENT BOXES GRID (DEFAULT)       -->
+<!-- Tap anywhere on a box to enter profile     -->
+<!-- ========================================== -->
+{% if view_mode != 'table' %}
+  <div class="row g-3" id="studentsContainer">
+    {% for s in students %}
+      <div class="col-6 col-sm-4 col-md-3 col-lg-2 student-col"
+           data-name="{{ s.user.display_name|lower }}"
+           data-roll="{{ s.roll_no|lower }}"
+           data-room="{% if s.room %}{{ s.room|lower }}{% endif %}">
+        <a href="{% url 'student_detail' s.pk %}"
+           class="card h-100 text-decoration-none student-box p-3 d-flex flex-column align-items-center justify-content-between text-center {% if s.is_currently_suspended %}border-danger-subtle bg-danger-subtle-light{% else %}shadow-sm{% endif %}"
+           title="Tap to enter {{ s.user.display_name }}'s profile">
+          
+          <!-- Avatar Initials -->
+          <div class="student-avatar mb-2 {% if s.is_currently_suspended %}student-avatar-suspended{% endif %}">
+            {{ s.user.first_name|first|upper }}{{ s.user.last_name|first|upper }}
+          </div>
+
+          <!-- Student Name Prominently -->
+          <div class="w-100 mb-1">
+            <h6 class="fw-bold mb-1 text-dark text-truncate" style="color:var(--navy) !important;" title="{{ s.user.display_name }}">
+              {{ s.user.display_name }}
+            </h6>
+            <div class="text-secondary small" style="font-size:0.78rem;">
+              {{ s.roll_no }}
+            </div>
+          </div>
+
+          <!-- Room and Status Badges -->
+          <div class="d-flex flex-column align-items-center gap-1 w-100 mt-2">
+            {% if s.room %}
+              <span class="badge text-bg-light border text-secondary rounded-pill" style="font-size:0.72rem;">
+                Room {{ s.room }}
+              </span>
+            {% else %}
+              <span class="badge text-bg-light border text-muted rounded-pill" style="font-size:0.72rem;">
+                No Room
+              </span>
+            {% endif %}
+
+            {% if s.is_currently_suspended %}
+              <span class="badge text-bg-danger rounded-pill" style="font-size:0.72rem;">
+                Suspended
+              </span>
+            {% elif s.is_active %}
+              <span class="badge text-bg-success rounded-pill" style="font-size:0.72rem;">
+                Staying
+              </span>
+            {% else %}
+              <span class="badge text-bg-secondary rounded-pill" style="font-size:0.72rem;">
+                Left
+              </span>
+            {% endif %}
+          </div>
+        </a>
+      </div>
+    {% empty %}
+      <div class="col-12">
+        <div class="card p-5 text-center text-secondary bg-white border-0 shadow-sm">
+          <p class="mb-2 fs-5">No students found.</p>
+          <p class="small text-muted mb-3">No student records match the active search or status criteria.</p>
+          {% if add %}
+            <div>
+              <a href="{{ add }}" class="btn btn-sm btn-navy fw-semibold">{{ add_label }}</a>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div id="noMatchMessage" class="card p-5 text-center text-secondary bg-white border-0 shadow-sm d-none mt-3">
+    <p class="mb-1 fs-5">No matching students found.</p>
+    <p class="small text-muted mb-0">Try typing a different name, roll number, or room number.</p>
+  </div>
+
+<!-- ========================================== -->
+<!-- MODE 2: TABLE VIEW                         -->
+<!-- ========================================== -->
+{% else %}
+  <div class="card shadow-sm border-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            {% for h in table_headers %}
+              <th class="py-3">{{ h }}</th>
+            {% endfor %}
+            <th class="text-end py-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in table_rows %}
+            <tr>
+              {% for c in r.cells %}
+                <td>{{ c }}</td>
+              {% endfor %}
+              <td class="text-end text-nowrap">
+                <a class="btn btn-sm btn-outline-primary" href="{{ r.detail }}">View Profile</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ r.edit }}">Edit</a>
+                <a class="btn btn-sm btn-outline-danger" href="{{ r.delete }}">Delete</a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="{{ table_headers|length|add:1 }}" class="text-center text-secondary py-4">
+                No students found.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+
+<!-- Instant Real-Time Search Script -->
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const searchInput = document.getElementById("studentSearchInput");
+  const container = document.getElementById("studentsContainer");
+  const noMatch = document.getElementById("noMatchMessage");
+
+  if (searchInput && container) {
+    searchInput.addEventListener("input", function () {
+      const q = this.value.trim().toLowerCase();
+      const items = container.querySelectorAll(".student-col");
+      let visibleCount = 0;
+
+      items.forEach(function (col) {
+        const name = col.getAttribute("data-name") || "";
+        const roll = col.getAttribute("data-roll") || "";
+        const room = col.getAttribute("data-room") || "";
+
+        if (!q || name.includes(q) || roll.includes(q) || room.includes(q)) {
+          col.classList.remove("d-none");
+          visibleCount++;
+        } else {
+          col.classList.add("d-none");
+        }
+      });
+
+      if (noMatch) {
+        if (visibleCount === 0 && items.length > 0) {
+          noMatch.classList.remove("d-none");
+        } else {
+          noMatch.classList.add("d-none");
+        }
+      }
+    });
+  }
+});
+</script>
+
+{% endblock %}

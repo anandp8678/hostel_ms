@@ -9,6 +9,7 @@ urlpatterns = [
     path("password/", v.PwChange.as_view(), name="password"),
     path("", v.home, name="home"),
     path("children/<int:pk>/", v.child, name="child"),
+    path("students/", v.student_list, name="students"),
     path("students/new/", v.student_new, name="students_new"),
     path("students/import/", v.student_import, name="students_import"),
     path("students/import/template/", v.import_template, name="import_template"),
@@ -55,7 +56,7 @@ urlpatterns = [
     path("complaints/<int:pk>/edit/", v.complaint_edit, name="complaints_edit"),
     path("announcements/new/", v.announcement_new, name="announcements_new"),
 ]
-special = {("fees", "new"), ("wardens", "new"), ("students", "new"), ("complaints", "new"), ("complaints", "edit"), ("announcements", "new"), ("rooms", "list")}
+special = {("fees", "new"), ("wardens", "new"), ("students", "new"), ("complaints", "new"), ("complaints", "edit"), ("announcements", "new"), ("rooms", "list"), ("students", "list")}
 for key, d in v.V.items():
     path_key = "menu/manage" if key == "menu_manage" else key
     for kind, view in d.items():
