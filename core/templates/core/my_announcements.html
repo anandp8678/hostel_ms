@@ -4,7 +4,7 @@
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
     <div>
       <div class="d-flex align-items-center gap-2 mb-1">
-        <h4 class="mb-0 fw-bold" style="color:var(--navy);">📢 Hostel Announcements & Circulars</h4>
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Hostel Announcements & Circulars</h4>
         <span class="badge text-bg-primary rounded-pill">{{ total_count }} Notice{{ total_count|pluralize }}</span>
       </div>
       <div class="text-secondary small">
@@ -15,7 +15,7 @@
     <!-- Quick Role Context -->
     <div class="d-flex align-items-center gap-2">
       <span class="badge text-bg-light border text-dark py-2 px-3">
-        🏢 Assigned: <b>{{ room_label }}</b>
+        Assigned: <b>{{ room_label }}</b>
       </span>
       <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary fw-semibold">
         &larr; Dashboard
@@ -39,7 +39,7 @@
 
   <div class="col-12 col-md-4">
     <a href="?type=room{% if q %}&q={{ q }}{% endif %}" class="card p-3 h-100 bg-white border-0 shadow-sm text-decoration-none {% if filter_type == 'room' %}border-bottom border-3 border-primary{% endif %}">
-      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">🏢 My Room Notices</div>
+      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">My Room Notices</div>
       <div class="d-flex align-items-baseline gap-2">
         <span class="fs-3 fw-bold text-primary">{{ room_count }}</span>
         <span class="text-muted small">Direct Notices</span>
@@ -50,7 +50,7 @@
 
   <div class="col-12 col-md-4">
     <a href="?type=general{% if q %}&q={{ q }}{% endif %}" class="card p-3 h-100 bg-white border-0 shadow-sm text-decoration-none {% if filter_type == 'general' %}border-bottom border-3 border-primary{% endif %}">
-      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">📢 General Circulars</div>
+      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">General Circulars</div>
       <div class="d-flex align-items-baseline gap-2">
         <span class="fs-3 fw-bold text-secondary">{{ general_count }}</span>
         <span class="text-muted small">Broadcasts</span>
@@ -67,10 +67,10 @@
 
     <div class="col-12 col-md-8 col-lg-6">
       <div class="input-group">
-        <span class="input-group-text bg-light text-muted">🔍</span>
+        <span class="input-group-text bg-light text-muted">Filter</span>
         <input type="text" name="q" class="form-control" placeholder="Search announcements by title, keyword, or warden..." value="{{ q }}">
         {% if q %}
-          <a href="{% url 'my_announcements' %}?type={{ filter_type }}" class="btn btn-outline-secondary" title="Clear search">✕</a>
+          <a href="{% url 'my_announcements' %}?type={{ filter_type }}" class="btn btn-outline-secondary" title="Clear search">&times;</a>
         {% endif %}
       </div>
     </div>
@@ -88,11 +88,11 @@
       </a>
       <a href="?type=room{% if q %}&q={{ q }}{% endif %}"
          class="badge {% if filter_type == 'room' %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
-        🏢 My Room Notices ({{ room_count }})
+        My Room Notices ({{ room_count }})
       </a>
       <a href="?type=general{% if q %}&q={{ q }}{% endif %}"
          class="badge {% if filter_type == 'general' %}text-bg-secondary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
-        📢 General Hostel Circulars ({{ general_count }})
+        General Circulars ({{ general_count }})
       </a>
     </div>
   </form>
@@ -108,12 +108,12 @@
           <div>
             <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
               {% if a.is_recent %}
-                <span class="badge text-bg-warning text-dark rounded-pill fw-semibold">🔥 New</span>
+                <span class="badge text-bg-warning text-dark rounded-pill fw-semibold">NEW</span>
               {% endif %}
               {% if a.room %}
-                <span class="badge text-bg-primary rounded-pill fw-semibold">🏢 Room {{ a.room }} Notice</span>
+                <span class="badge text-bg-primary rounded-pill fw-semibold">Room {{ a.room }} Notice</span>
               {% else %}
-                <span class="badge text-bg-secondary rounded-pill fw-semibold">📢 Hostel Broadcast</span>
+                <span class="badge text-bg-secondary rounded-pill fw-semibold">Hostel Broadcast</span>
               {% endif %}
               <span class="badge text-bg-light border text-muted rounded-pill" style="font-size:0.75rem;">
                 Audience: {{ a.get_audience_display }}
@@ -136,7 +136,7 @@
         <!-- Card Footer -->
         <div class="d-flex flex-wrap justify-content-between align-items-center pt-2 border-top gap-2">
           <div class="small text-secondary">
-            👤 Posted by <b>{{ a.created_by.display_name|default:"Hostel Administration" }}</b>
+            Posted by <b>{{ a.created_by.display_name|default:"Hostel Administration" }}</b>
             · <span class="text-muted">{{ a.created_at|date:"l, d F Y · h:i A" }}</span>
           </div>
           {% if a.room %}
@@ -154,7 +154,7 @@
   {% empty %}
     <div class="col-12">
       <div class="card p-5 text-center bg-white border-0 shadow-sm" style="border-radius: 14px;">
-        <div class="fs-1 mb-2">📢</div>
+        
         <h5 class="text-dark">No Announcements Found</h5>
         <p class="text-secondary mb-3">
           {% if q %}

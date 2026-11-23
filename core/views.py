@@ -227,7 +227,7 @@ def announcement_new(request):
             recipients.extend([p.user for p in m.Parent.objects.all().select_related("user")])
         notify_users(
             recipients=recipients,
-            title=f"📢 Hostel Announcement: {anc.title}",
+            title=f"Hostel Announcement: {anc.title}",
             message=anc.body[:200],
             category="announcement",
             link=reverse("home"),
@@ -262,7 +262,7 @@ def fee_create(request):
         parent_users = [s.parent.user for s in targets if s.parent]
         notify_users(
             recipients=student_users + parent_users,
-            title=f"💳 New Fee Issued: {d['title']}",
+            title=f"New Fee Issued: {d['title']}",
             message=f"Amount: ₹{d['amount']} | Due: {d['due_date'].strftime('%d %b %Y')}. Review in Fees section.",
             category="fee",
             link=reverse("my_fees"),
@@ -404,7 +404,7 @@ def fees_calculate_monthly(request):
         parent_users = [s.parent.user for s in notif_students if s.parent]
         notify_users(
             recipients=student_users + parent_users,
-            title=f"💳 Hostel & Mess Fee Released - {month_label}",
+            title=f"Hostel & Mess Fee Released - {month_label}",
             message=f"{title} has been generated. Due date: {due_date.strftime('%d %b %Y')}. Review breakdown in Fees section.",
             category="fee",
             link=reverse("my_fees"),
@@ -1212,7 +1212,7 @@ def room_announcement_create(request, pk):
     target_users = inmate_users if audience == "student" else (inmate_users + parent_users if audience == "all" else parent_users)
     notify_users(
         recipients=target_users,
-        title=f"📢 Room {room} Notice: {title}",
+        title=f"Room {room} Notice: {title}",
         message=body[:200],
         category="announcement",
         link=reverse("home"),
@@ -1249,7 +1249,7 @@ def complaint_edit(request, pk):
             note_text = f" Staff reply: '{new_note[:100]}'" if new_note else ""
             notify_user(
                 recipient=obj.student.user,
-                title=f"💬 Reply to Complaint: {obj.title}",
+                title=f"Reply to Complaint: {obj.title}",
                 message=f"Status set to '{new_status}'.{note_text}",
                 category="complaint",
                 link=reverse("my_complaints"),
@@ -1671,7 +1671,7 @@ def leave_decide(request, pk, decision):
         targets.append(lv.student.parent.user)
     notify_users(
         recipients=targets,
-        title=f"📝 Leave Request {lv.status}",
+        title=f"Leave Request {lv.status}",
         message=f"Leave request from {lv.from_date.strftime('%d %b')} to {lv.to_date.strftime('%d %b')} was {lv.status.lower()} by the warden.",
         category="leave",
         link=reverse("my_leaves"),
@@ -1820,7 +1820,7 @@ def my_complaints(request):
         staff_users = list(m.User.objects.filter(role__in=STAFF, is_active=True))
         notify_users(
             recipients=staff_users,
-            title=f"💬 New Complaint: {c.title}",
+            title=f"New Complaint: {c.title}",
             message=f"Filed by {s.user.display_name} ({s.roll_no}) - Room {s.room or 'Unassigned'}: {c.description[:150]}",
             category="complaint",
             link=reverse("complaints_edit", args=[c.pk]),
@@ -1856,7 +1856,7 @@ def my_complaint_resolve(request, pk):
         staff_users = list(m.User.objects.filter(role__in=STAFF, is_active=True))
         notify_users(
             recipients=staff_users,
-            title=f"✅ Complaint Solved: {c.title}",
+            title=f"Complaint Solved: {c.title}",
             message=f"{s.user.display_name} marked complaint #{c.pk} as solved.",
             category="complaint",
             link=reverse("complaints_edit", args=[c.pk]),
@@ -1879,7 +1879,7 @@ def my_complaint_reopen(request, pk):
         staff_users = list(m.User.objects.filter(role__in=STAFF, is_active=True))
         notify_users(
             recipients=staff_users,
-            title=f"⚠️ Complaint Reopened: {c.title}",
+            title=f"Complaint Reopened: {c.title}",
             message=f"{s.user.display_name} reopened complaint #{c.pk} for staff review.",
             category="complaint",
             link=reverse("complaints_edit", args=[c.pk]),
@@ -1898,7 +1898,7 @@ def my_leaves(request):
         staff_users = list(m.User.objects.filter(role__in=STAFF, is_active=True))
         notify_users(
             recipients=staff_users,
-            title=f"📝 New Leave Request: {s.user.display_name}",
+            title=f"New Leave Request: {s.user.display_name}",
             message=f"{s.user.display_name} ({s.roll_no}) requested leave from {lv.from_date.strftime('%d %b')} to {lv.to_date.strftime('%d %b')}. Reason: {lv.reason}",
             category="leave",
             link=reverse("leaves"),
@@ -1928,12 +1928,12 @@ def my_fees(request):
             f"₹{x.balance}",
             date_s(x.due_date),
             badge(x.status),
-            format_html('<a class="btn btn-sm btn-outline-danger" href="{}">📄 Receipt</a>', reverse("fee_pdf", args=[x.pk])),
+            format_html('<a class="btn btn-sm btn-outline-danger" href="{}">Receipt</a>', reverse("fee_pdf", args=[x.pk])),
         )
         for x in s.fees.all()
     ]
     note = format_html(
-        'Hostel fees must be settled before due date. A late fine of ₹300 is charged for every 5 days past due. <a class="btn btn-sm btn-outline-danger ms-2" href="{}">📄 Export All Fees PDF</a>',
+        'Hostel fees must be settled before due date. A late fine of ₹300 is charged for every 5 days past due. <a class="btn btn-sm btn-outline-danger ms-2" href="{}">Export All Fees PDF</a>',
         reverse("my_fees_export_pdf"),
     )
     return show(
@@ -1971,10 +1971,10 @@ def menu(request):
     today_name = dict(m.MealMenu.DAYS).get(today_weekday, "Today")
 
     meal_meta = [
-        {"key": "B", "name": "Breakfast", "timing": "7:30 AM – 9:00 AM", "icon": "🌅"},
-        {"key": "L", "name": "Lunch", "timing": "12:30 PM – 2:00 PM", "icon": "🍛"},
-        {"key": "S", "name": "Snacks & Tea", "timing": "4:30 PM – 5:30 PM", "icon": "☕"},
-        {"key": "D", "name": "Dinner", "timing": "7:30 PM – 9:00 PM", "icon": "🍲"},
+        {"key": "B", "name": "Breakfast", "timing": "7:30 AM – 9:00 AM"},
+        {"key": "L", "name": "Lunch", "timing": "12:30 PM – 2:00 PM"},
+        {"key": "S", "name": "Snacks & Tea", "timing": "4:30 PM – 5:30 PM"},
+        {"key": "D", "name": "Dinner", "timing": "7:30 PM – 9:00 PM"},
     ]
 
     all_meals = m.MealMenu.objects.all()
@@ -1996,7 +1996,6 @@ def menu(request):
             meal_data = {
                 "key": mm["key"],
                 "name": mm["name"],
-                "icon": mm["icon"],
                 "timing": mm["timing"],
                 "items_str": items_str or "—",
                 "items_list": item_list,

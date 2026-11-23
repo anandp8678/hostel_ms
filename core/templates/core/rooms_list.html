@@ -27,7 +27,7 @@
         <h4 class="mb-0 fw-bold" style="color:var(--navy);">Hostel Rooms Directory</h4>
         <span class="badge text-bg-primary rounded-pill">{{ total_rooms }} Room{{ total_rooms|pluralize }}</span>
         {% if total_active_complaints > 0 %}
-          <span class="badge text-bg-warning text-dark rounded-pill">⚠️ {{ total_active_complaints }} Active Complaint{{ total_active_complaints|pluralize }}</span>
+          <span class="badge text-bg-warning text-dark rounded-pill">{{ total_active_complaints }} Active Complaint{{ total_active_complaints|pluralize }}</span>
         {% endif %}
       </div>
       <div class="text-secondary small">
@@ -40,11 +40,11 @@
       <div class="btn-group" role="group" aria-label="View Mode">
         <a href="?view=grid{% if filter_block %}&block={{ filter_block }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}"
            class="btn btn-sm {% if view_mode != 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
-          🏢 Rooms Grid
+          Rooms Grid
         </a>
         <a href="?view=table{% if filter_block %}&block={{ filter_block }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}"
            class="btn btn-sm {% if view_mode == 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
-          📋 Table & Bulk Select
+          Table & Bulk Select
         </a>
       </div>
 
@@ -123,10 +123,10 @@
     <!-- Search Query Input -->
     <div class="col-12 col-md-5 col-lg-4">
       <div class="input-group">
-        <span class="input-group-text bg-light text-muted">🔍</span>
+        <span class="input-group-text bg-light text-muted">Filter</span>
         <input type="text" name="q" class="form-control" placeholder="Search room no, floor, resident name..." value="{{ filter_q }}">
         {% if filter_q or filter_block or filter_status or filter_capacity or filter_cause %}
-          <a href="?view={{ view_mode }}" class="btn btn-outline-secondary" title="Reset all filters">✕</a>
+          <a href="?view={{ view_mode }}" class="btn btn-outline-secondary" title="Reset all filters">&times;</a>
         {% endif %}
       </div>
     </div>
@@ -152,11 +152,11 @@
         <span class="input-group-text bg-light text-muted small">Status:</span>
         <select name="status" class="form-select" onchange="this.form.submit()">
           <option value="">All Rooms</option>
-          <option value="vacant" {% if filter_status == "vacant" %}selected{% endif %}>🟢 Available / Vacant</option>
-          <option value="full" {% if filter_status == "full" %}selected{% endif %}>⚪ Fully Occupied</option>
+          <option value="vacant" {% if filter_status == "vacant" %}selected{% endif %}>Available / Vacant</option>
+          <option value="full" {% if filter_status == "full" %}selected{% endif %}>Fully Occupied</option>
           <option value="empty" {% if filter_status == "empty" %}selected{% endif %}>Completely Empty</option>
           <option value="active" {% if filter_status == "active" %}selected{% endif %}>Active Only (Not Blacklisted)</option>
-          <option value="blacklisted" {% if filter_status == "blacklisted" %}selected{% endif %}>🚫 All Blacklisted / Maintenance</option>
+          <option value="blacklisted" {% if filter_status == "blacklisted" %}selected{% endif %}>All Blacklisted / Maintenance</option>
           <option value="maintenance" {% if filter_status == "maintenance" %}selected{% endif %}>Blacklisted: Maintenance</option>
           <option value="renovation" {% if filter_status == "renovation" %}selected{% endif %}>Blacklisted: Renovation</option>
           <option value="repair" {% if filter_status == "repair" %}selected{% endif %}>Blacklisted: Repair / Damage</option>
@@ -200,10 +200,10 @@
       <!-- Floor Section Header -->
       <div class="d-flex flex-wrap justify-content-between align-items-center pb-2 mb-3 border-bottom">
         <div class="d-flex align-items-center gap-2">
-          <h5 class="mb-0 fw-bold" style="color:var(--navy);">🏢 {{ group.floor_display }}</h5>
+          <h5 class="mb-0 fw-bold" style="color:var(--navy);">{{ group.floor_display }}</h5>
           <span class="badge text-bg-light border text-dark rounded-pill">{{ group.rooms|length }} Room{{ group.rooms|length|pluralize }}</span>
           {% if group.active_complaints > 0 %}
-            <span class="badge text-bg-warning text-dark rounded-pill">⚠️ {{ group.active_complaints }} Active Complaint{{ group.active_complaints|pluralize }}</span>
+            <span class="badge text-bg-warning text-dark rounded-pill">{{ group.active_complaints }} Active Complaint{{ group.active_complaints|pluralize }}</span>
           {% endif %}
         </div>
         <div class="text-secondary small">
@@ -231,7 +231,7 @@
                 <!-- Complaint Warning Icon -->
                 {% if r.active_complaints_count > 0 %}
                   <span class="badge text-bg-warning text-dark rounded-pill" title="{{ r.active_complaints_count }} active complaint(s) in this room">
-                    ⚠️ {{ r.active_complaints_count }}
+                    {{ r.active_complaints_count }} issue{{ r.active_complaints_count|pluralize }}
                   </span>
                 {% endif %}
               </div>
@@ -240,19 +240,19 @@
               <div class="mb-2">
                 {% if r.is_blacklisted %}
                   <span class="badge text-bg-danger rounded-pill" style="font-size: 0.72rem;" title="{{ r.blacklist_reason }}">
-                    🚫 {{ r.blacklist_reason|default:"Maintenance" }}
+                    Maintenance: {{ r.blacklist_reason|default:"Unavailable" }}
                   </span>
                 {% elif r.vacancy == 0 %}
                   <span class="badge text-bg-secondary rounded-pill" style="font-size: 0.72rem;">
-                    ⚪ Full ({{ r.capacity }}/{{ r.capacity }})
+                    Full ({{ r.capacity }}/{{ r.capacity }})
                   </span>
                 {% elif r.occupied == 0 %}
                   <span class="badge text-bg-success rounded-pill" style="font-size: 0.72rem;">
-                    🟢 {{ r.capacity }} Beds Free
+                    {{ r.capacity }} Beds Free
                   </span>
                 {% else %}
                   <span class="badge text-bg-info text-dark rounded-pill" style="font-size: 0.72rem;">
-                    🟡 {{ r.occupied }}/{{ r.capacity }} · {{ r.vacancy }} Free
+                    {{ r.occupied }}/{{ r.capacity }} · {{ r.vacancy }} Free
                   </span>
                 {% endif %}
               </div>
@@ -261,7 +261,7 @@
               <div class="mt-auto pt-2 border-top">
                 {% if r.inmates_list %}
                   <div class="small text-dark fw-semibold text-truncate" title="{{ r.inmate_names|join:', ' }}">
-                    👥 {{ r.inmate_names|join:", " }}
+                    {{ r.inmate_names|join:", " }}
                   </div>
                 {% else %}
                   <div class="small text-muted fst-italic">
@@ -279,7 +279,7 @@
     </div>
   {% empty %}
     <div class="card p-5 text-center bg-white border-0 shadow-sm">
-      <div class="fs-1 mb-2">🔍</div>
+      
       <h5 class="text-dark">No Rooms Found</h5>
       <p class="text-secondary mb-3">No rooms matched your search criteria or floor filter.</p>
       <div>
@@ -311,10 +311,10 @@
         <div class="d-flex flex-wrap align-items-center gap-2">
           <select name="bulk_action" id="bulkActionSelect" class="form-select form-select-sm" style="width:auto;" onchange="onActionChange()">
             <option value="">Choose action...</option>
-            <option value="blacklist">🚫 Mark Maintenance / Blacklist selected</option>
-            <option value="activate">🟢 Activate selected (Remove maintenance)</option>
-            <option value="change_capacity">🛏 Change capacity</option>
-            <option value="delete">🗑 Delete selected</option>
+            <option value="blacklist">Mark Maintenance / Blacklist selected</option>
+            <option value="activate">Activate selected (Remove maintenance)</option>
+            <option value="change_capacity">Change capacity</option>
+            <option value="delete">Delete selected</option>
           </select>
 
           <!-- Cause input for blacklisting -->
@@ -364,7 +364,7 @@
                 </td>
                 <td class="fw-bold">
                   <a href="{% url 'room_detail' r.pk %}" class="text-decoration-none {% if r.is_blacklisted %}text-muted{% else %}text-dark{% endif %}" title="View details for Room {{ r }}">
-                    🏢 {{ r }}
+                    {{ r }}
                   </a>
                 </td>
                 <td>{{ r.floor_display }}</td>
@@ -395,7 +395,7 @@
                 <td>
                   {% if r.is_blacklisted %}
                     <span class="badge text-bg-danger" title="{{ r.blacklist_reason }}">
-                      🚫 Maintenance: {{ r.blacklist_reason|default:"Unavailable" }}
+                      Maintenance: {{ r.blacklist_reason|default:"Unavailable" }}
                     </span>
                   {% elif r.raw_vacancy == 0 %}
                     <span class="badge text-bg-secondary">Full</span>
@@ -405,7 +405,7 @@
                     <span class="badge text-bg-info">Partly occupied</span>
                   {% endif %}
                   {% if r.active_complaints_count > 0 %}
-                    <span class="badge text-bg-warning text-dark ms-1">⚠️ {{ r.active_complaints_count }} issue{{ r.active_complaints_count|pluralize }}</span>
+                    <span class="badge text-bg-warning text-dark ms-1">{{ r.active_complaints_count }} issue{{ r.active_complaints_count|pluralize }} issue{{ r.active_complaints_count|pluralize }}</span>
                   {% endif %}
                 </td>
                 <td class="text-end text-nowrap">

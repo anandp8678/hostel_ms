@@ -849,7 +849,7 @@ class StudentComplaintResolutionTests(TestCase):
 
         # Page now displays resolved badge
         resp_after = c.get(reverse("my_complaints"))
-        self.assertContains(resp_after, "✓ Resolved")
+        self.assertContains(resp_after, "Resolved")
 
     def test_student_cannot_resolve_other_student_complaint(self):
         c = Client()
@@ -1493,7 +1493,7 @@ class NotificationSystemTests(TestCase):
 
         resp = c.get(reverse("home"))
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "🔔")
+        self.assertContains(resp, "notifDropdown")
         self.assertContains(resp, "Important Mess Timing Change")
         self.assertContains(resp, "unread notifications")
 

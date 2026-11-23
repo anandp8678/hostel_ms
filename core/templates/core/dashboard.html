@@ -24,40 +24,40 @@
     <div class="d-flex flex-wrap gap-2">
       {% if user.role == 'warden' %}
         <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'attendance' %}">
-          📋 Roll Call
+          Roll Call
         </a>
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}">
-          📊 Past Attendance
+          Past Attendance
         </a>
         <a class="btn btn-sm btn-outline-warning fw-semibold text-dark position-relative" href="{% url 'leaves' %}">
-          ✈️ Review Leaves
+          Review Leaves
           {% if pending_leaves_count > 0 %}<span class="badge text-bg-danger rounded-pill ms-1">{{ pending_leaves_count }}</span>{% endif %}
         </a>
         <a class="btn btn-sm btn-outline-danger fw-semibold position-relative" href="{% url 'complaints' %}">
-          💬 Complaints Desk
+          Complaints Desk
           {% if open_complaints_count > 0 %}<span class="badge text-bg-danger rounded-pill ms-1">{{ open_complaints_count }}</span>{% endif %}
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'students' %}">
-          👥 Students
+          Students
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'rooms' %}">
-          🚪 Rooms
+          Rooms
         </a>
       {% else %}
         <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'attendance' %}">
-          📅 Mark Attendance
+          Mark Attendance
         </a>
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}">
-          📊 Past Attendance
+          Past Attendance
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'students_new' %}">
-          ➕ Add Student
+          Add Student
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'rooms_bulk_add' %}">
-          🚪 Bulk Add Rooms
+          Bulk Add Rooms
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'fees_new' %}">
-          💰 Add Fee
+          Add Fee
         </a>
       {% endif %}
     </div>
@@ -160,8 +160,8 @@
         <span class="text-muted">pending leaves</span>
       </div>
       <div class="d-flex flex-wrap gap-2 mb-2 small">
-        <span class="badge text-bg-light border text-dark">⚠️ {{ open_complaints_count }} open complaints</span>
-        <span class="badge text-bg-light border text-danger">💳 {{ overdue_fees_count }} overdue fees</span>
+        <span class="badge text-bg-light border text-dark">{{ open_complaints_count }} open complaints</span>
+        <span class="badge text-bg-light border text-danger">{{ overdue_fees_count }} overdue fees</span>
       </div>
       <div class="d-flex justify-content-between small text-muted mt-auto">
         <span>Balance: <b>₹{{ total_balance_amount }}</b></span>
@@ -177,7 +177,7 @@
   <div class="col-12 col-lg-4">
     <div class="card p-3 h-100 bg-white">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0 fw-bold" style="color:var(--navy);">🛏️ Room & Bed Distribution</h6>
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">Room & Bed Distribution</h6>
         <span class="badge text-bg-light border">{{ total_beds }} Beds</span>
       </div>
       <div class="chart-box d-flex justify-content-center align-items-center">
@@ -206,7 +206,7 @@
   <div class="col-12 col-lg-4">
     <div class="card p-3 h-100 bg-white">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0 fw-bold" style="color:var(--navy);">📋 Today's Attendance</h6>
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">Today's Attendance</h6>
         <span class="badge text-bg-light border">{{ today|date:"d M" }}</span>
       </div>
       <div class="chart-box d-flex justify-content-center align-items-center">
@@ -239,7 +239,7 @@
   <div class="col-12 col-lg-4">
     <div class="card p-3 h-100 bg-white">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0 fw-bold" style="color:var(--navy);">👥 Student Status</h6>
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">Student Status</h6>
         <span class="badge text-bg-light border">{{ active_student_count }} Active</span>
       </div>
       <div class="chart-box d-flex justify-content-center align-items-center">
@@ -272,7 +272,7 @@
     <div class="card p-3 h-100 bg-white">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <div>
-          <h6 class="mb-0 fw-bold" style="color:var(--navy);">🏢 Floor Occupancy Breakdown</h6>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">Floor Occupancy Breakdown</h6>
           <span class="text-secondary small">Comparison of occupied beds versus available capacity per floor (G = Ground Floor, F = First Floor, etc.)</span>
         </div>
         <a href="{% url 'rooms' %}" class="btn btn-sm btn-outline-secondary">All Rooms</a>
@@ -287,7 +287,7 @@
   <div class="col-12 col-lg-4">
     <div class="card p-3 h-100 bg-white">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0 fw-bold" style="color:var(--navy);">💳 Fee Collection Progress</h6>
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">Fee Collection Progress</h6>
         <span class="badge text-bg-light border">₹{{ total_fee_amount }} Total</span>
       </div>
 
@@ -307,11 +307,11 @@
           <span class="fw-bold">₹{{ total_fee_amount }}</span>
         </li>
         <li class="list-group-item d-flex justify-content-between px-0 py-2">
-          <span class="text-success fw-semibold">✓ Total Collected</span>
+          <span class="text-success fw-semibold">Total Collected</span>
           <span class="fw-bold text-success">₹{{ total_paid_amount }}</span>
         </li>
         <li class="list-group-item d-flex justify-content-between px-0 py-2">
-          <span class="text-danger fw-semibold">⚠️ Pending Balance</span>
+          <span class="text-danger fw-semibold">Pending Balance</span>
           <span class="fw-bold text-danger">₹{{ total_balance_amount }}</span>
         </li>
         <li class="list-group-item d-flex justify-content-between px-0 py-2">
@@ -350,17 +350,17 @@
             <div class="d-flex gap-1">
               <form method="post" action="{% url 'leave_decide' lv.pk 'approve' %}" class="d-inline">
                 {% csrf_token %}
-                <button class="btn btn-sm btn-success py-0 px-2" title="Approve">✓</button>
+                <button class="btn btn-sm btn-success py-0 px-2" title="Approve">Approve</button>
               </form>
               <form method="post" action="{% url 'leave_decide' lv.pk 'reject' %}" class="d-inline">
                 {% csrf_token %}
-                <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Reject">✕</button>
+                <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Reject">Reject</button>
               </form>
             </div>
           </div>
         {% empty %}
           <div class="text-center text-muted py-4 small">
-            ✓ No pending leave requests to approve.
+            No pending leave requests to approve.
           </div>
         {% endfor %}
       </div>
@@ -387,7 +387,7 @@
           </div>
         {% empty %}
           <div class="text-center text-muted py-4 small">
-            ✓ No open student complaints.
+            No open student complaints.
           </div>
         {% endfor %}
       </div>
@@ -398,7 +398,7 @@
   <div class="col-12 col-lg-4">
     <div class="card h-100 bg-white">
       <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
-        <span class="fw-bold small" style="color:var(--navy);">🍲 Today's Meal Menu</span>
+        <span class="fw-bold small" style="color:var(--navy);">Today's Meal Menu</span>
         <a href="{% url 'menu_manage' %}" class="small text-decoration-none">Manage Menu</a>
       </div>
       <div class="p-2">

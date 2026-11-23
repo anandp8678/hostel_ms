@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}{% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
   <div>
-    <h4 style="color:var(--navy)" class="mb-1">⚡ Calculate Monthly Fees & Mess Cut</h4>
+    <h4 style="color:var(--navy)" class="mb-1">Calculate Monthly Fees & Mess Cut</h4>
     <p class="text-secondary small mb-0">
       Automated calculation based on attendance: Fixed Rent ₹{{ cfg.rent_amount }} + Food ({{ calc_rows.0.calc.num_days|default:30 }} days @ ₹{{ cfg.food_rate_per_day }}/day) minus Mess Cut (absent ≥ {{ cfg.mess_cut_min_days }} consecutive days).
     </p>
@@ -16,8 +16,8 @@
         {% endfor %}
       </select>
     </form>
-    <a href="{% url 'fees_export_pdf' %}?month={{ month_str }}" class="btn btn-sm btn-outline-danger text-nowrap">📄 Export PDF</a>
-    <a href="{% url 'fee_structure' %}" class="btn btn-sm btn-outline-secondary text-nowrap">⚙️ Settings</a>
+    <a href="{% url 'fees_export_pdf' %}?month={{ month_str }}" class="btn btn-sm btn-outline-danger text-nowrap">Export PDF</a>
+    <a href="{% url 'fee_structure' %}" class="btn btn-sm btn-outline-secondary text-nowrap">Settings</a>
     <a href="{% url 'fees' %}" class="btn btn-sm btn-outline-secondary text-nowrap">&larr; Fees</a>
   </div>
 </div>
@@ -130,14 +130,14 @@
                 <td>
                   <div class="small">
                     {% if c.total_absent_days == 0 %}
-                      <span class="badge text-bg-success-subtle text-success border border-success-subtle">✓ 100% Present</span>
+                      <span class="badge text-bg-success-subtle text-success border border-success-subtle">100% Present</span>
                     {% else %}
                       <span class="text-muted">Absent: {{ c.total_absent_days }}d</span>
                       {% if c.qualifying_details %}
                         <div class="mt-1">
                           {% for q in c.qualifying_details %}
                             <span class="badge text-bg-success" title="Qualifies for Mess Cut (≥{{ cfg.mess_cut_min_days }} consecutive days)">
-                              ✂️ {{ q }}
+                              {{ q }}
                             </span>
                           {% endfor %}
                         </div>
@@ -209,7 +209,7 @@
     <div>
       <a href="{% url 'fees' %}" class="btn btn-outline-secondary me-2">Cancel</a>
       <button type="submit" name="save_fees" class="btn btn-navy px-4 py-2 fw-bold">
-        ✓ Save & Generate Fee Bills
+        Save & Generate Fee Bills
       </button>
     </div>
   </div>

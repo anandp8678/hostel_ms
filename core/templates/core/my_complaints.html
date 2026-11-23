@@ -28,7 +28,7 @@
   <!-- Left Column: Submit New Complaint Form -->
   <div class="col-12 col-lg-5">
     <div class="card p-3 bg-white border-0 shadow-sm">
-      <h6 class="fw-bold mb-3" style="color:var(--navy);">📝 File a New Complaint</h6>
+      <h6 class="fw-bold mb-3" style="color:var(--navy);">File a New Complaint</h6>
       <form method="post">
         {% csrf_token %}
         {{ form.non_field_errors }}
@@ -55,7 +55,7 @@
   <div class="col-12 col-lg-7">
     <div class="card p-3 bg-white border-0 shadow-sm h-100">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="fw-bold mb-0" style="color:var(--navy);">📋 My Submitted Complaints</h6>
+        <h6 class="fw-bold mb-0" style="color:var(--navy);">My Submitted Complaints</h6>
         <span class="text-muted small">{{ total_count }} total request{{ total_count|pluralize }}</span>
       </div>
 
@@ -71,7 +71,7 @@
               </div>
               <div>
                 {% if c.status == 'Resolved' %}
-                  <span class="badge text-bg-success rounded-pill px-2 py-1">✓ Resolved</span>
+                  <span class="badge text-bg-success rounded-pill px-2 py-1">Resolved</span>
                 {% elif c.status == 'In Progress' %}
                   <span class="badge text-bg-primary rounded-pill px-2 py-1">In Progress</span>
                 {% elif c.status == 'Under Review' %}
@@ -101,12 +101,12 @@
                   {% csrf_token %}
                   <button type="submit" class="btn btn-sm btn-success fw-bold px-3 py-1"
                           onclick="return confirm('Confirm that this issue has been resolved to your satisfaction?');">
-                    ✓ Mark as Solved
+                    Mark as Solved
                   </button>
                 </form>
               {% else %}
                 <span class="small text-success fw-semibold">
-                  ✓ Issue confirmed as solved
+                  Issue confirmed as solved
                 </span>
                 <form method="post" action="{% url 'my_complaint_reopen' c.pk %}" class="d-inline">
                   {% csrf_token %}
@@ -120,7 +120,7 @@
           </div>
         {% empty %}
           <div class="text-center py-5 text-muted">
-            <div class="fs-1 mb-2">💬</div>
+            
             <h6 class="text-dark">No Complaints Submitted</h6>
             <p class="small text-secondary mb-0">You have no active or past maintenance complaints.</p>
           </div>

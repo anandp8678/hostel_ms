@@ -9,11 +9,11 @@
         </a>
       </div>
       <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-        <h3 class="mb-0 fw-bold" style="color:var(--navy);">🏢 Room {{ room }}</h3>
+        <h3 class="mb-0 fw-bold" style="color:var(--navy);">Room {{ room }}</h3>
         <span class="badge text-bg-primary rounded-pill fs-6">{{ room.floor_display }}</span>
         {% if room.is_blacklisted %}
           <span class="badge text-bg-danger rounded-pill fs-6" title="{{ room.blacklist_reason }}">
-            🚫 Under Maintenance: {{ room.blacklist_reason|default:"Unavailable" }}
+            Under Maintenance: {{ room.blacklist_reason|default:"Unavailable" }}
           </span>
         {% elif room.vacancy == 0 %}
           <span class="badge text-bg-secondary rounded-pill fs-6">Full ({{ room.capacity }}/{{ room.capacity }})</span>
@@ -37,7 +37,7 @@
       {% endif %}
 
       <button type="button" class="btn btn-sm btn-outline-primary fw-semibold" onclick="openRoomAnnouncementModal()">
-        📢 Send Announcement
+        Send Announcement
       </button>
 
       <!-- 1-Click Toggle Maintenance / Blacklist -->
@@ -46,20 +46,20 @@
         <input type="hidden" name="next" value="{{ request.get_full_path }}">
         {% if room.is_blacklisted %}
           <button type="submit" class="btn btn-sm btn-success fw-semibold" onclick="return confirm('Reactivate Room {{ room }} and mark as available for allocations?')">
-            🟢 Reactivate Room
+            Reactivate Room
           </button>
         {% else %}
           <button type="button" class="btn btn-sm btn-outline-warning fw-semibold" onclick="openMaintenanceModal()">
-            🚫 Mark Maintenance
+            Mark Maintenance
           </button>
         {% endif %}
       </form>
 
       <a href="{% url 'rooms_edit' room.pk %}" class="btn btn-sm btn-outline-secondary">
-        ✏️ Edit Room
+        Edit Room
       </a>
       <a href="{% url 'rooms_delete' room.pk %}" class="btn btn-sm btn-outline-danger">
-        🗑️ Delete
+        Delete
       </a>
     </div>
   </div>
@@ -69,7 +69,7 @@
 {% if room.is_blacklisted %}
   <div class="alert alert-danger d-flex align-items-center justify-content-between p-3 mb-4 shadow-sm border-0" role="alert">
     <div class="d-flex align-items-center gap-3">
-      <div class="fs-2">⚠️</div>
+      
       <div>
         <h6 class="alert-heading mb-1 fw-bold">Room Currently Under Maintenance / Unavailable</h6>
         <div class="small">
@@ -144,7 +144,7 @@
   <div class="card-header bg-white border-bottom py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
     <div>
       <h5 class="mb-0 fw-bold" style="color:var(--navy);">
-        👥 Room Inmates ({{ total_inmates }} / {{ room.capacity }} Beds)
+        Room Inmates ({{ total_inmates }} / {{ room.capacity }} Beds)
       </h5>
       <span class="text-secondary small">
         Tap on any student's name to view their full 360&deg; student profile, attendance history, fees, and family details
@@ -169,7 +169,7 @@
                   <h5 class="mb-1 fw-bold">
                     <!-- Tap on student name goes to student profile section -->
                     <a href="{% url 'student_detail' s.pk %}" class="text-decoration-none" style="color:var(--navy);" title="Tap to view {{ s.user.display_name }}'s full profile">
-                      👤 {{ s.user.display_name }}
+                      {{ s.user.display_name }}
                     </a>
                   </h5>
                   <div class="text-secondary small">
@@ -183,20 +183,20 @@
               <div class="mb-2">
                 <span class="small fw-semibold text-muted text-uppercase tracking-wider me-1">Today's Attendance:</span>
                 {% if item.today_status == 'P' %}
-                  <span class="badge text-bg-success">🟢 Present</span>
+                  <span class="badge text-bg-success">Present</span>
                 {% elif item.today_status == 'A' %}
-                  <span class="badge text-bg-danger">🔴 Absent</span>
+                  <span class="badge text-bg-danger">Absent</span>
                 {% elif item.today_status == 'L' %}
-                  <span class="badge text-bg-warning text-dark">🟡 On Leave</span>
+                  <span class="badge text-bg-warning text-dark">On Leave</span>
                 {% else %}
-                  <span class="badge text-bg-secondary">⚪ Unmarked</span>
+                  <span class="badge text-bg-secondary">Unmarked</span>
                 {% endif %}
               </div>
 
               <!-- Active Leave Alert -->
               {% if item.active_leave %}
                 <div class="alert alert-warning py-1 px-2 small mb-2 d-flex align-items-center gap-2">
-                  <span>✈️</span>
+                  
                   <div>
                     <b>On Approved Leave:</b> {{ item.active_leave.from_date|date:'d M' }} &rarr; {{ item.active_leave.to_date|date:'d M' }}
                     ({{ item.active_leave.reason|truncatechars:30 }})
@@ -209,16 +209,16 @@
                 <span class="fw-semibold text-muted">Fee Balance:</span>
                 {% if item.fee_balance > 0 %}
                   <a href="{% url 'fees' %}?q={{ s.roll_no }}" class="badge text-bg-danger text-decoration-none" title="Review student dues">
-                    ⚠️ ₹{{ item.fee_balance }} Due{% if item.has_fines %} (Late Fine){% endif %}
+                    ₹{{ item.fee_balance }} Due{% if item.has_fines %} (Late Fine){% endif %}
                   </a>
                 {% else %}
-                  <span class="badge text-bg-success">✅ Fees Paid</span>
+                  <span class="badge text-bg-success">Fees Paid</span>
                 {% endif %}
               </div>
 
               <!-- Emergency & Parent Contact Info -->
               <div class="p-2 mb-3 bg-white rounded border small">
-                <div class="text-secondary fw-semibold mb-1">📞 Emergency & Parent Details:</div>
+                <div class="text-secondary fw-semibold mb-1">Emergency & Parent Details:</div>
                 <div class="d-flex justify-content-between mb-1">
                   <span class="text-muted">Parent / Guardian:</span>
                   <span class="fw-semibold text-dark">{{ item.parent_name }}</span>
@@ -227,7 +227,7 @@
                   <div class="d-flex justify-content-between mb-1">
                     <span class="text-muted">Parent Phone:</span>
                     <a href="tel:{{ item.parent_phone }}" class="fw-semibold text-decoration-none text-primary">
-                      {{ item.parent_phone }} 📱
+                      {{ item.parent_phone }}
                     </a>
                   </div>
                 {% endif %}
@@ -269,7 +269,7 @@
       {% for b in empty_beds %}
         <div class="col-12 col-md-6 col-xl-4">
           <div class="card h-100 border border-dashed p-4 d-flex flex-column align-items-center justify-content-center text-center bg-white" style="border-style: dashed !important; border-width: 2px !important; min-height: 240px;">
-            <div class="fs-1 text-muted mb-2">🛏️</div>
+            
             <h6 class="fw-bold text-dark mb-1">Bed Slot Available</h6>
             <p class="text-secondary small mb-3">
               Room {{ room }} has vacant bed capacity ready for a student allocation.
@@ -293,7 +293,7 @@
   <div class="card-header bg-white border-bottom py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
     <div>
       <h5 class="mb-0 fw-bold" style="color:var(--navy);">
-        💬 Room Complaints & Maintenance Issues
+        Room Complaints & Maintenance Issues
       </h5>
       <span class="text-secondary small">
         Review active issues reported by inmates and complaint resolution history. Tap on any complaint to open its staff management section.
@@ -310,7 +310,7 @@
     <div class="mb-4">
       <div class="d-flex align-items-center gap-2 mb-3">
         <h6 class="mb-0 fw-bold text-dark">
-          🔴 Active Complaints ({{ active_complaints|length }})
+          Active Complaints ({{ active_complaints|length }})
         </h6>
         <span class="text-secondary small">Requires warden / staff attention</span>
       </div>
@@ -363,7 +363,7 @@
         </div>
       {% else %}
         <div class="alert alert-success py-3 px-3 d-flex align-items-center gap-2 mb-0 border-0">
-          <span>✅</span>
+          
           <div class="small">
             <b>No active complaints for Room {{ room }}.</b> All reported issues have been inspected and resolved.
           </div>
@@ -375,7 +375,7 @@
     <div class="pt-3 border-top">
       <div class="d-flex align-items-center gap-2 mb-3">
         <h6 class="mb-0 fw-bold text-dark">
-          🟢 Complaint History & Past Resolved Issues ({{ resolved_complaints|length }})
+          Complaint History & Past Resolved Issues ({{ resolved_complaints|length }})
         </h6>
       </div>
 
@@ -433,7 +433,7 @@
     <div>
       <div class="d-flex align-items-center gap-2">
         <h5 class="mb-0 fw-bold" style="color:var(--navy);">
-          📢 Room Announcements & Notices
+          Room Announcements & Notices
         </h5>
         <span class="badge text-bg-primary rounded-pill">{{ room_announcements|length }}</span>
       </div>
@@ -481,7 +481,7 @@
     {% else %}
       <div class="alert alert-light border py-3 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2 mb-0">
         <div class="d-flex align-items-center gap-2">
-          <span class="fs-4">📢</span>
+          
           <div class="small">
             <b>No announcements sent to Room {{ room }} yet.</b>
             <span class="text-secondary">Use this to notify inmates about inspections, room cleanliness, or specific instructions.</span>
@@ -499,7 +499,7 @@
 <div class="card mb-4 bg-white border-0 shadow-sm">
   <div class="card-header bg-white border-bottom py-3">
     <h5 class="mb-0 fw-bold" style="color:var(--navy);">
-      📜 Former Inmates & Room Allocation History
+      Former Inmates & Room Allocation History
     </h5>
     <span class="text-secondary small">
       Record of students who previously resided in Room {{ room }}
@@ -524,7 +524,7 @@
               <tr>
                 <td class="fw-semibold">
                   <a href="{% url 'student_detail' a.student.pk %}" class="text-decoration-none text-dark">
-                    👤 {{ a.student.user.display_name }}
+                    {{ a.student.user.display_name }}
                   </a>
                 </td>
                 <td><code>{{ a.student.roll_no }}</code></td>
@@ -557,7 +557,7 @@
         <input type="hidden" name="next" value="{{ request.get_full_path }}">
         <div class="modal-header">
           <h5 class="modal-title fw-bold" id="maintenanceModalLabel" style="color:var(--navy);">
-            🚫 Mark Room {{ room }} as Under Maintenance
+            Mark Room {{ room }} as Under Maintenance
           </h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
@@ -597,7 +597,7 @@
         {% csrf_token %}
         <div class="modal-header">
           <h5 class="modal-title fw-bold" id="roomAnnouncementModalLabel" style="color:var(--navy);">
-            📢 Send Announcement to Room {{ room }}
+            Send Announcement to Room {{ room }}
           </h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
@@ -625,7 +625,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-navy btn-sm fw-semibold">📢 Post Announcement</button>
+          <button type="submit" class="btn btn-navy btn-sm fw-semibold">Post Announcement</button>
         </div>
       </form>
     </div>

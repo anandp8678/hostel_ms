@@ -25,12 +25,12 @@
     <!-- Search Query Input -->
     <div class="col-12 col-md-5 col-lg-4">
       <div class="input-group">
-        <span class="input-group-text bg-light text-muted">🔍</span>
+        <span class="input-group-text bg-light text-muted">Filter</span>
         <input type="text" name="q" value="{{ q }}" class="form-control"
                placeholder="Search room number or student name..."
                aria-label="Search rooms or residents">
         {% if q or selected_block or sort_by != 'floor_asc' %}
-          <a href="{% url 'student_rooms' %}" class="btn btn-outline-secondary" title="Reset all filters">✕</a>
+          <a href="{% url 'student_rooms' %}" class="btn btn-outline-secondary" title="Reset all filters">&times;</a>
         {% endif %}
       </div>
     </div>
@@ -90,7 +90,7 @@
     <!-- Floor Section Header -->
     <div class="d-flex flex-wrap justify-content-between align-items-center pb-2 mb-3 border-bottom">
       <div class="d-flex align-items-center gap-2">
-        <h5 class="mb-0 fw-bold" style="color:var(--navy);">🏢 {{ group.floor_display }}</h5>
+        <h5 class="mb-0 fw-bold" style="color:var(--navy);">{{ group.floor_display }}</h5>
         <span class="badge text-bg-light border text-dark rounded-pill">{{ group.rooms|length }} Room{{ group.rooms|length|pluralize }}</span>
       </div>
       <div class="text-secondary small">
@@ -133,7 +133,7 @@
                     <div class="d-flex align-items-center gap-2 py-1">
                       <span class="badge rounded-circle text-bg-primary-subtle text-primary"
                             style="width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.65rem;">
-                        👤
+                        
                       </span>
                       <span class="fw-semibold text-dark small">{{ name }}</span>
                     </div>
@@ -156,7 +156,7 @@
   </div>
 {% empty %}
   <div class="card p-5 text-center bg-white border-0 shadow-sm">
-    <div class="fs-1 mb-2">🔍</div>
+    
     <h5 class="text-dark">No Rooms Found</h5>
     <p class="text-secondary mb-3">No hostel rooms matched your search or floor filter.</p>
     <div>

@@ -1,25 +1,25 @@
 {% extends "core/base.html" %}{% block content %}
 <!-- Top Header & Banner -->
-<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
     <div>
       <div class="d-flex align-items-center gap-2 mb-1">
-        <h4 class="mb-0 fw-bold" style="color:var(--navy);">🍲 Weekly Hostel Mess & Food Menu</h4>
-        <span class="badge text-bg-primary rounded-pill">7 Days Timetable</span>
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Weekly Hostel Mess & Food Menu</h4>
+        <span class="badge text-bg-primary rounded-pill">7-Day Timetable</span>
       </div>
       <div class="text-secondary small">
-        Nutritious, balanced meal schedule served across Breakfast, Lunch, Snacks, and Dinner throughout the week.
+        Daily scheduled meals served across Breakfast, Lunch, Snacks, and Dinner throughout the week.
       </div>
     </div>
 
     <!-- Quick Actions -->
     <div class="d-flex align-items-center gap-2">
       <span class="badge text-bg-light border text-dark py-2 px-3">
-        📅 Today is <b>{{ today_name }}</b> ({{ today|date:"d M Y" }})
+        Today: <b>{{ today_name }}</b> ({{ today|date:"d M Y" }})
       </span>
       {% if can_manage %}
         <a href="{% url 'menu_manage' %}" class="btn btn-sm btn-navy fw-semibold">
-          ✏️ Edit Menu Items
+          Edit Menu Items
         </a>
       {% endif %}
       <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary fw-semibold">
@@ -33,11 +33,10 @@
 <div class="card mb-4 bg-white border-0 shadow-sm">
   <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
     <div class="d-flex align-items-center gap-2">
-      <span class="fs-5">✨</span>
       <h6 class="mb-0 fw-bold" style="color:var(--navy);">
         Today's Menu · {{ today_name }}
       </h6>
-      <span class="badge text-bg-success rounded-pill">Active Today</span>
+      <span class="badge text-bg-success rounded-pill">Active</span>
     </div>
     <span class="text-muted small">Dining Hall Timings</span>
   </div>
@@ -48,14 +47,11 @@
         {% with m_today=today_meals|dictsort:mm.key %}
         <div class="col-12 col-sm-6 col-lg-3">
           <div class="card h-100 p-3 bg-light border-0 shadow-sm" style="border-radius: 12px; border-top: 3px solid var(--navy) !important;">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <div class="d-flex align-items-center gap-2">
-                <span class="fs-4">{{ mm.icon }}</span>
-                <span class="fw-bold text-dark">{{ mm.name }}</span>
-              </div>
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="fw-bold text-dark">{{ mm.name }}</span>
             </div>
             <div class="text-muted small mb-2" style="font-size:0.75rem;">
-              ⏰ {{ mm.timing }}
+              {{ mm.timing }}
             </div>
             <div class="mt-auto">
               {% for k, v in today_meals.items %}
@@ -87,10 +83,10 @@
   <div class="card-header bg-white border-bottom py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
     <div>
       <h5 class="mb-0 fw-bold" style="color:var(--navy);">
-        📅 Full Weekly Meal Timetable
+        Full Weekly Meal Timetable
       </h5>
       <span class="text-secondary small">
-        Complete matrix of daily meals from Monday through Sunday
+        Complete schedule of daily meals from Monday through Sunday
       </span>
     </div>
     <div class="d-flex align-items-center gap-2">
@@ -109,10 +105,7 @@
           </th>
           {% for mm in meal_meta %}
             <th style="width: 21.5%; color: var(--navy);" class="py-3 px-3">
-              <div class="d-flex align-items-center gap-2 mb-1">
-                <span>{{ mm.icon }}</span>
-                <span class="fw-bold">{{ mm.name }}</span>
-              </div>
+              <div class="fw-bold mb-1">{{ mm.name }}</div>
               <div class="text-muted small fw-normal" style="font-size: 0.75rem;">
                 {{ mm.timing }}
               </div>
@@ -163,28 +156,27 @@
 <!-- Mess Timings & Rules Information Card -->
 <div class="card p-4 bg-white border-0 shadow-sm mb-4">
   <div class="d-flex align-items-center gap-2 mb-2">
-    <span class="fs-5">ℹ️</span>
-    <h6 class="mb-0 fw-bold" style="color:var(--navy);">Mess Instructions & Timings</h6>
+    <h6 class="mb-0 fw-bold" style="color:var(--navy);">Mess Instructions and Timings</h6>
   </div>
   <div class="row g-3 small text-secondary">
     <div class="col-12 col-md-3">
       <div class="p-2 border rounded bg-light">
-        <span class="fw-bold text-dark">🌅 Breakfast:</span> 7:30 AM – 9:00 AM
+        <span class="fw-bold text-dark">Breakfast:</span> 7:30 AM – 9:00 AM
       </div>
     </div>
     <div class="col-12 col-md-3">
       <div class="p-2 border rounded bg-light">
-        <span class="fw-bold text-dark">🍛 Lunch:</span> 12:30 PM – 2:00 PM
+        <span class="fw-bold text-dark">Lunch:</span> 12:30 PM – 2:00 PM
       </div>
     </div>
     <div class="col-12 col-md-3">
       <div class="p-2 border rounded bg-light">
-        <span class="fw-bold text-dark">☕ Evening Snacks:</span> 4:30 PM – 5:30 PM
+        <span class="fw-bold text-dark">Evening Snacks:</span> 4:30 PM – 5:30 PM
       </div>
     </div>
     <div class="col-12 col-md-3">
       <div class="p-2 border rounded bg-light">
-        <span class="fw-bold text-dark">🍲 Dinner:</span> 7:30 PM – 9:00 PM
+        <span class="fw-bold text-dark">Dinner:</span> 7:30 PM – 9:00 PM
       </div>
     </div>
     <div class="col-12 text-muted mt-2" style="font-size: 0.8rem;">

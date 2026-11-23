@@ -12,7 +12,7 @@
         </span>
         <span class="badge text-bg-light border text-dark rounded-pill">
           {% if room and staff_view %}
-            <a href="{% url 'room_detail' room.pk %}" class="text-decoration-none text-dark">🏢 Room {{ room }}</a>
+            <a href="{% url 'room_detail' room.pk %}" class="text-decoration-none text-dark">Room {{ room }}</a>
           {% else %}
             Room {{ room|default:"Unallocated" }}
           {% endif %}
@@ -39,45 +39,45 @@
       {% if staff_view %}
         {% if room %}
           <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'room_detail' room.pk %}">
-            🏢 View Room {{ room }}
+            View Room {{ room }}
           </a>
         {% endif %}
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}?q={{ s.roll_no }}">
-          📅 Attendance
+          Attendance
         </a>
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'fees' %}?q={{ s.roll_no }}">
-          💳 Fees
+          Fees
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'complaints' %}?q={{ s.roll_no }}">
-          💬 Complaints
+          Complaints
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'students_edit' s.pk %}">
-          ✏️ Edit Student
+          Edit Student
         </a>
         <a class="btn btn-sm btn-outline-dark" href="{% if room %}{% url 'room_detail' room.pk %}{% else %}{% url 'rooms' %}{% endif %}">
           ← Back
         </a>
       {% elif parent_view %}
         <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'menu' %}">
-          🍲 Mess Menu
+          Mess Menu
         </a>
         {% if wardens %}
           <a class="btn btn-sm btn-outline-primary fw-semibold" href="#wardenContacts">
-            📞 Warden Contacts
+            Warden Contacts
           </a>
         {% endif %}
       {% else %}
         <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'my_attendance' %}">
-          📅 Attendance
+          Attendance
         </a>
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'my_leaves' %}">
-          ✈️ Request Leave
+          Request Leave
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_complaints' %}">
-          💬 Complaints
+          Complaints
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_fees' %}">
-          💳 Fee Dues
+          Fee Dues
         </a>
       {% endif %}
     </div>
@@ -153,7 +153,7 @@
         {% if balance > 0 %}
           <span class="badge text-bg-danger rounded-pill">Dues Pending</span>
         {% else %}
-          <span class="badge text-bg-success rounded-pill">✓ All Clear</span>
+          <span class="badge text-bg-success rounded-pill">All Clear</span>
         {% endif %}
       </div>
       <div class="d-flex align-items-baseline gap-2 mb-2">
@@ -183,13 +183,13 @@
       </div>
       <div class="d-flex align-items-center gap-2 mb-2">
         {% if today_status == 'P' %}
-          <div class="stat text-success fs-3">✓ Present</div>
+          <div class="stat text-success fs-3">Present</div>
         {% elif today_status == 'A' %}
-          <div class="stat text-danger fs-3">✕ Absent</div>
+          <div class="stat text-danger fs-3">Absent</div>
         {% elif today_status == 'L' %}
-          <div class="stat text-warning fs-3">⏱ On Leave</div>
+          <div class="stat text-warning fs-3">On Leave</div>
         {% else %}
-          <div class="stat text-muted fs-4">⏳ Pending</div>
+          <div class="stat text-muted fs-4">Pending</div>
         {% endif %}
       </div>
       <div class="progress mb-2" style="height: 6px;">
@@ -218,7 +218,7 @@
     <div class="card p-3 h-100 bg-white border-0 shadow-sm">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <div>
-          <h6 class="mb-0 fw-bold" style="color:var(--navy);">📊 Attendance Distribution</h6>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">Attendance Distribution</h6>
           <small class="text-muted">Breakdown of all recorded hostel attendance days</small>
         </div>
         {% if pct is not None %}
@@ -249,17 +249,17 @@
         <div class="text-center mt-2">
           {% if pct >= 75 %}
             <span class="badge text-bg-success-subtle text-success border border-success-subtle px-2 py-1 small">
-              ✓ Compliant with mandatory 75% attendance criteria
+              Compliant with mandatory 75% attendance criteria
             </span>
           {% elif pct is not None %}
             <span class="badge text-bg-danger-subtle text-danger border border-danger-subtle px-2 py-1 small">
-              ⚠️ Warning: Attendance is below the required 75% threshold
+              Warning: Attendance is below the required 75% threshold
             </span>
           {% endif %}
         </div>
       {% else %}
         <div class="d-flex flex-column align-items-center justify-content-center p-5 text-center text-muted">
-          <div class="fs-1 mb-2">📋</div>
+          
           <h6 class="text-dark">No Attendance Records Yet</h6>
           <p class="small text-secondary mb-0">Daily roll call entries will appear here once marked by hostel staff.</p>
         </div>
@@ -272,7 +272,7 @@
     <div class="card p-3 h-100 bg-white border-0 shadow-sm">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <div>
-          <h6 class="mb-0 fw-bold" style="color:var(--navy);">💳 Fee Payment Breakdown</h6>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">Fee Payment Breakdown</h6>
           <small class="text-muted">Total fees billed, payments credited, and pending dues</small>
         </div>
         <span class="badge {% if balance == 0 %}text-bg-success{% else %}text-bg-warning text-dark{% endif %} rounded-pill">
@@ -301,7 +301,7 @@
         <div class="text-center mt-2">
           {% if balance == 0 %}
             <span class="badge text-bg-success-subtle text-success border border-success-subtle px-2 py-1 small">
-              ✓ All hostel fees are settled with zero pending balance
+              All hostel fees are settled with zero pending balance
             </span>
           {% else %}
             <span class="badge text-bg-warning-subtle text-dark border border-warning-subtle px-2 py-1 small">
@@ -311,7 +311,7 @@
         </div>
       {% else %}
         <div class="d-flex flex-column align-items-center justify-content-center p-5 text-center text-muted">
-          <div class="fs-1 mb-2">💳</div>
+          
           <h6 class="text-dark">No Fee Dues Assigned</h6>
           <p class="small text-secondary mb-0">No fee charges have been posted for this resident account.</p>
         </div>
@@ -326,10 +326,10 @@
   <div class="col-12 col-lg-6">
     <div class="card p-3 h-100 bg-white border-0 shadow-sm">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0 fw-bold" style="color:var(--navy);">🚪 Room & Roommates</h6>
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">Room & Roommates</h6>
         <div class="d-flex align-items-center gap-2">
           <a href="{% url 'student_rooms' %}" class="btn btn-sm btn-outline-primary fw-semibold" style="font-size: 0.75rem;">
-            🔍 All Rooms &rarr;
+            All Rooms &rarr;
           </a>
           {% if room %}
             <span class="badge text-bg-primary rounded-pill">Room {{ room }}</span>
@@ -400,7 +400,7 @@
                     </div>
                     {% if rm.parent and rm.parent.user.phone %}
                       <a href="tel:{{ rm.parent.user.phone }}" class="btn btn-sm btn-success fw-bold px-3 py-1" style="font-size: 0.78rem;">
-                        📞 Call Parent
+                        Call Parent
                       </a>
                     {% endif %}
                   </div>
@@ -420,7 +420,7 @@
                     </div>
                     {% if rm.user.phone %}
                       <a href="tel:{{ rm.user.phone }}" class="btn btn-sm btn-outline-primary fw-semibold px-2 py-1" style="font-size: 0.78rem;">
-                        📞 Call Roommate
+                        Call Roommate
                       </a>
                     {% endif %}
                   </div>
@@ -442,7 +442,7 @@
         </div>
       {% else %}
         <div class="text-center py-4 text-muted">
-          <div class="fs-1 mb-2">🚪</div>
+          
           <h6 class="text-dark">Awaiting Room Allocation</h6>
           <p class="small text-secondary mb-3">You have not been assigned to a hostel room yet. Please contact the hostel warden.</p>
           <a href="{% url 'student_rooms' %}" class="btn btn-sm btn-outline-primary">Browse All Hostel Rooms &rarr;</a>
@@ -457,7 +457,7 @@
       <!-- Warden & Hostel Support Desk Card for Parent -->
       <div class="card p-3 h-100 bg-white border-0 shadow-sm" id="wardenContacts">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h6 class="mb-0 fw-bold" style="color:var(--navy);">📞 Hostel Wardens & Support Desk</h6>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">Hostel Wardens & Support Desk</h6>
           <span class="badge text-bg-success rounded-pill">Parent Helpline</span>
         </div>
 
@@ -475,7 +475,7 @@
               <div>
                 {% if w.phone %}
                   <a href="tel:{{ w.phone }}" class="btn btn-sm btn-outline-success fw-semibold">
-                    📞 {{ w.phone }}
+                    {{ w.phone }}
                   </a>
                 {% else %}
                   <span class="badge text-bg-light border text-muted">Contact via office</span>
@@ -503,7 +503,7 @@
       <!-- My Leave Requests Card for Student / Staff -->
       <div class="card p-3 h-100 bg-white border-0 shadow-sm">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h6 class="mb-0 fw-bold" style="color:var(--navy);">✈️ {% if staff_view %}Leave Requests{% else %}My Leave Requests{% endif %}</h6>
+          <h6 class="mb-0 fw-bold" style="color:var(--navy);">{% if staff_view %}Leave Requests{% else %}My Leave Requests{% endif %}</h6>
           {% if staff_view %}
             <a href="{% url 'leaves' %}" class="btn btn-sm btn-outline-primary fw-semibold">All Leaves &rarr;</a>
           {% else %}
@@ -565,11 +565,11 @@
                       {% csrf_token %}
                       <input type="hidden" name="next" value="{{ request.path }}">
                       <button type="submit" class="btn btn-sm btn-outline-success py-0 px-2 fw-semibold" style="font-size: 0.72rem;" title="Mark this complaint as solved">
-                        ✓ Solved
+                        Solved
                       </button>
                     </form>
                   {% else %}
-                    <span class="badge text-bg-success py-1 px-2" style="font-size: 0.7rem;">✓ Solved</span>
+                    <span class="badge text-bg-success py-1 px-2" style="font-size: 0.7rem;">Solved</span>
                   {% endif %}
                 </div>
               </div>
@@ -587,7 +587,7 @@
   <div class="col-12 col-lg-6">
     <div class="card bg-white border-0 shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
-        <span class="fw-bold small" style="color:var(--navy);">🍲 Today's Meal Menu</span>
+        <span class="fw-bold small" style="color:var(--navy);">Today's Meal Menu</span>
         <a href="{% url 'menu' %}" class="small text-decoration-none">Full Week Menu &rarr;</a>
       </div>
       <ul class="list-group list-group-flush">
@@ -607,7 +607,7 @@
   <div class="col-12 col-lg-6">
     <div class="card bg-white border-0 shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
-        <span class="fw-bold small" style="color:var(--navy);">📋 Recent Attendance Log (Last 10 Records)</span>
+        <span class="fw-bold small" style="color:var(--navy);">Recent Attendance Log (Last 10 Records)</span>
         {% if staff_view %}
           <a href="{% url 'attendance_history' %}?q={{ s.roll_no }}" class="small text-decoration-none">Full History &rarr;</a>
         {% elif not parent_view %}
@@ -619,11 +619,11 @@
           <li class="list-group-item d-flex justify-content-between align-items-center py-2">
             <span class="small fw-semibold">{{ a.date|date:"d M Y (D)" }}</span>
             {% if a.status == 'P' %}
-              <span class="badge text-bg-success">✓ Present</span>
+              <span class="badge text-bg-success">Present</span>
             {% elif a.status == 'A' %}
-              <span class="badge text-bg-danger">✕ Absent</span>
+              <span class="badge text-bg-danger">Absent</span>
             {% elif a.status == 'L' %}
-              <span class="badge text-bg-warning">⏱ On Leave</span>
+              <span class="badge text-bg-warning">On Leave</span>
             {% else %}
               <span class="badge text-bg-secondary">{{ a.get_status_display }}</span>
             {% endif %}
@@ -639,7 +639,7 @@
   <div class="col-12 col-lg-6">
     <div class="card bg-white border-0 shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
-        <span class="fw-bold small" style="color:var(--navy);">💳 Fee Invoices & Dues</span>
+        <span class="fw-bold small" style="color:var(--navy);">Fee Invoices & Dues</span>
         {% if staff_view %}
           <a href="{% url 'fees' %}?q={{ s.roll_no }}" class="small text-decoration-none">Manage Fees &rarr;</a>
         {% elif not parent_view %}
@@ -670,7 +670,7 @@
               <span class="badge {% if x.balance == 0 %}text-bg-success{% else %}text-bg-warning text-dark{% endif %} mb-1 d-block">
                 {{ x.status }} (Bal: ₹{{ x.balance }})
               </span>
-              <a href="{% url 'fee_pdf' x.pk %}" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.72rem;">📄 PDF Receipt</a>
+              <a href="{% url 'fee_pdf' x.pk %}" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.72rem;">PDF Receipt</a>
             </div>
           </li>
         {% empty %}
@@ -684,7 +684,7 @@
   <div class="col-12 col-lg-6">
     <div class="card bg-white border-0 shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center py-2 border-bottom">
-        <span class="fw-bold small" style="color:var(--navy);">📢 Notices & Announcements</span>
+        <span class="fw-bold small" style="color:var(--navy);">Notices & Announcements</span>
         <a href="{% url 'my_announcements' %}" class="small text-decoration-none fw-semibold">
           View All &rarr;
         </a>
@@ -695,7 +695,7 @@
             <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
               <div class="fw-semibold text-dark small">{{ n.title }}</div>
               {% if n.room %}
-                <span class="badge text-bg-primary rounded-pill flex-shrink-0" style="font-size:0.7rem;">🏢 Room {{ n.room }} Notice</span>
+                <span class="badge text-bg-primary rounded-pill flex-shrink-0" style="font-size:0.7rem;">Room {{ n.room }} Notice</span>
               {% else %}
                 <span class="badge text-bg-secondary rounded-pill flex-shrink-0" style="font-size:0.7rem;">Hostel Notice</span>
               {% endif %}

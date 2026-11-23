@@ -1,11 +1,11 @@
 {% extends "core/base.html" %}{% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h4 style="color:var(--navy)" class="mb-1">⚙️ Hostel Fee Structure & Mess Cut Settings</h4>
+    <h4 style="color:var(--navy)" class="mb-1">Hostel Fee Structure & Mess Cut Settings</h4>
     <p class="text-secondary small mb-0">Configure fixed monthly rent, daily food rates, and attendance-based mess cut deduction rules.</p>
   </div>
   <div>
-    <a href="{% url 'fees_calculate_monthly' %}" class="btn btn-outline-primary me-2">⚡ Calculate Monthly Fees</a>
+    <a href="{% url 'fees_calculate_monthly' %}" class="btn btn-outline-primary me-2">Calculate Monthly Fees</a>
     <a href="{% url 'fees' %}" class="btn btn-outline-secondary">&larr; Back to Fees</a>
   </div>
 </div>
@@ -83,7 +83,7 @@
 
           <!-- Late Fine Rules Section -->
           <div class="col-12 mt-4 pt-3 border-top">
-            <h6 class="fw-bold mb-2" style="color:var(--navy);">⚠️ Overdue Late Fine Configuration</h6>
+            <h6 class="fw-bold mb-2" style="color:var(--navy);">Overdue Late Fine Configuration</h6>
             <p class="small text-muted mb-3">If a student fails to pay before the due date, a recurring fine is automatically added for every 5 overdue days.</p>
           </div>
 
@@ -122,39 +122,39 @@
       <h6 class="fw-bold text-uppercase text-secondary small tracking-wider mb-3">Active Policy Overview</h6>
       
       <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
-        <span class="text-secondary small">🏠 Fixed Monthly Rent</span>
+        <span class="text-secondary small">Fixed Monthly Rent</span>
         <span class="fw-bold text-dark fs-5">₹{{ cfg.rent_amount }}</span>
       </div>
 
       <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
-        <span class="text-secondary small">🍽️ Daily Food Rate</span>
+        <span class="text-secondary small">Daily Food Rate</span>
         <span class="fw-bold text-dark fs-5">₹{{ cfg.food_rate_per_day }} <small class="text-muted fw-normal" style="font-size:0.75rem;">/ day</small></span>
       </div>
 
       <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
-        <span class="text-secondary small">✂️ Mess Cut Threshold</span>
+        <span class="text-secondary small">Mess Cut Threshold</span>
         <span class="badge text-bg-primary fs-6">{{ cfg.mess_cut_min_days }}+ Consecutive Days</span>
       </div>
 
       <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
-        <span class="text-secondary small">💵 Mess Cut Deduction</span>
+        <span class="text-secondary small">Mess Cut Deduction</span>
         <span class="fw-bold text-success fs-5">-₹{{ cfg.mess_cut_rate_per_day }} <small class="text-muted fw-normal" style="font-size:0.75rem;">/ rebate day</small></span>
       </div>
 
       <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
-        <span class="text-secondary small">📜 Deduction Rule</span>
+        <span class="text-secondary small">Deduction Rule</span>
         <span class="fw-semibold small text-end text-dark">{{ cfg.get_mess_cut_mode_display }}</span>
       </div>
 
       <div class="d-flex align-items-center justify-content-between p-2 bg-light rounded border border-danger-subtle">
-        <span class="text-danger small fw-semibold">⚠️ Overdue Late Fine</span>
+        <span class="text-danger small fw-semibold">Overdue Late Fine</span>
         <span class="fw-bold text-danger fs-6">+₹{{ cfg.late_fine_amount }} <small class="text-muted fw-normal" style="font-size:0.75rem;">/ every {{ cfg.late_fine_interval_days }}d</small></span>
       </div>
     </div>
 
     <!-- Example Breakdown Card -->
     <div class="card p-4 border-0 shadow-sm" style="background: linear-gradient(135deg, #eef5fc 0%, #ffffff 100%);">
-      <h6 class="fw-bold text-dark mb-2">💡 Example Calculation (30-Day Month)</h6>
+      <h6 class="fw-bold text-dark mb-2">Example Calculation (30-Day Month)</h6>
       <ul class="list-unstyled small mb-3">
         <li class="mb-1 text-secondary">• <b>Fixed Rent:</b> ₹{{ cfg.rent_amount }}</li>
         <li class="mb-1 text-secondary">• <b>Base Food (30 days @ ₹{{ cfg.food_rate_per_day }}):</b> ₹3,900</li>

@@ -440,11 +440,4 @@ class Notification(models.Model):
 
     @property
     def icon(self):
-        icons = {
-            "announcement": "📢",
-            "fee": "💳",
-            "complaint": "💬",
-            "leave": "📝",
-            "general": "🔔",
-        }
-        return icons.get(self.category, "🔔")
+        return ""

@@ -7,10 +7,10 @@
   <!-- Top Navigation Tabs -->
   <div class="btn-group" role="group">
     <a href="{% url 'attendance' %}" class="btn btn-sm btn-navy active">
-      📅 Daily Attendance
+      Daily Attendance
     </a>
     <a href="{% url 'attendance_history' %}" class="btn btn-sm btn-outline-primary">
-      📊 Past Records by Month
+      Past Records by Month
     </a>
   </div>
 </div>
@@ -26,7 +26,7 @@
         {{ day|date:"l, d F Y" }}
       </span>
       {% if saved %}
-        <span class="badge text-bg-success ms-1">✓ Saved</span>
+        <span class="badge text-bg-success ms-1">Saved</span>
       {% else %}
         <span class="badge text-bg-warning ms-1">Unsaved for this date</span>
       {% endif %}
@@ -100,10 +100,10 @@
       <label class="form-label small fw-semibold text-secondary mb-1">Status Filter</label>
       <select name="status" class="form-select form-select-sm">
         <option value="">All Students</option>
-        <option value="A" {% if filter_status == "A" %}selected{% endif %}>🔴 Absent Only (Those who are absent)</option>
-        <option value="L" {% if filter_status == "L" %}selected{% endif %}>🟡 On Leave Only (Those who are on leave)</option>
-        <option value="P" {% if filter_status == "P" %}selected{% endif %}>🟢 Present Only</option>
-        <option value="absent_or_leave" {% if filter_status == "absent_or_leave" %}selected{% endif %}>⚠️ Absent or Leave (All Exceptions)</option>
+        <option value="A" {% if filter_status == "A" %}selected{% endif %}>Absent Only (Those who are absent)</option>
+        <option value="L" {% if filter_status == "L" %}selected{% endif %}>On Leave Only (Those who are on leave)</option>
+        <option value="P" {% if filter_status == "P" %}selected{% endif %}>Present Only</option>
+        <option value="absent_or_leave" {% if filter_status == "absent_or_leave" %}selected{% endif %}>Absent or Leave (All Exceptions)</option>
       </select>
     </div>
 
@@ -129,10 +129,10 @@
       <!-- Quick Batch Selection Controls -->
       <div class="d-flex gap-2">
         <button type="button" class="btn btn-sm btn-outline-success" onclick="markAllVisible('P')">
-          ✓ Mark Visible as Present
+          Mark Visible as Present
         </button>
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="markAllVisible('A')">
-          ✕ Mark Visible as Absent
+          Mark Visible as Absent
         </button>
       </div>
     </div>
@@ -196,7 +196,7 @@
 
   <div class="d-flex justify-content-between align-items-center">
     <button type="submit" class="btn btn-navy px-4 py-2 fw-semibold">
-      💾 Save Attendance
+      Save Attendance
     </button>
     <a href="{% url 'attendance_history' %}" class="btn btn-outline-secondary">
       View Monthly Attendance Records &rarr;

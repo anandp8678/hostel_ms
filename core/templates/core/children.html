@@ -31,13 +31,13 @@
             </div>
           </div>
           {% if c.today_status == 'P' %}
-            <span class="badge text-bg-success rounded-pill">✓ Present Today</span>
+            <span class="badge text-bg-success rounded-pill">Present Today</span>
           {% elif c.today_status == 'A' %}
-            <span class="badge text-bg-danger rounded-pill">✕ Absent</span>
+            <span class="badge text-bg-danger rounded-pill">Absent</span>
           {% elif c.today_status == 'L' %}
-            <span class="badge text-bg-warning text-dark rounded-pill">⏱ On Leave</span>
+            <span class="badge text-bg-warning text-dark rounded-pill">On Leave</span>
           {% else %}
-            <span class="badge text-bg-secondary rounded-pill">⏳ Roll Call Pending</span>
+            <span class="badge text-bg-secondary rounded-pill">Roll Call Pending</span>
           {% endif %}
         </div>
 
@@ -55,7 +55,7 @@
               <div class="p-2 bg-light rounded text-center">
                 <div class="text-secondary small" style="font-size:0.75rem;">Fee Balance</div>
                 <div class="fw-bold mt-1 {% if c.balance > 0 %}text-danger{% else %}text-success{% endif %}">
-                  {% if c.balance > 0 %}₹{{ c.balance }}{% else %}✓ Cleared{% endif %}
+                  {% if c.balance > 0 %}₹{{ c.balance }}{% else %}Cleared{% endif %}
                 </div>
               </div>
             </div>
