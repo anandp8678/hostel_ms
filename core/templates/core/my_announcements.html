@@ -1,0 +1,179 @@
+{% extends "core/base.html" %}{% block content %}
+<!-- Announcement Header Banner -->
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">📢 Hostel Announcements & Circulars</h4>
+        <span class="badge text-bg-primary rounded-pill">{{ total_count }} Notice{{ total_count|pluralize }}</span>
+      </div>
+      <div class="text-secondary small">
+        Stay informed about hostel rules, upcoming events, maintenance schedules, and room-specific instructions.
+      </div>
+    </div>
+
+    <!-- Quick Role Context -->
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge text-bg-light border text-dark py-2 px-3">
+        🏢 Assigned: <b>{{ room_label }}</b>
+      </span>
+      <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary fw-semibold">
+        &larr; Dashboard
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- KPI Metric Cards -->
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-4">
+    <a href="?type=all{% if q %}&q={{ q }}{% endif %}" class="card p-3 h-100 bg-white border-0 shadow-sm text-decoration-none {% if filter_type == 'all' or not filter_type %}border-bottom border-3 border-primary{% endif %}">
+      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">Total Notices</div>
+      <div class="d-flex align-items-baseline gap-2">
+        <span class="fs-3 fw-bold text-dark">{{ total_count }}</span>
+        <span class="text-muted small">Announcements</span>
+      </div>
+      <div class="text-muted small mt-auto">All notices visible to your account</div>
+    </a>
+  </div>
+
+  <div class="col-12 col-md-4">
+    <a href="?type=room{% if q %}&q={{ q }}{% endif %}" class="card p-3 h-100 bg-white border-0 shadow-sm text-decoration-none {% if filter_type == 'room' %}border-bottom border-3 border-primary{% endif %}">
+      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">🏢 My Room Notices</div>
+      <div class="d-flex align-items-baseline gap-2">
+        <span class="fs-3 fw-bold text-primary">{{ room_count }}</span>
+        <span class="text-muted small">Direct Notices</span>
+      </div>
+      <div class="text-muted small mt-auto">Targeted specifically to {{ room_label }}</div>
+    </a>
+  </div>
+
+  <div class="col-12 col-md-4">
+    <a href="?type=general{% if q %}&q={{ q }}{% endif %}" class="card p-3 h-100 bg-white border-0 shadow-sm text-decoration-none {% if filter_type == 'general' %}border-bottom border-3 border-primary{% endif %}">
+      <div class="text-secondary small fw-semibold text-uppercase tracking-wider mb-1">📢 General Circulars</div>
+      <div class="d-flex align-items-baseline gap-2">
+        <span class="fs-3 fw-bold text-secondary">{{ general_count }}</span>
+        <span class="text-muted small">Broadcasts</span>
+      </div>
+      <div class="text-muted small mt-auto">Hostel-wide announcements for all residents</div>
+    </a>
+  </div>
+</div>
+
+<!-- Search & Filter Controls -->
+<div class="card p-3 mb-4 bg-white border-0 shadow-sm">
+  <form method="get" action="{% url 'my_announcements' %}" class="row g-2 align-items-center">
+    <input type="hidden" name="type" value="{{ filter_type }}">
+
+    <div class="col-12 col-md-8 col-lg-6">
+      <div class="input-group">
+        <span class="input-group-text bg-light text-muted">🔍</span>
+        <input type="text" name="q" class="form-control" placeholder="Search announcements by title, keyword, or warden..." value="{{ q }}">
+        {% if q %}
+          <a href="{% url 'my_announcements' %}?type={{ filter_type }}" class="btn btn-outline-secondary" title="Clear search">✕</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="col-auto">
+      <button type="submit" class="btn btn-navy fw-semibold px-3">Search</button>
+    </div>
+
+    <!-- Quick Filter Pills -->
+    <div class="col-12 mt-2 pt-2 border-top d-flex flex-wrap align-items-center gap-1">
+      <span class="text-secondary small fw-semibold me-2">Filter Notices:</span>
+      <a href="?type=all{% if q %}&q={{ q }}{% endif %}"
+         class="badge {% if filter_type == 'all' or not filter_type %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+        All ({{ total_count }})
+      </a>
+      <a href="?type=room{% if q %}&q={{ q }}{% endif %}"
+         class="badge {% if filter_type == 'room' %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+        🏢 My Room Notices ({{ room_count }})
+      </a>
+      <a href="?type=general{% if q %}&q={{ q }}{% endif %}"
+         class="badge {% if filter_type == 'general' %}text-bg-secondary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+        📢 General Hostel Circulars ({{ general_count }})
+      </a>
+    </div>
+  </form>
+</div>
+
+<!-- Announcements List -->
+<div class="row g-4">
+  {% for a in notices %}
+    <div class="col-12">
+      <div class="card border-0 shadow-sm p-4 bg-white position-relative" style="border-radius: 14px; border-left: 5px solid {% if a.room %}var(--bs-primary){% else %}var(--navy){% endif %} !important;">
+        <!-- Card Top Bar: Badges & Title -->
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+          <div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+              {% if a.is_recent %}
+                <span class="badge text-bg-warning text-dark rounded-pill fw-semibold">🔥 New</span>
+              {% endif %}
+              {% if a.room %}
+                <span class="badge text-bg-primary rounded-pill fw-semibold">🏢 Room {{ a.room }} Notice</span>
+              {% else %}
+                <span class="badge text-bg-secondary rounded-pill fw-semibold">📢 Hostel Broadcast</span>
+              {% endif %}
+              <span class="badge text-bg-light border text-muted rounded-pill" style="font-size:0.75rem;">
+                Audience: {{ a.get_audience_display }}
+              </span>
+            </div>
+            <h5 class="mb-0 fw-bold" style="color:var(--navy);">
+              {{ a.title }}
+            </h5>
+          </div>
+          <div class="text-muted small">
+            {{ a.created_at|timesince }} ago
+          </div>
+        </div>
+
+        <!-- Announcement Body -->
+        <div class="p-3 my-3 bg-light rounded-3 text-dark small" style="line-height: 1.6; font-size: 0.95rem;">
+          {{ a.body|linebreaks }}
+        </div>
+
+        <!-- Card Footer -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center pt-2 border-top gap-2">
+          <div class="small text-secondary">
+            👤 Posted by <b>{{ a.created_by.display_name|default:"Hostel Administration" }}</b>
+            · <span class="text-muted">{{ a.created_at|date:"l, d F Y · h:i A" }}</span>
+          </div>
+          {% if a.room %}
+            <div class="small text-primary fw-semibold">
+              Targeted to: Room {{ a.room }} ({{ a.room.floor_name }})
+            </div>
+          {% else %}
+            <div class="small text-muted">
+              General Circular
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% empty %}
+    <div class="col-12">
+      <div class="card p-5 text-center bg-white border-0 shadow-sm" style="border-radius: 14px;">
+        <div class="fs-1 mb-2">📢</div>
+        <h5 class="text-dark">No Announcements Found</h5>
+        <p class="text-secondary mb-3">
+          {% if q %}
+            No announcements matched your search query "<b>{{ q }}</b>".
+          {% elif filter_type == 'room' %}
+            No room-specific notices have been posted for your room yet.
+          {% else %}
+            No announcements have been published at this time.
+          {% endif %}
+        </p>
+        {% if q or filter_type != 'all' %}
+          <div>
+            <a href="{% url 'my_announcements' %}" class="btn btn-navy btn-sm fw-semibold">
+              View All Announcements
+            </a>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

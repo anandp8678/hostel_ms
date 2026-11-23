@@ -1692,3 +1692,118 @@ class NotificationSystemTests(TestCase):
         self.assertFalse(Notification.objects.filter(pk=n2.pk).exists())
 
 
+class StudentAnnouncementSectionTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin_anc_sec", password="AdminPassword123", role="admin", is_staff=True
+        )
+        self.warden = User.objects.create_user(
+            username="warden_anc_sec", password="WardenPassword123", role="warden", is_staff=True
+        )
+
+        self.room_g1 = Room.objects.create(block="G", number="101", capacity=2)
+        self.room_f1 = Room.objects.create(block="F", number="101", capacity=2)
+
+        self.student_g1 = onboard_student(
+            name="Vikram Seth", roll_no="VS101", room=self.room_g1, parent_name="Ramesh Seth", parent_phone="9876543210"
+        )
+        self.student_g1.refresh_from_db()
+        self.student_g1.user.must_change_password = False
+        self.student_g1.user.save()
+        if self.student_g1.parent:
+            self.student_g1.parent.user.must_change_password = False
+            self.student_g1.parent.user.save()
+
+        self.student_f1 = onboard_student(name="Ananya Roy", roll_no="AR101", room=self.room_f1)
+        self.student_f1.user.must_change_password = False
+        self.student_f1.user.save()
+
+        # 1. General announcement
+        self.gen_anc = Announcement.objects.create(
+            room=None,
+            title="Hostel Night Dinner Timings",
+            body="Dinner on Sunday will start at 8:00 PM.",
+            audience="all",
+            created_by=self.warden,
+        )
+
+        # 2. Room G-101 specific announcement
+        self.room_g1_anc = Announcement.objects.create(
+            room=self.room_g1,
+            title="Room G-101 Deep Cleaning Schedule",
+            body="Cleaning staff will visit G-101 on Wednesday morning at 10 AM.",
+            audience="student",
+            created_by=self.warden,
+        )
+
+        # 3. Room F-101 specific announcement
+        self.room_f1_anc = Announcement.objects.create(
+            room=self.room_f1,
+            title="Room F-101 AC Maintenance",
+            body="Technician servicing AC unit in F-101.",
+            audience="student",
+            created_by=self.warden,
+        )
+
+    def test_student_sidebar_contains_announcements_link(self):
+        c = Client()
+        c.force_login(self.student_g1.user)
+
+        resp = c.get(reverse("home"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, reverse("my_announcements"))
+        self.assertContains(resp, "Announcements")
+
+    def test_student_announcements_page_view_and_room_isolation(self):
+        c = Client()
+        c.force_login(self.student_g1.user)
+
+        resp = c.get(reverse("my_announcements"))
+        self.assertEqual(resp.status_code, 200)
+
+        # Inmate of G-101 must see general broadcast and G-101 notice
+        self.assertContains(resp, "Hostel Night Dinner Timings")
+        self.assertContains(resp, "Room G-101 Deep Cleaning Schedule")
+        self.assertContains(resp, "Room G-101 Notice")
+
+        # Inmate of G-101 must NOT see F-101's private announcement
+        self.assertNotContains(resp, "Room F-101 AC Maintenance")
+
+    def test_student_announcements_filtering_and_search(self):
+        c = Client()
+        c.force_login(self.student_g1.user)
+
+        # 1. Filter by room notices
+        resp_room = c.get(reverse("my_announcements") + "?type=room")
+        self.assertEqual(resp_room.status_code, 200)
+        self.assertContains(resp_room, "Room G-101 Deep Cleaning Schedule")
+        self.assertNotContains(resp_room, "Hostel Night Dinner Timings")
+
+        # 2. Filter by general circulars
+        resp_gen = c.get(reverse("my_announcements") + "?type=general")
+        self.assertEqual(resp_gen.status_code, 200)
+        self.assertContains(resp_gen, "Hostel Night Dinner Timings")
+        self.assertNotContains(resp_gen, "Room G-101 Deep Cleaning Schedule")
+
+        # 3. Search matching
+        resp_search = c.get(reverse("my_announcements") + "?q=Dinner")
+        self.assertEqual(resp_search.status_code, 200)
+        self.assertContains(resp_search, "Hostel Night Dinner Timings")
+        self.assertNotContains(resp_search, "Room G-101 Deep Cleaning Schedule")
+
+        # 4. Search no match
+        resp_nomatch = c.get(reverse("my_announcements") + "?q=NonExistentKeywordXYZ")
+        self.assertEqual(resp_nomatch.status_code, 200)
+        self.assertContains(resp_nomatch, "No Announcements Found")
+
+    def test_parent_can_view_announcements_for_child_room(self):
+        c = Client()
+        c.force_login(self.student_g1.parent.user)
+
+        resp = c.get(reverse("my_announcements"))
+        self.assertEqual(resp.status_code, 200)
+        # Parent sees general broadcast
+        self.assertContains(resp, "Hostel Night Dinner Timings")
+
+
+

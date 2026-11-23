@@ -9,10 +9,10 @@ def nav(request):
         if u.role == "admin":
             items.append(("wardens", "Wardens"))
     elif u.role == "student":
-        items = [("home", "Dashboard"), ("student_rooms", "Room directory"), ("my_attendance", "Attendance"),
+        items = [("home", "Dashboard"), ("my_announcements", "Announcements"), ("student_rooms", "Room directory"), ("my_attendance", "Attendance"),
                  ("my_leaves", "Leave"), ("my_complaints", "Complaints"), ("my_fees", "Fees"), ("menu", "Meal menu")]
     else:
-        items = [("home", "My children"), ("student_rooms", "Room directory"), ("menu", "Meal menu")]
+        items = [("home", "My children"), ("my_announcements", "Announcements"), ("student_rooms", "Room directory"), ("menu", "Meal menu")]
 
     # Real-time notifications for the topbar bell icon
     notif_qs = u.notifications.all()

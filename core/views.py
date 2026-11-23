@@ -1723,6 +1723,84 @@ def _mine(request):
     return request.user.student
 
 
+@login_required
+def my_announcements(request):
+    """
+    Dedicated announcement center for students (and parents).
+    Provides room-specific notices and general hostel broadcasts with filtering and search.
+    """
+    from datetime import datetime, timezone
+    u = request.user
+    q = request.GET.get("q", "").strip()
+    filter_type = request.GET.get("type", "all").strip()
+
+    if u.role == "student":
+        s = getattr(u, "student", None)
+        room = s.room if s else None
+        aud = ["all", "student"]
+        if room:
+            base_qs = m.Announcement.objects.filter(
+                Q(room=room, audience__in=aud) | Q(room__isnull=True, audience__in=aud)
+            )
+        else:
+            base_qs = m.Announcement.objects.filter(room__isnull=True, audience__in=aud)
+        room_label = f"Room {room}" if room else "Unassigned"
+    elif u.role == "parent":
+        p = getattr(u, "parent", None)
+        child_rooms = [c.room for c in p.children.all() if c.room] if p else []
+        aud = ["all", "parent"]
+        if child_rooms:
+            base_qs = m.Announcement.objects.filter(
+                Q(room__in=child_rooms, audience__in=aud) | Q(room__isnull=True, audience__in=aud)
+            )
+        else:
+            base_qs = m.Announcement.objects.filter(room__isnull=True, audience__in=aud)
+        room_label = ", ".join(str(r) for r in child_rooms) if child_rooms else "Children's Rooms"
+    else:
+        base_qs = m.Announcement.objects.all()
+        room_label = "All Rooms"
+
+    all_notices = list(base_qs.select_related("room", "created_by").order_by("-created_at"))
+    room_notices = [a for a in all_notices if a.room]
+    general_notices = [a for a in all_notices if not a.room]
+
+    notices = all_notices
+    if filter_type == "room":
+        notices = room_notices
+    elif filter_type == "general":
+        notices = general_notices
+
+    if q:
+        q_lower = q.lower()
+        notices = [
+            a for a in notices
+            if (
+                q_lower in a.title.lower() or
+                q_lower in a.body.lower() or
+                (a.room and q_lower in str(a.room).lower()) or
+                (a.created_by and q_lower in a.created_by.display_name.lower())
+            )
+        ]
+
+    now = datetime.now(timezone.utc)
+    for a in notices:
+        diff_hours = (now - a.created_at).total_seconds() / 3600
+        a.is_recent = diff_hours <= 48
+
+    return show(
+        request,
+        "my_announcements",
+        title="Hostel Announcements & Circulars",
+        notices=notices,
+        total_count=len(all_notices),
+        room_count=len(room_notices),
+        general_count=len(general_notices),
+        filter_type=filter_type,
+        q=q,
+        room_label=room_label,
+    )
+
+
 @role_required("student")
 def my_attendance(request):
     s = _mine(request)

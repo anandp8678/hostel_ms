@@ -38,6 +38,7 @@ urlpatterns = [
     path("wardens/new/", v.warden_new, name="wardens_new"),
     path("reports/", v.reports, name="reports"),
     path("menu/", v.menu, name="menu"),
+    path("me/announcements/", v.my_announcements, name="my_announcements"),
     path("me/attendance/", v.my_attendance, name="my_attendance"),
     path("me/leave/", v.my_leaves, name="my_leaves"),
     path("me/complaints/", v.my_complaints, name="my_complaints"),
