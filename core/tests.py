@@ -2131,6 +2131,36 @@ class AdminSuspensionProcedureTests(TestCase):
         self.assertEqual(resp2.status_code, 200)
         self.assertContains(resp2, "Suspended")
 
+    def test_students_list_filtering_by_floor_and_allocation(self):
+        c = Client()
+        c.force_login(self.admin)
+
+        # Allocate self.student to self.room
+        RoomAllocation.objects.create(student=self.student, room=self.room, start_date=date.today())
+
+        # Create unallocated student
+        u_unalloc = User.objects.create_user(username="unalloc_std", password="p", role="student", first_name="Unalloc", last_name="Student")
+        unalloc_student = Student.objects.create(user=u_unalloc, roll_no="UNALLOC01")
+
+        # Test filter by allocation: allocated
+        resp_alloc = c.get(reverse("students") + "?allocation=allocated")
+        self.assertEqual(resp_alloc.status_code, 200)
+        self.assertContains(resp_alloc, self.student.roll_no)
+        self.assertNotContains(resp_alloc, unalloc_student.roll_no)
+
+        # Test filter by allocation: unallocated
+        resp_unalloc = c.get(reverse("students") + "?allocation=unallocated")
+        self.assertEqual(resp_unalloc.status_code, 200)
+        self.assertContains(resp_unalloc, unalloc_student.roll_no)
+        self.assertNotContains(resp_unalloc, self.student.roll_no)
+
+        # Test filter by floor
+        resp_floor = c.get(reverse("students") + f"?floor={self.room.block}")
+        self.assertEqual(resp_floor.status_code, 200)
+        self.assertContains(resp_floor, self.student.roll_no)
+        self.assertNotContains(resp_floor, unalloc_student.roll_no)
+
+
 
 
 

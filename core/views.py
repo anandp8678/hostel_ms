@@ -805,8 +805,23 @@ def child(request, pk):
 @staff
 def student_list(request):
     q = request.GET.get("q", "").strip()
+    floor_filter = request.GET.get("floor", "all").strip()
+    allocation_filter = request.GET.get("allocation", "all").strip().lower()
     status_filter = request.GET.get("status", "all").strip().lower()
+    course_filter = request.GET.get("course", "all").strip()
     view_mode = request.GET.get("view", "grid").strip().lower()
+    grouped = request.GET.get("grouped", "1").strip() != "0"
+
+    # Distinct blocks from rooms for floor sorting
+    distinct_blocks = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
+    all_floors = []
+    seen_floor_displays = set()
+    for b in distinct_blocks:
+        rm_dummy = m.Room(block=b)
+        disp = rm_dummy.floor_display
+        if disp not in seen_floor_displays:
+            seen_floor_displays.add(disp)
+            all_floors.append({"code": b, "display": disp, "name": rm_dummy.floor_name})
 
     students_qs = m.Student.objects.select_related("user", "parent__user").prefetch_related(
         Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room"))
@@ -817,35 +832,97 @@ def student_list(request):
     staying_count = sum(1 for s in all_students if s.is_active and not s.is_currently_suspended)
     suspended_count = sum(1 for s in all_students if s.is_currently_suspended)
     left_count = sum(1 for s in all_students if not s.is_active)
+    allocated_count = sum(1 for s in all_students if s.room)
+    unallocated_count = sum(1 for s in all_students if not s.room)
 
-    students = all_students
+    # Compute floor student counts across all students
+    for fl in all_floors:
+        fl["count"] = sum(1 for s in all_students if s.room and str(s.room.block).strip().upper() == fl["code"].upper())
+
+    # Distinct courses
+    all_courses = sorted(list(set(s.course.strip() for s in all_students if s.course and s.course.strip())))
+
+    # Filter pipeline
+    filtered = all_students
+
+    # 1. Allocation filter
+    if allocation_filter == "allocated":
+        filtered = [s for s in filtered if s.room]
+    elif allocation_filter == "unallocated":
+        filtered = [s for s in filtered if not s.room]
+
+    # 2. Floor filter
+    if floor_filter and floor_filter != "all":
+        if floor_filter in ("unallocated", "none"):
+            filtered = [s for s in filtered if not s.room]
+        else:
+            filtered = [s for s in filtered if s.room and str(s.room.block).strip().upper() == floor_filter.upper()]
+
+    # 3. Status filter
     if status_filter == "staying":
-        students = [s for s in students if s.is_active and not s.is_currently_suspended]
+        filtered = [s for s in filtered if s.is_active and not s.is_currently_suspended]
     elif status_filter == "suspended":
-        students = [s for s in students if s.is_currently_suspended]
+        filtered = [s for s in filtered if s.is_currently_suspended]
     elif status_filter == "left":
-        students = [s for s in students if not s.is_active]
+        filtered = [s for s in filtered if not s.is_active]
 
+    # 4. Course filter
+    if course_filter and course_filter != "all":
+        filtered = [s for s in filtered if (s.course or "").strip().lower() == course_filter.lower()]
+
+    # 5. Search query
     if q:
         ql = q.lower()
-        students = [
-            s for s in students
+        filtered = [
+            s for s in filtered
             if (ql in s.user.display_name.lower() or
                 ql in s.roll_no.lower() or
                 ql in (s.course or "").lower() or
-                (s.room and ql in str(s.room).lower()))
+                (s.room and (ql in str(s.room).lower() or ql in s.room.floor_name.lower())))
         ]
+
+    # Build categorized groupings (floors and unallocated)
+    categories = []
+    if allocation_filter != "unallocated":
+        for fl in all_floors:
+            if floor_filter != "all" and floor_filter.upper() != fl["code"].upper():
+                continue
+            fl_students = [s for s in filtered if s.room and str(s.room.block).strip().upper() == fl["code"].upper()]
+            if fl_students or (floor_filter != "all" and floor_filter.upper() == fl["code"].upper()):
+                categories.append({
+                    "type": "floor",
+                    "code": fl["code"],
+                    "title": fl["display"],
+                    "subtitle": f"Residents residing on {fl['name']}",
+                    "badge_class": "text-bg-primary",
+                    "count": len(fl_students),
+                    "students": fl_students,
+                })
+
+    if allocation_filter != "allocated" and (floor_filter == "all" or floor_filter in ("unallocated", "none")):
+        unallocated_students = [s for s in filtered if not s.room]
+        if unallocated_students or allocation_filter == "unallocated" or floor_filter in ("unallocated", "none"):
+            categories.append({
+                "type": "unallocated",
+                "code": "unallocated",
+                "title": "Unallocated Students",
+                "subtitle": "Students awaiting room and bed allocation",
+                "badge_class": "text-bg-warning text-dark",
+                "count": len(unallocated_students),
+                "students": unallocated_students,
+            })
 
     table_rows = []
     if view_mode == "table":
-        for s in students:
+        for s in filtered:
             table_rows.append({
                 "student": s,
                 "cells": [
                     s.roll_no,
                     s.user.display_name,
                     s.course or "—",
-                    s.room or "—",
+                    s.room.floor_display if s.room else "—",
+                    s.room or "Unallocated",
                     s.parent or "—",
                     badge("Suspended") if s.is_currently_suspended else badge("Staying" if s.is_active else "Left"),
                 ],
@@ -854,18 +931,37 @@ def student_list(request):
                 "delete": reverse("students_delete", args=[s.pk]),
             })
 
+    has_active_filters = bool(
+        q or
+        (floor_filter and floor_filter != "all") or
+        (allocation_filter and allocation_filter != "all") or
+        (status_filter and status_filter != "all") or
+        (course_filter and course_filter != "all")
+    )
+
     context = {
         "title": "Students",
-        "students": students,
+        "students": filtered,
+        "categories": categories,
         "total_count": total_count,
+        "filtered_count": len(filtered),
         "staying_count": staying_count,
         "suspended_count": suspended_count,
         "left_count": left_count,
+        "allocated_count": allocated_count,
+        "unallocated_count": unallocated_count,
+        "all_floors": all_floors,
+        "all_courses": all_courses,
         "q": q,
+        "floor_filter": floor_filter,
+        "allocation_filter": allocation_filter,
         "status_filter": status_filter,
+        "course_filter": course_filter,
         "view_mode": view_mode,
+        "grouped": grouped,
+        "has_active_filters": has_active_filters,
         "table_rows": table_rows,
-        "table_headers": ["Roll no.", "Name", "Course", "Room", "Parent", "Status"],
+        "table_headers": ["Roll no.", "Name", "Course", "Floor", "Room", "Parent", "Status"],
         "add": reverse("students_new"),
         "add_label": "Add student",
     }

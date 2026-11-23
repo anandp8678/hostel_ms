@@ -30,6 +30,11 @@
     color: #c81e1e;
     border-color: rgba(200, 30, 30, 0.2);
   }
+  .student-avatar-unallocated {
+    background: #fff8e6;
+    color: #946c00;
+    border-color: rgba(230, 162, 60, 0.3);
+  }
 </style>
 
 <!-- Students Directory Header -->
@@ -38,24 +43,28 @@
     <div>
       <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
         <h4 class="mb-0 fw-bold" style="color:var(--navy);">Students Directory</h4>
-        <span class="badge text-bg-primary rounded-pill">{{ total_count }} Student{{ total_count|pluralize }}</span>
+        <span class="badge text-bg-primary rounded-pill">{{ total_count }} Total Student{{ total_count|pluralize }}</span>
+        <span class="badge text-bg-info text-dark rounded-pill">{{ allocated_count }} Allocated</span>
+        {% if unallocated_count > 0 %}
+          <span class="badge text-bg-warning text-dark rounded-pill">{{ unallocated_count }} Unallocated</span>
+        {% endif %}
         {% if suspended_count > 0 %}
           <span class="badge text-bg-danger rounded-pill">{{ suspended_count }} Suspended</span>
         {% endif %}
       </div>
       <div class="text-secondary small">
-        Tap anywhere on a student's box to view their full profile, attendance, fees, and room details.
+        Browse and filter students by floor, allocation status, and residency. Tap anywhere on a student box to open their profile.
       </div>
     </div>
 
-    <!-- Actions & View Mode -->
+    <!-- Actions & View Mode Toggle -->
     <div class="d-flex flex-wrap align-items-center gap-2">
       <div class="btn-group" role="group" aria-label="View Mode">
-        <a href="?view=grid{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+        <a href="?view=grid&grouped={{ grouped|yesno:'1,0' }}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
            class="btn btn-sm {% if view_mode != 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
           Boxes Grid
         </a>
-        <a href="?view=table{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+        <a href="?view=table&grouped={{ grouped|yesno:'1,0' }}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
            class="btn btn-sm {% if view_mode == 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
           Table View
         </a>
@@ -68,47 +77,121 @@
   </div>
 </div>
 
-<!-- Search & Status Filter Bar -->
+<!-- Quick Category Navigation Tabs -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+  <span class="text-secondary small fw-semibold me-1">Quick Categories:</span>
+  <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}"
+     class="badge {% if not has_active_filters %}text-bg-navy{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+    All Students ({{ total_count }})
+  </a>
+  <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}&allocation=allocated"
+     class="badge {% if allocation_filter == 'allocated' and floor_filter == 'all' and status_filter == 'all' %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+    Allocated ({{ allocated_count }})
+  </a>
+  <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}&allocation=unallocated"
+     class="badge {% if allocation_filter == 'unallocated' %}text-bg-warning text-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+    Unallocated ({{ unallocated_count }})
+  </a>
+  <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}&status=staying"
+     class="badge {% if status_filter == 'staying' and allocation_filter == 'all' and floor_filter == 'all' %}text-bg-success{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+    Staying ({{ staying_count }})
+  </a>
+  {% if suspended_count > 0 %}
+    <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}&status=suspended"
+       class="badge {% if status_filter == 'suspended' %}text-bg-danger{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+      Suspended ({{ suspended_count }})
+    </a>
+  {% endif %}
+</div>
+
+<!-- Comprehensive Filter Toolbar -->
 <div class="card p-3 mb-4 bg-white border-0 shadow-sm">
   <form method="get" action="{% url 'students' %}" class="row g-2 align-items-center">
     <input type="hidden" name="view" value="{{ view_mode }}">
-    
-    <!-- Quick Search Input -->
-    <div class="col-12 col-md-6 col-lg-5">
+
+    <!-- Live Search Input -->
+    <div class="col-12 col-lg-4">
       <div class="input-group">
         <span class="input-group-text bg-light text-muted small">Search</span>
         <input type="text" id="studentSearchInput" name="q" value="{{ q }}" class="form-control"
-               placeholder="Search by student name, roll no, or room..."
+               placeholder="Search name, roll no, room, or course..."
                aria-label="Search students">
-        {% if q or status_filter != 'all' %}
-          <a href="{% url 'students' %}?view={{ view_mode }}" class="btn btn-outline-secondary" title="Reset filter">&times;</a>
+        {% if has_active_filters %}
+          <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}" class="btn btn-outline-secondary" title="Reset all filters">&times;</a>
         {% endif %}
       </div>
     </div>
 
-    <!-- Status Pills / Dropdown -->
-    <div class="col-12 col-md-6 col-lg-7 d-flex flex-wrap align-items-center gap-1 justify-content-md-end">
-      <span class="text-secondary small me-1">Status:</span>
-      <a href="?view={{ view_mode }}&status=all{% if q %}&q={{ q }}{% endif %}"
-         class="badge {% if status_filter == 'all' %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
-        All ({{ total_count }})
-      </a>
-      <a href="?view={{ view_mode }}&status=staying{% if q %}&q={{ q }}{% endif %}"
-         class="badge {% if status_filter == 'staying' %}text-bg-success{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
-        Staying ({{ staying_count }})
-      </a>
-      {% if suspended_count > 0 %}
-        <a href="?view={{ view_mode }}&status=suspended{% if q %}&q={{ q }}{% endif %}"
-           class="badge {% if status_filter == 'suspended' %}text-bg-danger{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
-          Suspended ({{ suspended_count }})
-        </a>
-      {% endif %}
-      {% if left_count > 0 %}
-        <a href="?view={{ view_mode }}&status=left{% if q %}&q={{ q }}{% endif %}"
-           class="badge {% if status_filter == 'left' %}text-bg-secondary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
-          Left ({{ left_count }})
-        </a>
-      {% endif %}
+    <!-- Floor Filter Dropdown -->
+    <div class="col-6 col-md-3 col-lg-2">
+      <select name="floor" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="all" {% if floor_filter == 'all' %}selected{% endif %}>All Floors</option>
+        {% for fl in all_floors %}
+          <option value="{{ fl.code }}" {% if floor_filter == fl.code %}selected{% endif %}>
+            {{ fl.display }} ({{ fl.count }})
+          </option>
+        {% endfor %}
+        <option value="unallocated" {% if floor_filter == 'unallocated' %}selected{% endif %}>
+          Unallocated ({{ unallocated_count }})
+        </option>
+      </select>
+    </div>
+
+    <!-- Allocation Status Dropdown -->
+    <div class="col-6 col-md-3 col-lg-2">
+      <select name="allocation" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="all" {% if allocation_filter == 'all' %}selected{% endif %}>All Allocation</option>
+        <option value="allocated" {% if allocation_filter == 'allocated' %}selected{% endif %}>Allocated ({{ allocated_count }})</option>
+        <option value="unallocated" {% if allocation_filter == 'unallocated' %}selected{% endif %}>Unallocated ({{ unallocated_count }})</option>
+      </select>
+    </div>
+
+    <!-- Residency / Disciplinary Status Dropdown -->
+    <div class="col-6 col-md-3 col-lg-2">
+      <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All Status</option>
+        <option value="staying" {% if status_filter == 'staying' %}selected{% endif %}>Staying ({{ staying_count }})</option>
+        <option value="suspended" {% if status_filter == 'suspended' %}selected{% endif %}>Suspended ({{ suspended_count }})</option>
+        <option value="left" {% if status_filter == 'left' %}selected{% endif %}>Left / Inactive ({{ left_count }})</option>
+      </select>
+    </div>
+
+    <!-- Course Dropdown -->
+    <div class="col-6 col-md-3 col-lg-2">
+      <select name="course" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="all" {% if course_filter == 'all' %}selected{% endif %}>All Courses</option>
+        {% for c in all_courses %}
+          <option value="{{ c }}" {% if course_filter == c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Controls Row: Grouping Toggle & Reset -->
+    <div class="col-12 d-flex flex-wrap justify-content-between align-items-center pt-2 border-top mt-2">
+      <div class="d-flex align-items-center gap-2">
+        <span class="text-secondary small">Layout:</span>
+        <div class="btn-group btn-group-sm" role="group">
+          <a href="?grouped=1&view={{ view_mode }}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+             class="btn btn-sm {% if grouped %}btn-secondary text-white{% else %}btn-outline-secondary{% endif %}">
+            Categorized by Floor
+          </a>
+          <a href="?grouped=0&view={{ view_mode }}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+             class="btn btn-sm {% if not grouped %}btn-secondary text-white{% else %}btn-outline-secondary{% endif %}">
+            Flat Grid
+          </a>
+        </div>
+      </div>
+
+      <div class="d-flex align-items-center gap-2">
+        <span class="text-secondary small">
+          Showing <b>{{ filtered_count }}</b> of <b>{{ total_count }}</b> students
+        </span>
+        {% if has_active_filters %}
+          <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}" class="btn btn-sm btn-outline-danger py-0 px-2 fw-semibold" style="font-size:0.75rem;">
+            Reset Filters
+          </a>
+        {% endif %}
+      </div>
     </div>
   </form>
 </div>
@@ -118,77 +201,181 @@
 <!-- Tap anywhere on a box to enter profile     -->
 <!-- ========================================== -->
 {% if view_mode != 'table' %}
-  <div class="row g-3" id="studentsContainer">
-    {% for s in students %}
-      <div class="col-6 col-sm-4 col-md-3 col-lg-2 student-col"
-           data-name="{{ s.user.display_name|lower }}"
-           data-roll="{{ s.roll_no|lower }}"
-           data-room="{% if s.room %}{{ s.room|lower }}{% endif %}">
-        <a href="{% url 'student_detail' s.pk %}"
-           class="card h-100 text-decoration-none student-box p-3 d-flex flex-column align-items-center justify-content-between text-center {% if s.is_currently_suspended %}border-danger-subtle bg-danger-subtle-light{% else %}shadow-sm{% endif %}"
-           title="Tap to enter {{ s.user.display_name }}'s profile">
-          
-          <!-- Avatar Initials -->
-          <div class="student-avatar mb-2 {% if s.is_currently_suspended %}student-avatar-suspended{% endif %}">
-            {{ s.user.first_name|first|upper }}{{ s.user.last_name|first|upper }}
-          </div>
 
-          <!-- Student Name Prominently -->
-          <div class="w-100 mb-1">
-            <h6 class="fw-bold mb-1 text-dark text-truncate" style="color:var(--navy) !important;" title="{{ s.user.display_name }}">
-              {{ s.user.display_name }}
-            </h6>
-            <div class="text-secondary small" style="font-size:0.78rem;">
-              {{ s.roll_no }}
+  <!-- CATEGORIZED BY FLOOR / ALLOCATION -->
+  {% if grouped %}
+    {% for cat in categories %}
+      <div class="category-section mb-4" id="cat-{{ cat.code }}">
+        <!-- Category Section Header -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center pb-2 mb-3 border-bottom">
+          <div class="d-flex align-items-center gap-2">
+            <h5 class="mb-0 fw-bold" style="color:var(--navy);">{{ cat.title }}</h5>
+            <span class="badge {{ cat.badge_class }} rounded-pill category-count">
+              {{ cat.students|length }} Student{{ cat.students|length|pluralize }}
+            </span>
+          </div>
+          <div class="text-secondary small">
+            {{ cat.subtitle }}
+          </div>
+        </div>
+
+        <!-- Student Boxes Grid for this Category -->
+        <div class="row g-3 category-grid">
+          {% for s in cat.students %}
+            <div class="col-6 col-sm-4 col-md-3 col-lg-2 student-col"
+                 data-name="{{ s.user.display_name|lower }}"
+                 data-roll="{{ s.roll_no|lower }}"
+                 data-room="{% if s.room %}{{ s.room|lower }}{% endif %}"
+                 data-course="{% if s.course %}{{ s.course|lower }}{% endif %}"
+                 data-floor="{% if s.room %}{{ s.room.block|lower }}{% else %}unallocated{% endif %}">
+              <a href="{% url 'student_detail' s.pk %}"
+                 class="card h-100 text-decoration-none student-box p-3 d-flex flex-column align-items-center justify-content-between text-center {% if s.is_currently_suspended %}border-danger-subtle bg-danger-subtle-light{% else %}shadow-sm{% endif %}"
+                 title="Tap to enter {{ s.user.display_name }}'s profile">
+                
+                <!-- Initials Avatar -->
+                <div class="student-avatar mb-2 {% if s.is_currently_suspended %}student-avatar-suspended{% elif not s.room %}student-avatar-unallocated{% endif %}">
+                  {{ s.user.first_name|first|upper }}{{ s.user.last_name|first|upper }}
+                </div>
+
+                <!-- Student Name Prominently -->
+                <div class="w-100 mb-1">
+                  <h6 class="fw-bold mb-1 text-dark text-truncate" style="color:var(--navy) !important;" title="{{ s.user.display_name }}">
+                    {{ s.user.display_name }}
+                  </h6>
+                  <div class="text-secondary small" style="font-size:0.78rem;">
+                    {{ s.roll_no }}
+                  </div>
+                  {% if s.course %}
+                    <div class="text-muted small text-truncate mt-1" style="font-size:0.72rem;" title="{{ s.course }}">
+                      {{ s.course }}
+                    </div>
+                  {% endif %}
+                </div>
+
+                <!-- Badges: Room and Status -->
+                <div class="d-flex flex-column align-items-center gap-1 w-100 mt-2">
+                  {% if s.room %}
+                    <span class="badge text-bg-light border text-secondary rounded-pill" style="font-size:0.72rem;">
+                      Room {{ s.room }}
+                    </span>
+                  {% else %}
+                    <span class="badge text-bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill" style="font-size:0.72rem;">
+                      Unallocated
+                    </span>
+                  {% endif %}
+
+                  {% if s.is_currently_suspended %}
+                    <span class="badge text-bg-danger rounded-pill" style="font-size:0.72rem;">
+                      Suspended
+                    </span>
+                  {% elif s.is_active %}
+                    <span class="badge text-bg-success rounded-pill" style="font-size:0.72rem;">
+                      Staying
+                    </span>
+                  {% else %}
+                    <span class="badge text-bg-secondary rounded-pill" style="font-size:0.72rem;">
+                      Left
+                    </span>
+                  {% endif %}
+                </div>
+              </a>
             </div>
-          </div>
-
-          <!-- Room and Status Badges -->
-          <div class="d-flex flex-column align-items-center gap-1 w-100 mt-2">
-            {% if s.room %}
-              <span class="badge text-bg-light border text-secondary rounded-pill" style="font-size:0.72rem;">
-                Room {{ s.room }}
-              </span>
-            {% else %}
-              <span class="badge text-bg-light border text-muted rounded-pill" style="font-size:0.72rem;">
-                No Room
-              </span>
-            {% endif %}
-
-            {% if s.is_currently_suspended %}
-              <span class="badge text-bg-danger rounded-pill" style="font-size:0.72rem;">
-                Suspended
-              </span>
-            {% elif s.is_active %}
-              <span class="badge text-bg-success rounded-pill" style="font-size:0.72rem;">
-                Staying
-              </span>
-            {% else %}
-              <span class="badge text-bg-secondary rounded-pill" style="font-size:0.72rem;">
-                Left
-              </span>
-            {% endif %}
-          </div>
-        </a>
+          {% empty %}
+            <div class="col-12">
+              <div class="card p-3 text-center text-muted bg-light border-0 small">
+                No students match this category.
+              </div>
+            </div>
+          {% endfor %}
+        </div>
       </div>
     {% empty %}
-      <div class="col-12">
-        <div class="card p-5 text-center text-secondary bg-white border-0 shadow-sm">
-          <p class="mb-2 fs-5">No students found.</p>
-          <p class="small text-muted mb-3">No student records match the active search or status criteria.</p>
-          {% if add %}
-            <div>
-              <a href="{{ add }}" class="btn btn-sm btn-navy fw-semibold">{{ add_label }}</a>
-            </div>
-          {% endif %}
+      <div class="card p-5 text-center text-secondary bg-white border-0 shadow-sm">
+        <p class="mb-2 fs-5">No students found.</p>
+        <p class="small text-muted mb-3">No student records match the selected filter criteria.</p>
+        <div>
+          <a href="{% url 'students' %}" class="btn btn-sm btn-navy fw-semibold">Reset All Filters</a>
         </div>
       </div>
     {% endfor %}
-  </div>
 
+  <!-- FLAT GRID (UNGROUPED) -->
+  {% else %}
+    <div class="row g-3" id="studentsFlatContainer">
+      {% for s in students %}
+        <div class="col-6 col-sm-4 col-md-3 col-lg-2 student-col"
+             data-name="{{ s.user.display_name|lower }}"
+             data-roll="{{ s.roll_no|lower }}"
+             data-room="{% if s.room %}{{ s.room|lower }}{% endif %}"
+             data-course="{% if s.course %}{{ s.course|lower }}{% endif %}"
+             data-floor="{% if s.room %}{{ s.room.block|lower }}{% else %}unallocated{% endif %}">
+          <a href="{% url 'student_detail' s.pk %}"
+             class="card h-100 text-decoration-none student-box p-3 d-flex flex-column align-items-center justify-content-between text-center {% if s.is_currently_suspended %}border-danger-subtle bg-danger-subtle-light{% else %}shadow-sm{% endif %}"
+             title="Tap to enter {{ s.user.display_name }}'s profile">
+            
+            <div class="student-avatar mb-2 {% if s.is_currently_suspended %}student-avatar-suspended{% elif not s.room %}student-avatar-unallocated{% endif %}">
+              {{ s.user.first_name|first|upper }}{{ s.user.last_name|first|upper }}
+            </div>
+
+            <div class="w-100 mb-1">
+              <h6 class="fw-bold mb-1 text-dark text-truncate" style="color:var(--navy) !important;" title="{{ s.user.display_name }}">
+                {{ s.user.display_name }}
+              </h6>
+              <div class="text-secondary small" style="font-size:0.78rem;">
+                {{ s.roll_no }}
+              </div>
+              {% if s.course %}
+                <div class="text-muted small text-truncate mt-1" style="font-size:0.72rem;" title="{{ s.course }}">
+                  {{ s.course }}
+                </div>
+              {% endif %}
+            </div>
+
+            <div class="d-flex flex-column align-items-center gap-1 w-100 mt-2">
+              {% if s.room %}
+                <span class="badge text-bg-light border text-secondary rounded-pill" style="font-size:0.72rem;">
+                  Room {{ s.room }}
+                </span>
+              {% else %}
+                <span class="badge text-bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill" style="font-size:0.72rem;">
+                  Unallocated
+                </span>
+              {% endif %}
+
+              {% if s.is_currently_suspended %}
+                <span class="badge text-bg-danger rounded-pill" style="font-size:0.72rem;">
+                  Suspended
+                </span>
+              {% elif s.is_active %}
+                <span class="badge text-bg-success rounded-pill" style="font-size:0.72rem;">
+                  Staying
+                </span>
+              {% else %}
+                <span class="badge text-bg-secondary rounded-pill" style="font-size:0.72rem;">
+                  Left
+                </span>
+              {% endif %}
+            </div>
+          </a>
+        </div>
+      {% empty %}
+        <div class="col-12">
+          <div class="card p-5 text-center text-secondary bg-white border-0 shadow-sm">
+            <p class="mb-2 fs-5">No students found.</p>
+            <p class="small text-muted mb-3">No student records match the active filters.</p>
+            <div>
+              <a href="{% url 'students' %}" class="btn btn-sm btn-navy fw-semibold">Reset Filters</a>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <!-- Real-time Live Search Empty Result Message -->
   <div id="noMatchMessage" class="card p-5 text-center text-secondary bg-white border-0 shadow-sm d-none mt-3">
     <p class="mb-1 fs-5">No matching students found.</p>
-    <p class="small text-muted mb-0">Try typing a different name, roll number, or room number.</p>
+    <p class="small text-muted mb-0">Try typing a different name, roll number, course, or room.</p>
   </div>
 
 <!-- ========================================== -->
@@ -221,7 +408,7 @@
           {% empty %}
             <tr>
               <td colspan="{{ table_headers|length|add:1 }}" class="text-center text-secondary py-4">
-                No students found.
+                No students found matching your filters.
               </td>
             </tr>
           {% endfor %}
@@ -235,30 +422,50 @@
 <script>
 document.addEventListener("DOMContentLoaded", function () {
   const searchInput = document.getElementById("studentSearchInput");
-  const container = document.getElementById("studentsContainer");
   const noMatch = document.getElementById("noMatchMessage");
 
-  if (searchInput && container) {
+  if (searchInput) {
     searchInput.addEventListener("input", function () {
       const q = this.value.trim().toLowerCase();
-      const items = container.querySelectorAll(".student-col");
-      let visibleCount = 0;
+      const allCols = document.querySelectorAll(".student-col");
+      let totalVisible = 0;
 
-      items.forEach(function (col) {
+      // Filter each student box
+      allCols.forEach(function (col) {
         const name = col.getAttribute("data-name") || "";
         const roll = col.getAttribute("data-roll") || "";
         const room = col.getAttribute("data-room") || "";
+        const course = col.getAttribute("data-course") || "";
+        const floor = col.getAttribute("data-floor") || "";
 
-        if (!q || name.includes(q) || roll.includes(q) || room.includes(q)) {
+        const match = !q || name.includes(q) || roll.includes(q) || room.includes(q) || course.includes(q) || floor.includes(q);
+
+        if (match) {
           col.classList.remove("d-none");
-          visibleCount++;
+          totalVisible++;
         } else {
           col.classList.add("d-none");
         }
       });
 
+      // Update category sections visibility in grouped view
+      const sections = document.querySelectorAll(".category-section");
+      sections.forEach(function (sec) {
+        const visibleInSec = sec.querySelectorAll(".student-col:not(.d-none)").length;
+        const countBadge = sec.querySelector(".category-count");
+        if (countBadge) {
+          countBadge.textContent = visibleInSec + (visibleInSec === 1 ? " Student" : " Students");
+        }
+        if (visibleInSec === 0 && q) {
+          sec.classList.add("d-none");
+        } else {
+          sec.classList.remove("d-none");
+        }
+      });
+
+      // Show/hide no match message
       if (noMatch) {
-        if (visibleCount === 0 && items.length > 0) {
+        if (totalVisible === 0 && allCols.length > 0) {
           noMatch.classList.remove("d-none");
         } else {
           noMatch.classList.add("d-none");
