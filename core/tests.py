@@ -1985,6 +1985,12 @@ class AdminSuspensionProcedureTests(TestCase):
         self.assertIn("Ward Suspended", p_notif.title)
         self.assertIn("Rohan Kumar", p_notif.message)
 
+        # Announcement created for students
+        anc = Announcement.objects.filter(student=self.student, audience="student").first()
+        self.assertIsNotNone(anc)
+        self.assertIn("Suspension Notice", anc.title)
+        self.assertIn("curfew violation", anc.body)
+
         # Profile displays suspension banner and lift suspension button for Admin
         prof_resp = c.get(reverse("student_detail", args=[self.student.pk]))
         self.assertEqual(prof_resp.status_code, 200)
@@ -2199,6 +2205,75 @@ class AdminSuspensionProcedureTests(TestCase):
         self.assertEqual(resp_after.status_code, 200)
         self.assertContains(resp_after, f"Room {vacant_room}")
         self.assertNotContains(resp_after, "allocateModal")
+
+    def test_suspension_announcement_visibility_for_students_and_parents(self):
+        # Admin suspends student with specific description "Suspended due to ragging"
+        c = Client()
+        c.force_login(self.admin)
+        start_d = date.today()
+        end_d = date.today() + timedelta(days=7)
+        resp = c.post(
+            reverse("student_suspend", args=[self.student.pk]),
+            {
+                "reason": "Suspended due to ragging",
+                "start_date": str(start_d),
+                "end_date": str(end_d),
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        # Announcement exists with details
+        anc = Announcement.objects.filter(student=self.student).first()
+        self.assertIsNotNone(anc)
+        self.assertEqual(anc.audience, "student")
+        self.assertIn("Suspended due to ragging", anc.body)
+        self.assertIn(start_d.strftime("%d %b %Y"), anc.body)
+        self.assertIn(end_d.strftime("%d %b %Y"), anc.body)
+
+        # 1. Other student logs in: SEES the announcement
+        other_u = User.objects.create_user(username="fellow_std", password="p", role="student", first_name="Kiran", last_name="Raj")
+        Student.objects.create(user=other_u, roll_no="FELLOW01")
+        c_std = Client()
+        c_std.force_login(other_u)
+        resp_std = c_std.get(reverse("my_announcements"))
+        self.assertEqual(resp_std.status_code, 200)
+        self.assertContains(resp_std, "Suspended due to ragging")
+        self.assertContains(resp_std, self.student.user.display_name)
+
+        # 2. Suspended student's parent logs in: SEES the announcement
+        c_parent = Client()
+        c_parent.force_login(self.parent_user)
+        resp_par = c_parent.get(reverse("my_announcements"))
+        self.assertEqual(resp_par.status_code, 200)
+        self.assertContains(resp_par, "Suspended due to ragging")
+
+        # In child overview, suspended student's parent also sees the notice
+        resp_child = c_parent.get(reverse("child", args=[self.student.pk]))
+        self.assertEqual(resp_child.status_code, 200)
+        self.assertContains(resp_child, "Suspended due to ragging")
+
+        # 3. Another student's parent logs in: DOES NOT see the announcement
+        other_p_user = User.objects.create_user(username="other_parent", password="p", role="parent", first_name="Other", last_name="Parent")
+        other_parent = Parent.objects.create(user=other_p_user)
+        u_kid = User.objects.create_user(username="kid_std", password="p", role="student", first_name="Kid", last_name="P")
+        kid = Student.objects.create(user=u_kid, roll_no="KID01", parent=other_parent)
+
+        c_other_p = Client()
+        c_other_p.force_login(other_p_user)
+        resp_other_p = c_other_p.get(reverse("my_announcements"))
+        self.assertEqual(resp_other_p.status_code, 200)
+        self.assertNotContains(resp_other_p, "Suspended due to ragging")
+
+        # In kid's overview, other parent DOES NOT see the suspension announcement
+        resp_kid_overview = c_other_p.get(reverse("child", args=[kid.pk]))
+        self.assertEqual(resp_kid_overview.status_code, 200)
+        self.assertNotContains(resp_kid_overview, "Suspended due to ragging")
+
+        # 4. Lift suspension: Announcement is removed
+        c.post(reverse("student_reinstate", args=[self.student.pk]), follow=True)
+        self.assertEqual(Announcement.objects.filter(student=self.student).count(), 0)
+
 
 
 

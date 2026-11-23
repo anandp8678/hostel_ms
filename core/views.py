@@ -760,10 +760,12 @@ def overview(s, user):
     # Room-targeted and general announcements
     if room:
         notices_qs = m.Announcement.objects.filter(
-            Q(room=room, audience__in=aud) | Q(room__isnull=True, audience__in=aud)
+            Q(room=room, audience__in=aud) | Q(room__isnull=True, audience__in=aud) | Q(student=s)
         )
     else:
-        notices_qs = m.Announcement.objects.filter(room__isnull=True, audience__in=aud)
+        notices_qs = m.Announcement.objects.filter(
+            Q(room__isnull=True, audience__in=aud) | Q(student=s)
+        )
     notices = list(notices_qs.select_related("room", "created_by").order_by("-created_at")[:10])
 
     return dict(
@@ -1624,6 +1626,23 @@ def student_suspend(request, pk):
             actor=request.user,
         )
 
+    # Broadcast announcement to all students (and suspended student's parent)
+    date_desc = f"From {date_s(start_date)} to {date_s(end_date)}" if end_date else f"From {date_s(start_date)} (Until further notice)"
+    announcement_body = (
+        f"Resident: {s.user.display_name} ({s.roll_no})\n"
+        f"Details: {reason}\n"
+        f"Period: {date_desc}\n\n"
+        f"Notice: The student is barred from entering the hostel premises during this period."
+    )
+    m.Announcement.objects.create(
+        title=f"Suspension Notice: {s.user.display_name} ({s.roll_no})",
+        body=announcement_body,
+        audience="student",
+        student=s,
+        room=None,
+        created_by=request.user,
+    )
+
     messages.success(request, f"Student {s.user.display_name} ({s.roll_no}) has been suspended. Entry to the hostel is barred.")
     return redirect("student_detail", pk=pk)
 
@@ -1637,6 +1656,9 @@ def student_reinstate(request, pk):
     s.suspension_start = None
     s.suspension_end = None
     s.save(update_fields=["is_suspended", "suspension_reason", "suspension_start", "suspension_end"])
+
+    # Clear suspension announcement
+    m.Announcement.objects.filter(student=s, title__startswith="Suspension Notice:").delete()
 
     notify_user(
         recipient=s.user,
@@ -2092,13 +2114,16 @@ def my_announcements(request):
     elif u.role == "parent":
         p = getattr(u, "parent", None)
         child_rooms = [c.room for c in p.children.all() if c.room] if p else []
+        child_pks = list(p.children.values_list("pk", flat=True)) if p else []
         aud = ["all", "parent"]
         if child_rooms:
             base_qs = m.Announcement.objects.filter(
-                Q(room__in=child_rooms, audience__in=aud) | Q(room__isnull=True, audience__in=aud)
+                Q(room__in=child_rooms, audience__in=aud) | Q(room__isnull=True, audience__in=aud) | Q(student__in=child_pks)
             )
         else:
-            base_qs = m.Announcement.objects.filter(room__isnull=True, audience__in=aud)
+            base_qs = m.Announcement.objects.filter(
+                Q(room__isnull=True, audience__in=aud) | Q(student__in=child_pks)
+            )
         room_label = ", ".join(str(r) for r in child_rooms) if child_rooms else "Children's Rooms"
     else:
         base_qs = m.Announcement.objects.all()

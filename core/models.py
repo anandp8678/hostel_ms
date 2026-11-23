@@ -422,6 +422,7 @@ class Announcement(models.Model):
     body = models.TextField()
     audience = models.CharField(max_length=10, choices=AUDIENCE, default="all")
     room = models.ForeignKey("Room", null=True, blank=True, on_delete=models.CASCADE, related_name="announcements")
+    student = models.ForeignKey("Student", null=True, blank=True, on_delete=models.CASCADE, related_name="announcements")
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
