@@ -12,7 +12,7 @@ from django.db.models import Prefetch, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
-from django.utils.html import format_html
+from django.utils.html import format_html, mark_safe
 from django.views.decorators.http import require_POST
 
 from . import forms as f
@@ -1911,11 +1911,32 @@ def my_leaves(request):
                 form=form, form_title="Request leave", button="Send request")
 
 
-@role_required("student")
+@role_required("student", "parent")
 def my_fees(request):
-    s = _mine(request)
+    u = request.user
+    if u.role == "parent":
+        p = getattr(u, "parent", None)
+        children = list(p.children.select_related("user").all()) if p else []
+        if not children:
+            return show(
+                request, "plain", title="Fees & Mess Bill Breakdown",
+                headers=["Fee Title", "Room Rent", "Food Charge", "Mess Cut Rebate", "Late Fine", "Total Amount", "Paid", "Balance", "Due Date", "Status", ""],
+                rows=[],
+                note="No student accounts are currently linked to your parent profile.",
+            )
+        child_id = request.GET.get("child")
+        s = None
+        if child_id:
+            s = next((c for c in children if str(c.pk) == str(child_id)), None)
+        if not s:
+            s = children[0]
+    else:
+        children = []
+        s = _mine(request)
+
     for f_obj in s.fees.filter(due_date__lt=date.today()):
         f_obj.sync_late_fine()
+
     rows = [
         (
             x.title,
@@ -1932,22 +1953,50 @@ def my_fees(request):
         )
         for x in s.fees.all()
     ]
-    note = format_html(
-        'Hostel fees must be settled before due date. A late fine of ₹300 is charged for every 5 days past due. <a class="btn btn-sm btn-outline-danger ms-2" href="{}">Export All Fees PDF</a>',
-        reverse("my_fees_export_pdf"),
-    )
+
+    export_url = reverse("my_fees_export_pdf")
+    if u.role == "parent":
+        export_url += f"?child={s.pk}"
+
+    child_switcher = ""
+    if u.role == "parent" and len(children) > 1:
+        pills = []
+        for c in children:
+            active_cls = "btn-navy" if c.pk == s.pk else "btn-outline-secondary"
+            pills.append(f'<a href="?child={c.pk}" class="btn btn-sm {active_cls} me-2">{c.user.display_name}</a>')
+        child_switcher = f'<div class="mb-3 d-flex align-items-center gap-2"><span class="small fw-semibold text-secondary">Select Ward:</span> {"".join(pills)}</div>'
+
+    note_text = f'Hostel fees must be settled before due date. A late fine of ₹300 is charged for every 5 days past due. <a class="btn btn-sm btn-outline-danger ms-2" href="{export_url}">Export All Fees PDF</a>'
+    note = format_html('{}{}', mark_safe(child_switcher), mark_safe(note_text)) if child_switcher else format_html('{}', mark_safe(note_text))
+
+    title = f"Fees & Mess Bill Breakdown · {s.user.display_name} ({s.roll_no})" if u.role == "parent" else "Fees & Mess Bill Breakdown"
+
     return show(
-        request, "plain", title="Fees & Mess Bill Breakdown",
+        request, "plain", title=title,
         headers=["Fee Title", "Room Rent", "Food Charge", "Mess Cut Rebate", "Late Fine", "Total Amount", "Paid", "Balance", "Due Date", "Status", ""],
         rows=rows,
         note=note,
     )
 
 
-@role_required("student")
+@role_required("student", "parent")
 def my_fees_export_pdf(request):
-    """Exports all fee statements for the logged-in student as a PDF."""
-    s = _mine(request)
+    """Exports all fee statements for the logged-in student (or parent's ward) as a PDF."""
+    u = request.user
+    if u.role == "parent":
+        p = getattr(u, "parent", None)
+        children = list(p.children.select_related("user").all()) if p else []
+        if not children:
+            raise PermissionDenied
+        child_id = request.GET.get("child")
+        s = None
+        if child_id:
+            s = next((c for c in children if str(c.pk) == str(child_id)), None)
+        if not s:
+            s = children[0]
+    else:
+        s = _mine(request)
+
     fees = list(s.fees.all())
     for f_obj in fees:
         if f_obj.due_date and f_obj.due_date < date.today():
@@ -1955,7 +2004,7 @@ def my_fees_export_pdf(request):
     pdf_bytes = generate_fees_report_pdf(
         fees,
         title=f"Personal Fee Statement · {s.user.display_name} ({s.roll_no})",
-        subtitle=f"Official student account fee ledger for {s.user.display_name}",
+        subtitle=f"Official student account fee ledger for {s.user.display_name}" if u.role == "student" else f"Official ward fee ledger for {s.user.display_name} (Parent: {u.display_name})",
         staff_user=request.user,
     )
     filename = f"my_fees_statement_{s.roll_no}_{date.today().strftime('%Y%m%d')}.pdf"

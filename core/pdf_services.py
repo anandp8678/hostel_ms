@@ -102,7 +102,10 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
         ],
         [
             Paragraph(subtitle, styles["ReportSubtitle"]),
-            Paragraph(f"Authorized Staff: <b>{user_str}</b>", styles["TableCellRight"]),
+            Paragraph(
+                f"{'Account / Viewer' if (staff_user and getattr(staff_user, 'role', None) in ('student', 'parent')) else 'Authorized Staff'}: <b>{user_str}</b>",
+                styles["TableCellRight"],
+            ),
         ],
     ]
     header_table = Table(header_data, colWidths=[540, 230])

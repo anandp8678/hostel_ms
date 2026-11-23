@@ -61,8 +61,11 @@
         <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'menu' %}">
           Mess Menu
         </a>
+        <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'my_fees' %}?child={{ s.pk }}">
+          Fee Details
+        </a>
         {% if wardens %}
-          <a class="btn btn-sm btn-outline-primary fw-semibold" href="#wardenContacts">
+          <a class="btn btn-sm btn-outline-secondary fw-semibold" href="#wardenContacts">
             Warden Contacts
           </a>
         {% endif %}
@@ -642,7 +645,9 @@
         <span class="fw-bold small" style="color:var(--navy);">Fee Invoices & Dues</span>
         {% if staff_view %}
           <a href="{% url 'fees' %}?q={{ s.roll_no }}" class="small text-decoration-none">Manage Fees &rarr;</a>
-        {% elif not parent_view %}
+        {% elif parent_view %}
+          <a href="{% url 'my_fees' %}?child={{ s.pk }}" class="small text-decoration-none">Fee Details &rarr;</a>
+        {% else %}
           <a href="{% url 'my_fees' %}" class="small text-decoration-none">Fee Details &rarr;</a>
         {% endif %}
       </div>

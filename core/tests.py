@@ -1185,6 +1185,11 @@ class FeeStructureAndMessCutTests(TestCase):
         self.assertTrue(resp_rep.content.startswith(b"%PDF"))
 
     def test_student_and_parent_fee_pdf_receipt(self):
+        parent_user = User.objects.create_user(username="parent_p1", password="password123", role="parent")
+        parent = Parent.objects.create(user=parent_user)
+        self.student.parent = parent
+        self.student.save()
+
         fee = Fee.objects.create(
             student=self.student,
             title="Hostel & Mess Fee - November 2026",
@@ -1211,12 +1216,86 @@ class FeeStructureAndMessCutTests(TestCase):
         self.assertEqual(stmt_resp["Content-Type"], "application/pdf")
         self.assertTrue(stmt_resp.content.startswith(b"%PDF"))
 
+        # Parent logs in and can view my_fees page with ward fee breakdown
+        c.force_login(parent_user)
+        parent_fee_resp = c.get(reverse("my_fees"))
+        self.assertEqual(parent_fee_resp.status_code, 200)
+        self.assertContains(parent_fee_resp, "Mess Fee - November 2026")
+        self.assertContains(parent_fee_resp, "5270.00")
+        self.assertContains(parent_fee_resp, "Receipt")
+        self.assertContains(parent_fee_resp, reverse("fee_pdf", args=[fee.pk]))
+
+        # Parent can download child's fee receipt PDF
+        p_receipt_resp = c.get(reverse("fee_pdf", args=[fee.pk]))
+        self.assertEqual(p_receipt_resp.status_code, 200)
+        self.assertEqual(p_receipt_resp["Content-Type"], "application/pdf")
+        self.assertTrue(p_receipt_resp.content.startswith(b"%PDF"))
+
+        # Parent can export child's full statement PDF
+        p_stmt_resp = c.get(reverse("my_fees_export_pdf"))
+        self.assertEqual(p_stmt_resp.status_code, 200)
+        self.assertEqual(p_stmt_resp["Content-Type"], "application/pdf")
+        self.assertTrue(p_stmt_resp.content.startswith(b"%PDF"))
+
         # Another student cannot download Student 1's fee receipt
         other_user = User.objects.create_user(username="other_stud", password="p", role="student")
         Student.objects.create(user=other_user, roll_no="CS999")
         c.force_login(other_user)
         blocked_resp = c.get(reverse("fee_pdf", args=[fee.pk]))
         self.assertEqual(blocked_resp.status_code, 403)
+
+        # Another parent cannot download Student 1's fee receipt or full statement
+        other_p_user = User.objects.create_user(username="other_par", password="p", role="parent")
+        Parent.objects.create(user=other_p_user)
+        c.force_login(other_p_user)
+        self.assertEqual(c.get(reverse("fee_pdf", args=[fee.pk])).status_code, 403)
+        self.assertEqual(c.get(reverse("my_fees_export_pdf")).status_code, 403)
+
+    def test_parent_with_multiple_children_can_switch_fee_views(self):
+        parent_user = User.objects.create_user(username="parent_multi", password="password123", role="parent")
+        parent = Parent.objects.create(user=parent_user)
+
+        # Child 1: self.student
+        self.student.parent = parent
+        self.student.save()
+        fee1 = Fee.objects.create(
+            student=self.student,
+            title="Fee Child 1",
+            amount=Decimal("5000.00"),
+            due_date=date(2026, 12, 10),
+        )
+
+        # Child 2:
+        u2 = User.objects.create_user(username="child2_user", password="p", role="student", first_name="Rohan", last_name="Sharma")
+        s2 = Student.objects.create(user=u2, roll_no="CS102", parent=parent)
+        fee2 = Fee.objects.create(
+            student=s2,
+            title="Fee Child 2",
+            amount=Decimal("6000.00"),
+            due_date=date(2026, 12, 10),
+        )
+
+        c = Client()
+        c.force_login(parent_user)
+
+        # Default view shows child 1 with child switcher
+        resp_default = c.get(reverse("my_fees"))
+        self.assertEqual(resp_default.status_code, 200)
+        self.assertContains(resp_default, "Fee Child 1")
+        self.assertContains(resp_default, "Select Ward:")
+        self.assertContains(resp_default, "Rohan Sharma")
+
+        # Switching to child 2 via ?child=<pk>
+        resp_child2 = c.get(reverse("my_fees") + f"?child={s2.pk}")
+        self.assertEqual(resp_child2.status_code, 200)
+        self.assertContains(resp_child2, "Fee Child 2")
+        self.assertContains(resp_child2, "6000.00")
+
+        # Statement export for child 2
+        resp_pdf = c.get(reverse("my_fees_export_pdf") + f"?child={s2.pk}")
+        self.assertEqual(resp_pdf.status_code, 200)
+        self.assertEqual(resp_pdf["Content-Type"], "application/pdf")
+        self.assertTrue(resp_pdf.content.startswith(b"%PDF"))
 
 
 class RoomSectionWardenAdminTests(TestCase):

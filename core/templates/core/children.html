@@ -79,9 +79,14 @@
             Course: <b>{{ c.student.course|default:"Not specified" }}</b>
           </div>
 
-          <a href="{% url 'child' c.student.pk %}" class="btn btn-navy w-100 fw-semibold">
-            View Full Dashboard &rarr;
-          </a>
+          <div class="d-flex gap-2">
+            <a href="{% url 'child' c.student.pk %}" class="btn btn-navy flex-grow-1 fw-semibold">
+              Dashboard &rarr;
+            </a>
+            <a href="{% url 'my_fees' %}?child={{ c.student.pk }}" class="btn btn-outline-primary fw-semibold">
+              Fee Details
+            </a>
+          </div>
         </div>
       </div>
     </div>
