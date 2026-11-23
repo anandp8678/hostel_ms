@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Announcement, Attendance, Complaint, Fee, FeeConfig, Notification, Parent, Room, RoomAllocation, Student, User
+from core.models import Announcement, Attendance, Complaint, Fee, FeeConfig, MealMenu, Notification, Parent, Room, RoomAllocation, Student, User
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
@@ -1804,6 +1804,52 @@ class StudentAnnouncementSectionTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         # Parent sees general broadcast
         self.assertContains(resp, "Hostel Night Dinner Timings")
+
+
+class WeeklyFoodMenuTableTests(TestCase):
+    def setUp(self):
+        self.room = Room.objects.create(block="G", number="301", capacity=2)
+        self.student = onboard_student(name="Divya Nair", roll_no="DN301", room=self.room)
+        self.student.user.must_change_password = False
+        self.student.user.save()
+
+        # Seed menu items for Monday
+        MealMenu.objects.create(day=0, meal="B", items="Idli, Sambar, Coconut Chutney, Tea")
+        MealMenu.objects.create(day=0, meal="L", items="Rice, Dal Tadka, Paneer Butter Masala, Curd")
+        MealMenu.objects.create(day=0, meal="S", items="Samosa, Ginger Tea")
+        MealMenu.objects.create(day=0, meal="D", items="Chapati, Mixed Veg Curry, Gulab Jamun")
+
+    def test_student_can_view_weekly_food_menu_table(self):
+        c = Client()
+        c.force_login(self.student.user)
+
+        resp = c.get(reverse("menu"))
+        self.assertEqual(resp.status_code, 200)
+
+        # Ensure table structure is present
+        self.assertContains(resp, "<table")
+        self.assertContains(resp, "Weekly Hostel Mess & Food Menu")
+        self.assertContains(resp, "Full Weekly Meal Timetable")
+        self.assertContains(resp, "Breakfast")
+        self.assertContains(resp, "Lunch")
+        self.assertContains(resp, "Snacks")
+        self.assertContains(resp, "Dinner")
+
+        # Ensure food items appear inside the table
+        self.assertContains(resp, "Idli")
+        self.assertContains(resp, "Sambar")
+        self.assertContains(resp, "Paneer Butter Masala")
+        self.assertContains(resp, "Samosa")
+        self.assertContains(resp, "Gulab Jamun")
+
+        # Ensure today is highlighted
+        self.assertContains(resp, "TODAY")
+
+    def test_anonymous_redirected_from_menu(self):
+        c = Client()
+        resp = c.get(reverse("menu"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp.url)
 
 
 

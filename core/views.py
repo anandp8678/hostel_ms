@@ -1966,11 +1966,67 @@ def my_fees_export_pdf(request):
 
 @login_required
 def menu(request):
-    grid = {d: {mk: "—" for mk, _ in m.MealMenu.MEALS} for d, _ in m.MealMenu.DAYS}
-    for x in m.MealMenu.objects.all():
-        grid[x.day][x.meal] = x.items
-    rows = [(name, *[grid[d][mk] for mk, _ in m.MealMenu.MEALS]) for d, name in m.MealMenu.DAYS]
-    return show(request, "plain", title="Weekly meal menu", headers=["Day"] + [n for _, n in m.MealMenu.MEALS], rows=rows)
+    today = date.today()
+    today_weekday = today.weekday()  # 0 = Monday, 6 = Sunday
+    today_name = dict(m.MealMenu.DAYS).get(today_weekday, "Today")
+
+    meal_meta = [
+        {"key": "B", "name": "Breakfast", "timing": "7:30 AM – 9:00 AM", "icon": "🌅"},
+        {"key": "L", "name": "Lunch", "timing": "12:30 PM – 2:00 PM", "icon": "🍛"},
+        {"key": "S", "name": "Snacks & Tea", "timing": "4:30 PM – 5:30 PM", "icon": "☕"},
+        {"key": "D", "name": "Dinner", "timing": "7:30 PM – 9:00 PM", "icon": "🍲"},
+    ]
+
+    all_meals = m.MealMenu.objects.all()
+    meals_dict = {(x.day, x.meal): x.items for x in all_meals}
+
+    days_schedule = []
+    today_meals = {}
+
+    for day_idx, day_name in m.MealMenu.DAYS:
+        day_row = {
+            "day_idx": day_idx,
+            "day_name": day_name,
+            "is_today": (day_idx == today_weekday),
+            "meals": [],
+        }
+        for mm in meal_meta:
+            items_str = meals_dict.get((day_idx, mm["key"]), "")
+            item_list = [it.strip() for it in items_str.split(",") if it.strip()] if items_str else []
+            meal_data = {
+                "key": mm["key"],
+                "name": mm["name"],
+                "icon": mm["icon"],
+                "timing": mm["timing"],
+                "items_str": items_str or "—",
+                "items_list": item_list,
+            }
+            day_row["meals"].append(meal_data)
+            if day_idx == today_weekday:
+                today_meals[mm["key"]] = meal_data
+
+        days_schedule.append(day_row)
+
+    headers = ["Day"] + [m["name"] for m in meal_meta]
+    rows = [
+        (d["day_name"], *[m["items_str"] for m in d["meals"]])
+        for d in days_schedule
+    ]
+
+    return show(
+        request,
+        "menu",
+        title="Weekly Mess Food Menu",
+        today=today,
+        today_name=today_name,
+        today_weekday=today_weekday,
+        meal_meta=meal_meta,
+        days_schedule=days_schedule,
+        today_meals=today_meals,
+        headers=headers,
+        rows=rows,
+        can_manage=request.user.role in STAFF,
+    )
 
 
 @login_required
