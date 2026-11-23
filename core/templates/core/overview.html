@@ -41,6 +41,10 @@
           <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'room_detail' room.pk %}">
             View Room {{ room }}
           </a>
+        {% else %}
+          <button type="button" class="btn btn-sm btn-success fw-semibold" data-bs-toggle="modal" data-bs-target="#allocateModal">
+            Allocate Room
+          </button>
         {% endif %}
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'attendance_history' %}?q={{ s.roll_no }}">
           Attendance
@@ -156,6 +160,13 @@
           <b>{{ room.occupied }}</b> of <b>{{ room.capacity }}</b> beds occupied ({{ roommates|length }} roommate{{ roommates|length|pluralize }})
         {% else %}
           Awaiting room allocation by warden
+          {% if staff_view %}
+            <div class="mt-2">
+              <button type="button" class="btn btn-sm btn-outline-success w-100 fw-semibold" data-bs-toggle="modal" data-bs-target="#allocateModal">
+                Allocate Room
+              </button>
+            </div>
+          {% endif %}
         {% endif %}
       </div>
     </div>
@@ -475,7 +486,7 @@
                 </div>
 
                 <div class="text-muted mt-2 small" style="font-size: 0.7rem;">
-                  ℹ️ Use parent contact for medical or urgency issues. Notify the duty warden for hostel matters.
+                  Use parent contact for medical or urgency issues. Notify the duty warden for hostel matters.
                 </div>
               </div>
             </div>
@@ -487,10 +498,24 @@
         </div>
       {% else %}
         <div class="text-center py-4 text-muted">
-          
-          <h6 class="text-dark">Awaiting Room Allocation</h6>
-          <p class="small text-secondary mb-3">You have not been assigned to a hostel room yet. Please contact the hostel warden.</p>
-          <a href="{% url 'student_rooms' %}" class="btn btn-sm btn-outline-primary">Browse All Hostel Rooms &rarr;</a>
+          <h6 class="text-dark fw-bold">Awaiting Room Allocation</h6>
+          <p class="small text-secondary mb-3">
+            {% if staff_view %}
+              This student is currently unallocated and has not been assigned a hostel room.
+            {% else %}
+              You have not been assigned to a hostel room yet. Please contact the hostel warden.
+            {% endif %}
+          </p>
+          {% if staff_view %}
+            <button type="button" class="btn btn-sm btn-success fw-semibold px-3 mb-2" data-bs-toggle="modal" data-bs-target="#allocateModal">
+              Allocate Room Now
+            </button>
+            <div>
+              <a href="{% url 'rooms' %}" class="btn btn-sm btn-outline-secondary">Browse All Rooms &rarr;</a>
+            </div>
+          {% else %}
+            <a href="{% url 'student_rooms' %}" class="btn btn-sm btn-outline-primary">Browse All Hostel Rooms &rarr;</a>
+          {% endif %}
         </div>
       {% endif %}
     </div>
@@ -925,6 +950,60 @@ document.addEventListener("DOMContentLoaded", function () {
         <div class="modal-footer bg-light">
           <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
           <button type="submit" class="btn btn-sm btn-success fw-semibold px-3">Lift Suspension & Reinstate</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if staff_view and not room %}
+<!-- Staff Allocate Room Modal -->
+<div class="modal fade" id="allocateModal" tabindex="-1" aria-labelledby="allocateModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <form method="post" action="{% url 'student_allocate' s.pk %}">
+        {% csrf_token %}
+        <div class="modal-header text-white" style="background:var(--navy);">
+          <h5 class="modal-title fw-bold" id="allocateModalLabel">Allocate Room to {{ s.user.display_name }}</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-4">
+          <div class="alert alert-info small mb-3">
+            Select an active room with vacant beds to allocate <strong>{{ s.user.display_name }}</strong> (Roll No: {{ s.roll_no }}). The student and linked parent will automatically receive an allocation notice.
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary">Select Room with Open Vacancy *</label>
+            {% if available_rooms %}
+              <select name="room_id" class="form-select" required>
+                <option value="" disabled selected>Choose a vacant room...</option>
+                {% for r in available_rooms %}
+                  <option value="{{ r.pk }}">
+                    Room {{ r }} ({{ r.floor_display }}) — {{ r.vacancy }} vacant bed{{ r.vacancy|pluralize }} (Capacity: {{ r.capacity }})
+                  </option>
+                {% endfor %}
+              </select>
+              <div class="form-text small text-muted">
+                Only active, non-blacklisted rooms with available beds are shown.
+              </div>
+            {% else %}
+              <div class="alert alert-warning small mb-0">
+                No vacant rooms are currently available in the hostel. Please vacate a room or increase capacity first.
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary">Allocation Start Date *</label>
+            <input type="date" name="start_date" class="form-control form-control-sm" value="{{ today|date:'Y-m-d' }}" required>
+          </div>
+        </div>
+        <div class="modal-footer bg-light">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          {% if available_rooms %}
+            <button type="submit" class="btn btn-sm btn-success fw-semibold px-3">Confirm Allocation</button>
+          {% endif %}
         </div>
       </form>
     </div>

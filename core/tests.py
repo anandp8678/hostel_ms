@@ -2135,14 +2135,11 @@ class AdminSuspensionProcedureTests(TestCase):
         c = Client()
         c.force_login(self.admin)
 
-        # Allocate self.student to self.room
-        RoomAllocation.objects.create(student=self.student, room=self.room, start_date=date.today())
-
         # Create unallocated student
         u_unalloc = User.objects.create_user(username="unalloc_std", password="p", role="student", first_name="Unalloc", last_name="Student")
         unalloc_student = Student.objects.create(user=u_unalloc, roll_no="UNALLOC01")
 
-        # Test filter by allocation: allocated
+        # Test filter by allocation: allocated (self.student has room from setUp)
         resp_alloc = c.get(reverse("students") + "?allocation=allocated")
         self.assertEqual(resp_alloc.status_code, 200)
         self.assertContains(resp_alloc, self.student.roll_no)
@@ -2159,6 +2156,50 @@ class AdminSuspensionProcedureTests(TestCase):
         self.assertEqual(resp_floor.status_code, 200)
         self.assertContains(resp_floor, self.student.roll_no)
         self.assertNotContains(resp_floor, unalloc_student.roll_no)
+
+    def test_warden_can_allocate_unallocated_student_from_profile_page(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Create unallocated student and vacant room
+        u_target = User.objects.create_user(username="unalloc_target", password="p", role="student", first_name="Tarun", last_name="Verma")
+        target_student = Student.objects.create(user=u_target, roll_no="UNALLOC99", parent=self.parent, course="MCA")
+        vacant_room = Room.objects.create(block="B", number="105", capacity=2)
+
+        self.assertIsNone(target_student.room)
+
+        # GET student overview as warden
+        resp = c.get(reverse("student_detail", args=[target_student.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "allocateModal")
+        self.assertContains(resp, "Allocate Room")
+
+        # POST allocate to vacant_room
+        post_resp = c.post(
+            reverse("student_allocate", args=[target_student.pk]),
+            {"room_id": str(vacant_room.pk), "start_date": str(date.today())},
+            follow=True,
+        )
+        self.assertEqual(post_resp.status_code, 200)
+
+        # Verify allocation created
+        target_student.refresh_from_db()
+        self.assertEqual(target_student.room, vacant_room)
+
+        # Notification sent to student and parent
+        notif = Notification.objects.filter(recipient=u_target, title="Hostel Room Allocated").first()
+        self.assertIsNotNone(notif)
+        self.assertIn(str(vacant_room), notif.message)
+
+        p_notif = Notification.objects.filter(recipient=self.parent_user, title="Ward Room Allocated").first()
+        self.assertIsNotNone(p_notif)
+
+        # GET overview now shows room
+        resp_after = c.get(reverse("student_detail", args=[target_student.pk]))
+        self.assertEqual(resp_after.status_code, 200)
+        self.assertContains(resp_after, f"Room {vacant_room}")
+        self.assertNotContains(resp_after, "allocateModal")
+
 
 
 

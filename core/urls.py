@@ -24,6 +24,7 @@ urlpatterns = [
     path("rooms/", v.room_list, name="rooms"),
     path("rooms/<int:pk>/toggle-blacklist/", v.room_toggle_blacklist, name="room_toggle_blacklist"),
     path("students/<int:pk>/", v.student_detail, name="student_detail"),
+    path("students/<int:pk>/allocate/", v.student_allocate, name="student_allocate"),
     path("students/<int:pk>/suspend/", v.student_suspend, name="student_suspend"),
     path("students/<int:pk>/reinstate/", v.student_reinstate, name="student_reinstate"),
     path("attendance/", v.attendance, name="attendance"),

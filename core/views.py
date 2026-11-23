@@ -728,11 +728,19 @@ def overview(s, user):
     # Room and roommates
     room = s.room
     roommates = []
+    available_rooms = []
     if room:
         allocs = m.RoomAllocation.objects.filter(
             room=room, end_date__isnull=True
         ).exclude(student=s).select_related("student__user", "student__parent__user")
         roommates = [a.student for a in allocs]
+    elif user.role in STAFF:
+        for r in m.Room.objects.filter(is_blacklisted=False).prefetch_related(
+            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
+        ):
+            if r.vacancy > 0:
+                available_rooms.append(r)
+        available_rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
 
     # Fee metrics
     fees = list(s.fees.prefetch_related("payments"))
@@ -783,6 +791,7 @@ def overview(s, user):
         wardens=wardens,
         notices=notices,
         badge=badge,
+        available_rooms=available_rooms,
     )
 
 
@@ -1489,6 +1498,72 @@ def student_detail(request, pk):
         staff_view=True,
         **overview(s, request.user),
     )
+
+
+@staff
+@require_POST
+def student_allocate(request, pk):
+    s = get_object_or_404(m.Student.objects.select_related("user", "parent__user"), pk=pk)
+    room_id = request.POST.get("room_id", "").strip()
+    start_date_str = request.POST.get("start_date", "").strip()
+
+    if not room_id:
+        messages.error(request, "Please select a room to allocate.")
+        return redirect("student_detail", pk=s.pk)
+
+    room = get_object_or_404(m.Room, pk=room_id)
+
+    if room.is_blacklisted:
+        messages.error(request, f"Room {room} is blacklisted ({room.blacklist_reason or 'Maintenance'}) and cannot accept allocations.")
+        return redirect("student_detail", pk=s.pk)
+
+    if room.vacancy <= 0:
+        messages.error(request, f"Room {room} is already full (capacity: {room.capacity}).")
+        return redirect("student_detail", pk=s.pk)
+
+    active_alloc = m.RoomAllocation.objects.filter(student=s, end_date__isnull=True).first()
+    if active_alloc:
+        messages.warning(request, f"{s.user.display_name} is already allocated to Room {active_alloc.room}.")
+        return redirect("student_detail", pk=s.pk)
+
+    alloc_date = date.today()
+    if start_date_str:
+        try:
+            alloc_date = parse_date(start_date_str) or date.today()
+        except Exception:
+            alloc_date = date.today()
+
+    allocation = m.RoomAllocation(student=s, room=room, start_date=alloc_date)
+    try:
+        allocation.full_clean()
+        allocation.save()
+    except ValidationError as e:
+        messages.error(request, f"Allocation failed: {e}")
+        return redirect("student_detail", pk=s.pk)
+
+    # Notify student
+    notify_user(
+        recipient=s.user,
+        actor=request.user,
+        category="announcement",
+        title="Hostel Room Allocated",
+        message=f"You have been allocated to Room {room} ({room.floor_display}) starting from {alloc_date}.",
+        link=reverse("home"),
+    )
+
+    # Notify parent if registered
+    if s.parent and s.parent.user:
+        notify_user(
+            recipient=s.parent.user,
+            actor=request.user,
+            category="announcement",
+            title="Ward Room Allocated",
+            message=f"Your ward {s.user.display_name} has been allocated to Room {room} ({room.floor_display}) starting from {alloc_date}.",
+            link=reverse("home"),
+        )
+
+    messages.success(request, f"{s.user.display_name} allocated to Room {room} successfully.")
+    return redirect("student_detail", pk=s.pk)
 
 
 @role_required("admin")
