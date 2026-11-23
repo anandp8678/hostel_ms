@@ -13,4 +13,14 @@ def nav(request):
                  ("my_leaves", "Leave"), ("my_complaints", "Complaints"), ("my_fees", "Fees"), ("menu", "Meal menu")]
     else:
         items = [("home", "My children"), ("student_rooms", "Room directory"), ("menu", "Meal menu")]
-    return {"nav_items": items}
+
+    # Real-time notifications for the topbar bell icon
+    notif_qs = u.notifications.all()
+    unread_notifs_count = notif_qs.filter(is_read=False).count()
+    recent_notifications = list(notif_qs.select_related("actor")[:8])
+
+    return {
+        "nav_items": items,
+        "unread_notifs_count": unread_notifs_count,
+        "recent_notifications": recent_notifications,
+    }

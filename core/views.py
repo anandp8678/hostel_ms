@@ -26,6 +26,8 @@ from .services import (
     import_allocations,
     import_rooms_csv,
     import_rows,
+    notify_user,
+    notify_users,
     parse_date,
 )
 
@@ -211,6 +213,32 @@ def warden_new(request):
 
 
 @staff
+def announcement_new(request):
+    form = f.AnnouncementForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        anc = form.save(commit=False)
+        anc.created_by = request.user
+        anc.save()
+        aud = anc.audience
+        recipients = []
+        if aud in ("all", "student"):
+            recipients.extend([s.user for s in m.Student.objects.filter(is_active=True).select_related("user")])
+        if aud in ("all", "parent"):
+            recipients.extend([p.user for p in m.Parent.objects.all().select_related("user")])
+        notify_users(
+            recipients=recipients,
+            title=f"📢 Hostel Announcement: {anc.title}",
+            message=anc.body[:200],
+            category="announcement",
+            link=reverse("home"),
+            actor=request.user,
+        )
+        messages.success(request, "Announcement posted.")
+        return redirect("announcements")
+    return show(request, "form", title="Post · Announcements", form=form, back=reverse("announcements"))
+
+
+@staff
 def fee_create(request):
     form = f.FeeForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
@@ -230,6 +258,16 @@ def fee_create(request):
             )
             for s in targets
         ])
+        student_users = [s.user for s in targets]
+        parent_users = [s.parent.user for s in targets if s.parent]
+        notify_users(
+            recipients=student_users + parent_users,
+            title=f"💳 New Fee Issued: {d['title']}",
+            message=f"Amount: ₹{d['amount']} | Due: {d['due_date'].strftime('%d %b %Y')}. Review in Fees section.",
+            category="fee",
+            link=reverse("my_fees"),
+            actor=request.user,
+        )
         messages.success(request, f"Fee added for {len(targets)} student(s).")
         return redirect("fees")
     return show(request, "form", title="Add fee", form=form, back=reverse("fees"))
@@ -359,6 +397,20 @@ def fees_calculate_monthly(request):
         msg = f"Hostel & Mess fee bills saved for {created_count + updated_count} student(s) for {month_label}."
         if updated_count:
             msg += f" ({updated_count} existing bills updated)."
+
+        # Notify affected students and parents
+        notif_students = [s for s in active_students if str(s.pk) in selected_student_ids]
+        student_users = [s.user for s in notif_students]
+        parent_users = [s.parent.user for s in notif_students if s.parent]
+        notify_users(
+            recipients=student_users + parent_users,
+            title=f"💳 Hostel & Mess Fee Released - {month_label}",
+            message=f"{title} has been generated. Due date: {due_date.strftime('%d %b %Y')}. Review breakdown in Fees section.",
+            category="fee",
+            link=reverse("my_fees"),
+            actor=request.user,
+        )
+
         messages.success(request, msg)
         return redirect("fees")
 
@@ -1148,12 +1200,23 @@ def room_announcement_create(request, pk):
         messages.error(request, "Please enter both a title and details for the announcement.")
         return redirect("room_detail", pk=room.pk)
 
-    m.Announcement.objects.create(
+    anc = m.Announcement.objects.create(
         room=room,
         title=title,
         body=body,
         audience=audience,
         created_by=request.user,
+    )
+    inmate_users = [a.student.user for a in room.allocations.filter(end_date__isnull=True)]
+    parent_users = [a.student.parent.user for a in room.allocations.filter(end_date__isnull=True) if a.student.parent] if audience in ("all", "parent") else []
+    target_users = inmate_users if audience == "student" else (inmate_users + parent_users if audience == "all" else parent_users)
+    notify_users(
+        recipients=target_users,
+        title=f"📢 Room {room} Notice: {title}",
+        message=body[:200],
+        category="announcement",
+        link=reverse("home"),
+        actor=request.user,
     )
     messages.success(request, f"Announcement successfully posted to Room {room} inmates!")
     return redirect("room_detail", pk=room.pk)
@@ -1169,6 +1232,84 @@ def room_announcement_delete(request, pk):
     if room_pk:
         return redirect("room_detail", pk=room_pk)
     return redirect("announcements")
+
+
+@staff
+def complaint_edit(request, pk):
+    obj = get_object_or_404(m.Complaint.objects.select_related("student__user"), pk=pk)
+    old_status = obj.status
+    old_note = obj.staff_note or ""
+    form = f.ComplaintStaffForm(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid():
+        updated_c = form.save()
+        new_status = updated_c.status
+        new_note = updated_c.staff_note or ""
+        # If status changed or staff reply/note changed, notify student
+        if new_status != old_status or new_note != old_note:
+            note_text = f" Staff reply: '{new_note[:100]}'" if new_note else ""
+            notify_user(
+                recipient=obj.student.user,
+                title=f"💬 Reply to Complaint: {obj.title}",
+                message=f"Status set to '{new_status}'.{note_text}",
+                category="complaint",
+                link=reverse("my_complaints"),
+                actor=request.user,
+            )
+        messages.success(request, "Complaint updated.")
+        return redirect("complaints")
+    return show(request, "form", title="Manage Complaint", form=form, back=reverse("complaints"))
+
+
+@login_required
+def notifications_list(request):
+    filter_mode = request.GET.get("filter", "all").strip()
+    qs = request.user.notifications.all().select_related("actor")
+    if filter_mode == "unread":
+        qs = qs.filter(is_read=False)
+
+    total_count = request.user.notifications.count()
+    unread_count = request.user.notifications.filter(is_read=False).count()
+
+    return show(
+        request,
+        "notifications",
+        title="Notifications",
+        notifications=list(qs[:60]),
+        total_count=total_count,
+        unread_count=unread_count,
+        filter_mode=filter_mode,
+    )
+
+
+@login_required
+@require_POST
+def notifications_mark_all_read(request):
+    request.user.notifications.filter(is_read=False).update(is_read=True)
+    messages.success(request, "All notifications marked as read.")
+    next_url = request.POST.get("next") or request.META.get("HTTP_REFERER") or reverse("notifications")
+    return redirect(next_url)
+
+
+@login_required
+def notification_read(request, pk):
+    notif = get_object_or_404(m.Notification, pk=pk, recipient=request.user)
+    if not notif.is_read:
+        notif.is_read = True
+        notif.save(update_fields=["is_read"])
+    if notif.link:
+        return redirect(notif.link)
+    next_url = request.GET.get("next") or request.META.get("HTTP_REFERER") or reverse("notifications")
+    return redirect(next_url)
+
+
+@login_required
+@require_POST
+def notification_delete(request, pk):
+    notif = get_object_or_404(m.Notification, pk=pk, recipient=request.user)
+    notif.delete()
+    messages.success(request, "Notification removed.")
+    next_url = request.POST.get("next") or request.META.get("HTTP_REFERER") or reverse("notifications")
+    return redirect(next_url)
 
 
 @staff
@@ -1525,6 +1666,17 @@ def leave_decide(request, pk, decision):
     lv = get_object_or_404(m.LeaveRequest, pk=pk)
     lv.status = "Approved" if decision == "approve" else "Rejected"
     lv.save()
+    targets = [lv.student.user]
+    if lv.student.parent:
+        targets.append(lv.student.parent.user)
+    notify_users(
+        recipients=targets,
+        title=f"📝 Leave Request {lv.status}",
+        message=f"Leave request from {lv.from_date.strftime('%d %b')} to {lv.to_date.strftime('%d %b')} was {lv.status.lower()} by the warden.",
+        category="leave",
+        link=reverse("my_leaves"),
+        actor=request.user,
+    )
     messages.success(request, f"Leave {lv.status.lower()}.")
     return redirect("leaves")
 
@@ -1587,6 +1739,15 @@ def my_complaints(request):
         c = form.save(commit=False)
         c.student = s
         c.save()
+        staff_users = list(m.User.objects.filter(role__in=STAFF, is_active=True))
+        notify_users(
+            recipients=staff_users,
+            title=f"💬 New Complaint: {c.title}",
+            message=f"Filed by {s.user.display_name} ({s.roll_no}) - Room {s.room or 'Unassigned'}: {c.description[:150]}",
+            category="complaint",
+            link=reverse("complaints_edit", args=[c.pk]),
+            actor=request.user,
+        )
         messages.success(request, "Complaint submitted to hostel administration.")
         return redirect("my_complaints")
 
@@ -1614,6 +1775,15 @@ def my_complaint_resolve(request, pk):
     else:
         c.status = "Resolved"
         c.save(update_fields=["status"])
+        staff_users = list(m.User.objects.filter(role__in=STAFF, is_active=True))
+        notify_users(
+            recipients=staff_users,
+            title=f"✅ Complaint Solved: {c.title}",
+            message=f"{s.user.display_name} marked complaint #{c.pk} as solved.",
+            category="complaint",
+            link=reverse("complaints_edit", args=[c.pk]),
+            actor=request.user,
+        )
         messages.success(request, f"Complaint '{c.title}' has been marked as solved. Thank you!")
     return redirect(request.POST.get("next") or "my_complaints")
 
@@ -1628,6 +1798,15 @@ def my_complaint_reopen(request, pk):
     else:
         c.status = "In Progress"
         c.save(update_fields=["status"])
+        staff_users = list(m.User.objects.filter(role__in=STAFF, is_active=True))
+        notify_users(
+            recipients=staff_users,
+            title=f"⚠️ Complaint Reopened: {c.title}",
+            message=f"{s.user.display_name} reopened complaint #{c.pk} for staff review.",
+            category="complaint",
+            link=reverse("complaints_edit", args=[c.pk]),
+            actor=request.user,
+        )
         messages.success(request, f"Complaint '{c.title}' reopened for staff review.")
     return redirect(request.POST.get("next") or "my_complaints")
 
@@ -1638,6 +1817,15 @@ def my_leaves(request):
     form = f.LeaveForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         lv = form.save(commit=False); lv.student = s; lv.save()
+        staff_users = list(m.User.objects.filter(role__in=STAFF, is_active=True))
+        notify_users(
+            recipients=staff_users,
+            title=f"📝 New Leave Request: {s.user.display_name}",
+            message=f"{s.user.display_name} ({s.roll_no}) requested leave from {lv.from_date.strftime('%d %b')} to {lv.to_date.strftime('%d %b')}. Reason: {lv.reason}",
+            category="leave",
+            link=reverse("leaves"),
+            actor=request.user,
+        )
         messages.success(request, "Leave request sent to the warden.")
         return redirect("my_leaves")
     rows = [(date_s(x.from_date), date_s(x.to_date), x.reason, badge(x.status)) for x in s.leaves.all()]

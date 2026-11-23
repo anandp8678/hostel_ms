@@ -413,3 +413,38 @@ class Announcement(models.Model):
         if self.room:
             return f"[{self.room}] {self.title}"
         return self.title
+
+
+class Notification(models.Model):
+    CATEGORIES = [
+        ("announcement", "Announcement"),
+        ("fee", "Fee"),
+        ("complaint", "Complaint"),
+        ("leave", "Leave"),
+        ("general", "General"),
+    ]
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
+    actor = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    category = models.CharField(max_length=20, choices=CATEGORIES, default="general")
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    link = models.CharField(max_length=255, blank=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"To {self.recipient.username}: {self.title}"
+
+    @property
+    def icon(self):
+        icons = {
+            "announcement": "📢",
+            "fee": "💳",
+            "complaint": "💬",
+            "leave": "📝",
+            "general": "🔔",
+        }
+        return icons.get(self.category, "🔔")

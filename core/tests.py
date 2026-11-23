@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Announcement, Attendance, Complaint, Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
+from core.models import Announcement, Attendance, Complaint, Fee, FeeConfig, Notification, Parent, Room, RoomAllocation, Student, User
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
@@ -1463,4 +1463,232 @@ class RoomAnnouncementAndFloorFilterTests(TestCase):
         content2 = resp2.content.decode("utf-8")
         self.assertEqual(content2.count("?block=G"), 1)
         self.assertEqual(content2.count("?block=F"), 1)
+
+
+class NotificationSystemTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin_notif", password="AdminPassword123", role="admin", is_staff=True
+        )
+        self.warden = User.objects.create_user(
+            username="warden_notif", password="WardenPassword123", role="warden", is_staff=True
+        )
+
+        self.room = Room.objects.create(block="G", number="201", capacity=2)
+        self.student = onboard_student(name="Rahul Sharma", roll_no="RS201", room=self.room)
+        self.student.user.must_change_password = False
+        self.student.user.save()
+
+    def test_notification_bell_rendered_in_topbar(self):
+        Notification.objects.create(
+            recipient=self.student.user,
+            title="Important Mess Timing Change",
+            message="Dinner will be served from 7:00 PM tonight.",
+            category="announcement",
+            link="/",
+        )
+
+        c = Client()
+        c.force_login(self.student.user)
+
+        resp = c.get(reverse("home"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "🔔")
+        self.assertContains(resp, "Important Mess Timing Change")
+        self.assertContains(resp, "unread notifications")
+
+    def test_announcements_trigger_notifications(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # 1. General announcement
+        resp = c.post(
+            reverse("announcements_new"),
+            {
+                "title": "Annual Hostel Day",
+                "body": "Hostel celebration will be held this Saturday evening.",
+                "audience": "all",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.student.user,
+                category="announcement",
+                title__contains="Annual Hostel Day",
+            ).exists()
+        )
+
+        # 2. Room-specific announcement
+        resp2 = c.post(
+            reverse("room_announcement_create", args=[self.room.pk]),
+            {
+                "title": "Room G-201 Balcony Inspection",
+                "body": "Please keep the balcony clean for inspection.",
+                "audience": "student",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.student.user,
+                category="announcement",
+                title__contains="Room G-201",
+            ).exists()
+        )
+
+    def test_fee_actions_trigger_notifications(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # 1. Manual Fee Creation
+        resp = c.post(
+            reverse("fees_new"),
+            {
+                "student": self.student.pk,
+                "title": "Hostel Maintenance Fee",
+                "amount": "1500.00",
+                "due_date": "2026-12-10",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.student.user,
+                category="fee",
+                title__contains="Hostel Maintenance Fee",
+            ).exists()
+        )
+
+        # 2. Monthly Fee Calculation Release
+        resp2 = c.post(
+            reverse("fees_calculate_monthly"),
+            {
+                "save_fees": "1",
+                "selected_students": [str(self.student.pk)],
+                "due_date": "2026-12-15",
+                "title": "Monthly Mess & Room Rent - November 2026",
+                f"rent_{self.student.pk}": "1500.00",
+                f"food_{self.student.pk}": "3900.00",
+                f"mess_days_{self.student.pk}": "0",
+                f"mess_cut_{self.student.pk}": "0.00",
+                f"total_{self.student.pk}": "5400.00",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.student.user,
+                category="fee",
+                message__contains="Monthly Mess & Room Rent",
+            ).exists()
+        )
+
+    def test_complaint_workflow_triggers_notifications(self):
+        c_student = Client()
+        c_student.force_login(self.student.user)
+
+        # 1. Student submits complaint
+        resp = c_student.post(
+            reverse("my_complaints"),
+            {
+                "title": "Water heater not heating",
+                "description": "Geyser in bathroom G-201 is cold.",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        comp = Complaint.objects.filter(student=self.student, title="Water heater not heating").first()
+        self.assertIsNotNone(comp)
+
+        # Staff (warden) must have received notification
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.warden,
+                category="complaint",
+                title__contains="Water heater not heating",
+            ).exists()
+        )
+
+        # 2. Staff updates complaint and adds a reply note
+        c_staff = Client()
+        c_staff.force_login(self.warden)
+
+        resp2 = c_staff.post(
+            reverse("complaints_edit", args=[comp.pk]),
+            {
+                "status": "In Progress",
+                "staff_note": "Plumber scheduled to visit at 3 PM.",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp2.status_code, 200)
+
+        # Student must have received notification with the reply note
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.student.user,
+                category="complaint",
+                message__contains="Plumber scheduled to visit",
+            ).exists()
+        )
+
+        # 3. Student marks complaint as solved
+        resp3 = c_student.post(reverse("my_complaint_resolve", args=[comp.pk]), follow=True)
+        self.assertEqual(resp3.status_code, 200)
+
+        # Staff notified that student resolved the issue
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.warden,
+                category="complaint",
+                title__contains="Complaint Solved",
+            ).exists()
+        )
+
+    def test_notifications_page_read_and_delete(self):
+        n1 = Notification.objects.create(
+            recipient=self.student.user,
+            title="Notice 1",
+            message="Notice 1 body",
+            link="/me/fees/",
+        )
+        n2 = Notification.objects.create(
+            recipient=self.student.user,
+            title="Notice 2",
+            message="Notice 2 body",
+            link="",
+        )
+
+        c = Client()
+        c.force_login(self.student.user)
+
+        # 1. Notifications list page
+        resp = c.get(reverse("notifications"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Notice 1")
+        self.assertContains(resp, "Notice 2")
+
+        # 2. Open notification n1 (marks read and redirects to link)
+        read_resp = c.get(reverse("notification_read", args=[n1.pk]))
+        self.assertRedirects(read_resp, "/me/fees/")
+        n1.refresh_from_db()
+        self.assertTrue(n1.is_read)
+
+        # 3. Mark all read
+        all_read_resp = c.post(reverse("notifications_mark_all_read"), follow=True)
+        self.assertEqual(all_read_resp.status_code, 200)
+        n2.refresh_from_db()
+        self.assertTrue(n2.is_read)
+
+        # 4. Delete notification
+        del_resp = c.post(reverse("notification_delete", args=[n2.pk]), follow=True)
+        self.assertEqual(del_resp.status_code, 200)
+        self.assertFalse(Notification.objects.filter(pk=n2.pk).exists())
+
 

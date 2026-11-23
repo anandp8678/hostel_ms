@@ -659,3 +659,40 @@ def calculate_student_monthly_fee(student, year, month, config=None):
         "mess_cut_amount": mess_cut_amount,
         "total_amount": total_amount,
     }
+
+
+def notify_user(recipient, title, message, category="general", link="", actor=None):
+    from .models import Notification
+    if not recipient:
+        return None
+    return Notification.objects.create(
+        recipient=recipient,
+        actor=actor,
+        category=category,
+        title=title,
+        message=message,
+        link=link,
+    )
+
+
+def notify_users(recipients, title, message, category="general", link="", actor=None):
+    from .models import Notification
+    objs = []
+    seen = set()
+    for r in recipients:
+        if r and r.pk not in seen:
+            seen.add(r.pk)
+            objs.append(
+                Notification(
+                    recipient=r,
+                    actor=actor,
+                    category=category,
+                    title=title,
+                    message=message,
+                    link=link,
+                )
+            )
+    if objs:
+        return Notification.objects.bulk_create(objs)
+    return []
+
