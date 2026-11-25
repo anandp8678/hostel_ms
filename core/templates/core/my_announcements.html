@@ -112,6 +112,8 @@
               {% endif %}
               {% if a.room %}
                 <span class="badge text-bg-primary rounded-pill fw-semibold">Room {{ a.room }} Notice</span>
+              {% elif a.building %}
+                <span class="badge text-bg-info text-dark rounded-pill fw-semibold">{{ a.building.code }} &mdash; {{ a.building.name }} Notice</span>
               {% else %}
                 <span class="badge text-bg-secondary rounded-pill fw-semibold">Hostel Broadcast</span>
               {% endif %}

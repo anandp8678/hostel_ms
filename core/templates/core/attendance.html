@@ -36,6 +36,8 @@
     <form method="get" class="d-flex align-items-center gap-2">
       <input type="date" name="date" value="{{ day|date:'Y-m-d' }}" class="form-control form-control-sm" style="width:160px;" required>
       {% if filter_q %}<input type="hidden" name="q" value="{{ filter_q }}">{% endif %}
+      {% if filter_building %}<input type="hidden" name="building" value="{{ filter_building }}">{% endif %}
+      {% if filter_year %}<input type="hidden" name="year" value="{{ filter_year }}">{% endif %}
       {% if filter_room %}<input type="hidden" name="room" value="{{ filter_room }}">{% endif %}
       {% if filter_status %}<input type="hidden" name="status" value="{{ filter_status }}">{% endif %}
       <button class="btn btn-sm btn-navy">Go to Date</button>
@@ -79,12 +81,32 @@
 <div class="card p-3 mb-3 bg-white">
   <form method="get" class="row g-2 align-items-end">
     <input type="hidden" name="date" value="{{ day|date:'Y-m-d' }}">
-    <div class="col-md-4">
+    <div class="col-md-3">
       <label class="form-label small fw-semibold text-secondary mb-1">Search Name or Roll No.</label>
       <input type="text" name="q" class="form-control form-control-sm" placeholder="e.g. Rahul, CS101..." value="{{ filter_q }}">
     </div>
 
-    <div class="col-md-3">
+    <div class="col-md-2">
+      <label class="form-label small fw-semibold text-secondary mb-1">Building</label>
+      <select name="building" class="form-select form-select-sm" {% if is_building_locked %}disabled{% endif %}>
+        {% if not is_building_locked %}<option value="">All Buildings</option>{% endif %}
+        {% for bld in buildings %}
+          <option value="{{ bld.code }}" {% if filter_building == bld.code %}selected{% endif %}>{{ bld.code }} &mdash; {{ bld.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label small fw-semibold text-secondary mb-1">Academic Year</label>
+      <select name="year" class="form-select form-select-sm">
+        <option value="">All Years</option>
+        {% for yv, yl in year_choices %}
+          <option value="{{ yv }}" {% if filter_year == yv|stringformat:'s' %}selected{% endif %}>{{ yl }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
       <label class="form-label small fw-semibold text-secondary mb-1">Room</label>
       <select name="room" class="form-select form-select-sm">
         <option value="">All Rooms</option>
@@ -96,7 +118,7 @@
       </select>
     </div>
 
-    <div class="col-md-3">
+    <div class="col-md-2">
       <label class="form-label small fw-semibold text-secondary mb-1">Status Filter</label>
       <select name="status" class="form-select form-select-sm">
         <option value="">All Students</option>
@@ -108,9 +130,9 @@
       </select>
     </div>
 
-    <div class="col-md-2 d-flex gap-2">
-      <button type="submit" class="btn btn-sm btn-navy flex-grow-1">Filter</button>
-      <a href="?date={{ day|date:'Y-m-d' }}" class="btn btn-sm btn-outline-secondary" title="Reset Filters">Reset</a>
+    <div class="col-md-1 d-flex gap-1">
+      <button type="submit" class="btn btn-sm btn-navy flex-grow-1">Go</button>
+      <a href="?date={{ day|date:'Y-m-d' }}" class="btn btn-sm btn-outline-secondary" title="Reset Filters">&times;</a>
     </div>
   </form>
 </div>
@@ -125,7 +147,7 @@
     <div class="card-header bg-light d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
       <span class="small text-secondary">
         Showing <b>{{ rows|length }}</b> of {{ total_staying }} student{{ total_staying|pluralize }}
-        {% if filter_q or filter_room or filter_status %} (Filtered){% endif %}
+        {% if filter_q or filter_building or filter_year or filter_room or filter_status %} (Filtered){% endif %}
       </span>
       <!-- Quick Batch Selection Controls -->
       <div class="d-flex gap-2">
@@ -190,7 +212,7 @@
             <tr>
               <td colspan="6" class="text-center text-secondary py-4">
                 No students match your filter criteria for this date.
-                {% if filter_q or filter_room or filter_status %}
+                {% if filter_q or filter_building or filter_year or filter_room or filter_status %}
                   <div class="mt-2"><a href="?date={{ day|date:'Y-m-d' }}" class="btn btn-sm btn-outline-secondary">Clear Filters</a></div>
                 {% endif %}
               </td>

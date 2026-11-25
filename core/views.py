@@ -335,20 +335,56 @@ def warden_new(request):
 
 @staff
 def announcement_new(request):
-    form = f.AnnouncementForm(request.POST or None)
+    _, active_building, is_building_locked = _get_building_scope(request)
+    initial = {"building": active_building} if (is_building_locked and active_building) else {}
+    form = f.AnnouncementForm(request.POST or None, initial=initial)
+    if is_building_locked and active_building:
+        if "building" in form.fields:
+            form.fields["building"].queryset = m.Building.objects.filter(pk=active_building.pk)
+            form.fields["building"].empty_label = None
+        if "room" in form.fields:
+            form.fields["room"].queryset = m.Room.objects.filter(building=active_building)
+
     if request.method == "POST" and form.is_valid():
         anc = form.save(commit=False)
         anc.created_by = request.user
+        if is_building_locked and active_building:
+            anc.building = active_building
+        if anc.room and not anc.building:
+            anc.building = anc.room.building
+        _assert_building_access(request, building=anc.building, room=anc.room)
         anc.save()
+
         aud = anc.audience
         recipients = []
+        target_students = list(
+            m.Student.objects.filter(is_active=True)
+            .select_related("user", "parent__user")
+            .prefetch_related(
+                Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+            )
+        )
+        if anc.room:
+            target_students = [s for s in target_students if s.room and s.room.pk == anc.room_id]
+        elif anc.building:
+            target_students = [s for s in target_students if _student_matches_building(s, anc.building)]
+
         if aud in ("all", "student"):
-            recipients.extend([s.user for s in m.Student.objects.filter(is_active=True).select_related("user")])
+            recipients.extend([s.user for s in target_students])
         if aud in ("all", "parent"):
-            recipients.extend([p.user for p in m.Parent.objects.all().select_related("user")])
+            if anc.room or anc.building:
+                seen_p = set()
+                for s in target_students:
+                    if s.parent and s.parent.user and s.parent.user_id not in seen_p:
+                        seen_p.add(s.parent.user_id)
+                        recipients.append(s.parent.user)
+            else:
+                recipients.extend([p.user for p in m.Parent.objects.all().select_related("user")])
+
+        prefix = f"[{anc.building.code}] " if anc.building else ""
         notify_users(
             recipients=recipients,
-            title=f"Hostel Announcement: {anc.title}",
+            title=f"{prefix}Hostel Announcement: {anc.title}",
             message=anc.body[:200],
             category="announcement",
             link=reverse("home"),
@@ -877,6 +913,25 @@ def _vacant_rooms(building=None, student_year=None):
     return rooms
 
 
+def _student_notices_qs(s, aud):
+    """Return announcements visible to student `s` for audiences `aud`, scoped by room/building."""
+    room = s.room
+    if room:
+        q_filter = (
+            Q(room=room, audience__in=aud)
+            | Q(room__isnull=True, building__isnull=True, audience__in=aud)
+            | Q(student=s)
+        )
+        if room.building_id:
+            q_filter |= Q(room__isnull=True, building_id=room.building_id, audience__in=aud)
+    else:
+        compat_b_ids = [b.pk for b in m.Building.objects.all() if b.allows_year(s.year_of_study)]
+        q_filter = Q(room__isnull=True, building__isnull=True, audience__in=aud) | Q(student=s)
+        if compat_b_ids:
+            q_filter |= Q(room__isnull=True, building_id__in=compat_b_ids, audience__in=aud)
+    return m.Announcement.objects.filter(q_filter)
+
+
 def overview(s, user):
     today = date.today()
     aud = ["all"]
@@ -930,15 +985,8 @@ def overview(s, user):
     wardens = list(m.User.objects.filter(role="warden", is_active=True))
 
     # Room-targeted and general announcements
-    if room:
-        notices_qs = m.Announcement.objects.filter(
-            Q(room=room, audience__in=aud) | Q(room__isnull=True, audience__in=aud) | Q(student=s)
-        )
-    else:
-        notices_qs = m.Announcement.objects.filter(
-            Q(room__isnull=True, audience__in=aud) | Q(student=s)
-        )
-    notices = list(notices_qs.select_related("room", "created_by").order_by("-created_at")[:10])
+    notices_qs = _student_notices_qs(s, aud)
+    notices = list(notices_qs.select_related("room", "building", "created_by").order_by("-created_at")[:10])
 
     return dict(
         s=s,
@@ -1918,6 +1966,7 @@ def room_announcement_delete(request, pk):
 @staff
 def complaint_edit(request, pk):
     obj = get_object_or_404(m.Complaint.objects.select_related("student__user"), pk=pk)
+    _assert_building_access(request, student=obj.student)
     old_status = obj.status
     old_note = obj.staff_note or ""
     form = f.ComplaintStaffForm(request.POST or None, instance=obj)
@@ -2217,12 +2266,22 @@ def room_toggle_blacklist(request, pk):
 
 @staff
 def attendance(request):
+    buildings, active_building, is_building_locked = _get_building_scope(request)
     try:
         day = date.fromisoformat(request.GET.get("date") or request.POST.get("date") or "")
     except ValueError:
         day = date.today()
 
-    students = list(m.Student.objects.filter(is_active=True).select_related("user"))
+    students = list(
+        m.Student.objects.filter(is_active=True)
+        .select_related("user")
+        .prefetch_related(
+            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+        )
+    )
+    if active_building:
+        students = [s for s in students if _student_matches_building(s, active_building)]
+
     existing = {a.student_id: a.status for a in m.Attendance.objects.filter(date=day)}
     on_leave = set(m.LeaveRequest.objects.filter(status="Approved", from_date__lte=day, to_date__gte=day).values_list("student_id", flat=True))
 
@@ -2240,12 +2299,11 @@ def attendance(request):
             return redirect(next_url)
         return redirect(f"{reverse('attendance')}?date={day.isoformat()}")
 
-    # Room mappings for active students
-    active_allocs = m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room")
-    student_rooms = {a.student_id: a.room for a in active_allocs}
-    all_rooms = list(m.Room.objects.all().order_by("block", "number"))
+    student_rooms = {s.pk: s.room for s in students}
+    room_scope_qs = m.Room.objects.filter(building=active_building) if active_building else m.Room.objects.all()
+    all_rooms = list(room_scope_qs.select_related("building").order_by("block", "number"))
 
-    # Day stats across ALL staying students (unfiltered)
+    # Day stats across ALL scoped staying students
     total_staying = len(students)
     day_suspended = sum(1 for s in students if s.is_currently_suspended)
     day_present = sum(1 for s in students if (existing.get(s.pk) or ("L" if s.pk in on_leave else ("A" if s.is_currently_suspended else "P"))) == "P")
@@ -2257,12 +2315,16 @@ def attendance(request):
     filter_q = request.GET.get("q", "").strip()
     filter_room = request.GET.get("room", "").strip()
     filter_status = request.GET.get("status", "").strip()
+    filter_year = request.GET.get("year", "").strip()
 
     rows = []
     for s in students:
         st = existing.get(s.pk) or ("L" if s.pk in on_leave else ("A" if s.is_currently_suspended else "P"))
         s_room = student_rooms.get(s.pk)
         is_lv = s.pk in on_leave
+
+        if filter_year in ("1", "2", "3", "4") and s.year_of_study != int(filter_year):
+            continue
 
         if filter_q:
             q_low = filter_q.lower()
@@ -2317,12 +2379,20 @@ def attendance(request):
         filter_q=filter_q,
         filter_room=filter_room,
         filter_status=filter_status,
+        filter_building=active_building.code if active_building else "",
+        filter_year=filter_year,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
+        year_choices=m.Student.YEAR_CHOICES,
         filtered_count=len(rows),
     )
 
 
 @staff
 def attendance_history(request):
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+    filter_year = request.GET.get("year", "").strip()
     # 1. Determine Selected Month
     month_str = request.GET.get("month", "").strip()
     if not month_str or not re.match(r"^\d{4}-\d{2}$", month_str):
@@ -2368,15 +2438,28 @@ def attendance_history(request):
         available_months.append({"key": ym, "label": date(y_int, m_int, 1).strftime("%B %Y")})
 
     # 3. Room mapping for students
-    active_allocs = m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room")
+    active_allocs = m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building")
     student_room_map = {a.student_id: a.room for a in active_allocs}
-    all_rooms = list(m.Room.objects.all().order_by("block", "number"))
+    room_scope_qs = m.Room.objects.filter(building=active_building) if active_building else m.Room.objects.all()
+    all_rooms = list(room_scope_qs.select_related("building").order_by("block", "number"))
 
-    # 4. Base QuerySet for this month
+    # 4. Base QuerySet for this month (scoped by building / academic year)
     month_qs = m.Attendance.objects.filter(
         date__year=year,
         date__month=month_num
     ).select_related("student__user")
+    if active_building or filter_year in ("1", "2", "3", "4"):
+        scoped_candidates = list(
+            m.Student.objects.prefetch_related(
+                Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+            )
+        )
+        scoped_ids = [
+            s.pk for s in scoped_candidates
+            if _student_matches_building(s, active_building)
+            and (filter_year not in ("1", "2", "3", "4") or s.year_of_study == int(filter_year))
+        ]
+        month_qs = month_qs.filter(student_id__in=scoped_ids)
 
     total_records = month_qs.count()
     month_present = month_qs.filter(status="P").count()
@@ -2530,6 +2613,12 @@ def attendance_history(request):
         view_mode=view_mode,
         logs=logs,
         summary_rows=summary_rows,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
+        filter_building=active_building.code if active_building else "",
+        filter_year=filter_year,
+        year_choices=m.Student.YEAR_CHOICES,
         total_filtered_logs=filtered_qs.count(),
         total_filtered_summary=len(summary_rows),
     )
@@ -2537,14 +2626,32 @@ def attendance_history(request):
 
 @staff
 def leaves(request):
-    rows = m.LeaveRequest.objects.select_related("student__user").order_by("status", "-created_at")
-    return show(request, "leaves", rows=rows, badge=badge)
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+    rows = list(
+        m.LeaveRequest.objects.select_related("student__user")
+        .prefetch_related(
+            Prefetch("student__allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+        )
+        .order_by("status", "-created_at")
+    )
+    if active_building:
+        rows = [lv for lv in rows if _student_matches_building(lv.student, active_building)]
+    return show(
+        request,
+        "leaves",
+        rows=rows,
+        badge=badge,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
+    )
 
 
 @staff
 @require_POST
 def leave_decide(request, pk, decision):
-    lv = get_object_or_404(m.LeaveRequest, pk=pk)
+    lv = get_object_or_404(m.LeaveRequest.objects.select_related("student__user", "student__parent__user"), pk=pk)
+    _assert_building_access(request, student=lv.student)
     lv.status = "Approved" if decision == "approve" else "Rejected"
     lv.save()
     targets = [lv.student.user]
@@ -2619,32 +2726,33 @@ def my_announcements(request):
         s = getattr(u, "student", None)
         room = s.room if s else None
         aud = ["all", "student"]
-        if room:
-            base_qs = m.Announcement.objects.filter(
-                Q(room=room, audience__in=aud) | Q(room__isnull=True, audience__in=aud)
-            )
-        else:
-            base_qs = m.Announcement.objects.filter(room__isnull=True, audience__in=aud)
+        base_qs = _student_notices_qs(s, aud) if s else m.Announcement.objects.filter(room__isnull=True, building__isnull=True, audience__in=aud)
         room_label = f"Room {room}" if room else "Unassigned"
     elif u.role == "parent":
         p = getattr(u, "parent", None)
         child_rooms = [c.room for c in p.children.all() if c.room] if p else []
+        child_bld_ids = {r.building_id for r in child_rooms if r.building_id}
         child_pks = list(p.children.values_list("pk", flat=True)) if p else []
         aud = ["all", "parent"]
+        q_filter = Q(room__isnull=True, building__isnull=True, audience__in=aud) | Q(student__in=child_pks)
         if child_rooms:
-            base_qs = m.Announcement.objects.filter(
-                Q(room__in=child_rooms, audience__in=aud) | Q(room__isnull=True, audience__in=aud) | Q(student__in=child_pks)
-            )
-        else:
-            base_qs = m.Announcement.objects.filter(
-                Q(room__isnull=True, audience__in=aud) | Q(student__in=child_pks)
-            )
+            q_filter |= Q(room__in=child_rooms, audience__in=aud)
+        if child_bld_ids:
+            q_filter |= Q(room__isnull=True, building_id__in=child_bld_ids, audience__in=aud)
+        base_qs = m.Announcement.objects.filter(q_filter)
         room_label = ", ".join(str(r) for r in child_rooms) if child_rooms else "Children's Rooms"
     else:
-        base_qs = m.Announcement.objects.all()
-        room_label = "All Rooms"
+        _, active_building, is_building_locked = _get_building_scope(request)
+        if is_building_locked and active_building:
+            base_qs = m.Announcement.objects.filter(
+                Q(building=active_building) | Q(room__building=active_building) | Q(building__isnull=True, room__isnull=True)
+            )
+            room_label = f"{active_building.code} · {active_building.name}"
+        else:
+            base_qs = m.Announcement.objects.all()
+            room_label = "All Rooms"
 
-    all_notices = list(base_qs.select_related("room", "created_by").order_by("-created_at"))
+    all_notices = list(base_qs.select_related("room", "building", "created_by").order_by("-created_at"))
     room_notices = [a for a in all_notices if a.room]
     general_notices = [a for a in all_notices if not a.room]
 

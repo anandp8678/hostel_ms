@@ -768,6 +768,8 @@
               <div class="fw-semibold text-dark small">{{ n.title }}</div>
               {% if n.room %}
                 <span class="badge text-bg-primary rounded-pill flex-shrink-0" style="font-size:0.7rem;">Room {{ n.room }} Notice</span>
+              {% elif n.building %}
+                <span class="badge text-bg-info text-dark rounded-pill flex-shrink-0" style="font-size:0.7rem;">{{ n.building.code }} Notice</span>
               {% else %}
                 <span class="badge text-bg-secondary rounded-pill flex-shrink-0" style="font-size:0.7rem;">Hostel Notice</span>
               {% endif %}

@@ -1,7 +1,21 @@
 {% extends "core/base.html" %}{% block content %}
-<h4 style="color:var(--navy)" class="mb-3">Leave requests</h4>
-<div class="card"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Student</th><th>From</th><th>To</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>
-{% for l in rows %}<tr><td>{{ l.student }}</td><td>{{ l.from_date }}</td><td>{{ l.to_date }}</td><td>{{ l.reason }}</td><td>{{ l.status }}</td>
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h4 style="color:var(--navy)" class="mb-0">Leave requests</h4>
+  {% if buildings %}
+    <div class="d-flex flex-wrap align-items-center gap-1">
+      {% if not is_building_locked %}
+        <a href="{% url 'leaves' %}" class="badge {% if not active_building %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">All Buildings</a>
+      {% endif %}
+      {% for bld in buildings %}
+        {% if not is_building_locked or active_building.pk == bld.pk %}
+          <a href="{% url 'leaves' %}?building={{ bld.code }}" class="badge {% if active_building and active_building.pk == bld.pk %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">{{ bld.code }} &mdash; {{ bld.name }}</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+<div class="card"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Student</th><th>Room / Year</th><th>From</th><th>To</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>
+{% for l in rows %}<tr><td>{{ l.student }}</td><td>{% if l.student.room %}<span class="badge text-bg-light border text-dark">{{ l.student.room }}</span>{% else %}<span class="badge text-bg-warning text-dark">Unallocated</span>{% endif %} <span class="badge text-bg-secondary">{{ l.student.year_short }}</span></td><td>{{ l.from_date }}</td><td>{{ l.to_date }}</td><td>{{ l.reason }}</td><td>{{ l.status }}</td>
 <td class="text-end">{% if l.status == "Pending" %}<form method="post" action="{% url 'leave_decide' l.pk 'approve' %}" class="d-inline">{% csrf_token %}<button class="btn btn-sm btn-success">Approve</button></form>
 <form method="post" action="{% url 'leave_decide' l.pk 'reject' %}" class="d-inline" onsubmit="return confirm('Reject this leave request?')">{% csrf_token %}<button class="btn btn-sm btn-outline-danger">Reject</button></form>{% endif %}</td></tr>
-{% empty %}<tr><td colspan="6" class="text-center text-secondary py-4">No leave requests.</td></tr>{% endfor %}</tbody></table></div></div>{% endblock %}
+{% empty %}<tr><td colspan="7" class="text-center text-secondary py-4">No leave requests.</td></tr>{% endfor %}</tbody></table></div></div>{% endblock %}
