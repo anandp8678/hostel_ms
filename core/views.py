@@ -859,15 +859,21 @@ def home(request):
     return show(request, "children", children=child_cards, today=today)
 
 
-def _vacant_rooms():
-    """Return active, non-blacklisted rooms with open beds, ordered by floor and number."""
-    rooms = []
-    for r in m.Room.objects.filter(is_blacklisted=False).prefetch_related(
+def _vacant_rooms(building=None, student_year=None):
+    """Return active, non-blacklisted rooms with open beds compatible with building/year, ordered cleanly."""
+    qs = m.Room.objects.select_related("building").filter(is_blacklisted=False).prefetch_related(
         Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
-    ):
-        if r.vacancy > 0:
-            rooms.append(r)
-    rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
+    )
+    if building:
+        qs = qs.filter(building=building)
+    rooms = []
+    for r in qs:
+        if r.vacancy <= 0:
+            continue
+        if student_year is not None and r.building and not r.building.allows_year(student_year):
+            continue
+        rooms.append(r)
+    rooms.sort(key=lambda r: ((r.building.code if r.building else ""), floor_order_key(r.block), r.number))
     return rooms
 
 
@@ -903,7 +909,10 @@ def overview(s, user):
         ).exclude(student=s).select_related("student__user", "student__parent__user")
         roommates = [a.student for a in allocs]
     elif user.role in STAFF:
-        available_rooms = _vacant_rooms()
+        available_rooms = _vacant_rooms(
+            building=getattr(user, "scoped_building", None),
+            student_year=s.year_of_study,
+        )
 
     # Fee metrics
     fees = list(s.fees.prefetch_related("payments"))
@@ -978,6 +987,7 @@ def child(request, pk):
 # ---------- staff workflows ----------
 def _handle_student_bulk_action(request):
     """Execute bulk actions submitted from the student directory selection toolbar."""
+    _, active_building, is_building_locked = _get_building_scope(request)
     action = request.POST.get("bulk_action", "").strip()
     selected_ids = request.POST.getlist("selected_students")
     if not selected_ids:
@@ -988,12 +998,19 @@ def _handle_student_bulk_action(request):
         m.Student.objects.filter(pk__in=selected_ids)
         .select_related("user", "parent__user")
         .prefetch_related(
-            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room"))
+            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
         )
     )
     if not students:
         messages.warning(request, "No matching students found.")
         return redirect(request.get_full_path())
+
+    if is_building_locked and active_building:
+        for s in students:
+            if not _student_matches_building(s, active_building):
+                raise PermissionDenied(
+                    f"Your warden role is scoped to {active_building.code} ({active_building.name})."
+                )
 
     if action == "notify":
         title = request.POST.get("notify_title", "").strip() or "Administrative Notice"
@@ -1019,7 +1036,8 @@ def _handle_student_bulk_action(request):
         if not room_id:
             messages.error(request, "Please select a target room to allocate.")
             return redirect(request.get_full_path())
-        room = get_object_or_404(m.Room, pk=room_id)
+        room = get_object_or_404(m.Room.objects.select_related("building"), pk=room_id)
+        _assert_building_access(request, room=room)
         if room.is_blacklisted:
             messages.error(request, f"Room {room} is blacklisted and cannot accept allocations.")
             return redirect(request.get_full_path())
@@ -1030,6 +1048,16 @@ def _handle_student_bulk_action(request):
             messages.warning(request, "All selected students already have active room allocations.")
             return redirect(request.get_full_path())
 
+        if room.building:
+            incompatible = [s for s in to_allocate if not room.building.allows_year(s.year_of_study)]
+            if incompatible:
+                names = ", ".join(f"{s.user.display_name} ({s.year_short})" for s in incompatible[:4])
+                messages.error(
+                    request,
+                    f"Anti-ragging rule: {room.building.code} ({room.building.years_summary}) does not allow {names}.",
+                )
+                return redirect(request.get_full_path())
+
         if len(to_allocate) > room.vacancy:
             messages.error(
                 request,
@@ -1039,7 +1067,9 @@ def _handle_student_bulk_action(request):
 
         today = date.today()
         for s in to_allocate:
-            m.RoomAllocation.objects.create(student=s, room=room, start_date=today)
+            alloc = m.RoomAllocation(student=s, room=room, start_date=today)
+            alloc.full_clean()
+            alloc.save()
             notify_user(
                 recipient=s.user,
                 actor=request.user,
@@ -1061,6 +1091,31 @@ def _handle_student_bulk_action(request):
         if already_allocated:
             msg += f" ({already_allocated} already had active rooms and were skipped.)"
         messages.success(request, msg)
+
+    elif action == "set_year":
+        try:
+            new_year = int(request.POST.get("bulk_year", "").strip())
+            if new_year not in (1, 2, 3, 4):
+                raise ValueError
+        except ValueError:
+            messages.error(request, "Please select a valid academic year (1st to 4th Year).")
+            return redirect(request.get_full_path())
+        ok_ids = []
+        blocked = []
+        for s in students:
+            if s.room and s.room.building and not s.room.building.allows_year(new_year):
+                blocked.append(f"{s.user.display_name} ({s.room})")
+            else:
+                ok_ids.append(s.pk)
+        if ok_ids:
+            m.Student.objects.filter(pk__in=ok_ids).update(year_of_study=new_year)
+            year_text = dict(m.Student.YEAR_CHOICES).get(new_year, f"Year {new_year}")
+            messages.success(request, f"Updated {len(ok_ids)} student(s) to {year_text}.")
+        if blocked:
+            messages.warning(
+                request,
+                f"Skipped {len(blocked)} student(s) whose current building conflicts with that year ({', '.join(blocked[:4])}). Vacate them first.",
+            )
 
     elif action == "vacate":
         vacated = m.RoomAllocation.objects.filter(
@@ -1123,16 +1178,19 @@ def student_list(request):
     if request.method == "POST":
         return _handle_student_bulk_action(request)
 
+    buildings, active_building, is_building_locked = _get_building_scope(request)
     q = request.GET.get("q", "").strip()
     floor_filter = request.GET.get("floor", "all").strip()
     allocation_filter = request.GET.get("allocation", "all").strip().lower()
     status_filter = request.GET.get("status", "all").strip().lower()
     course_filter = request.GET.get("course", "all").strip()
+    year_filter = request.GET.get("year", "all").strip()
     view_mode = request.GET.get("view", "grid").strip().lower()
     grouped = request.GET.get("grouped", "1").strip() != "0"
 
-    # Distinct blocks from rooms for floor sorting
-    distinct_blocks = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
+    # Distinct blocks from scoped rooms for floor sorting
+    room_scope_qs = m.Room.objects.filter(building=active_building) if active_building else m.Room.objects.all()
+    distinct_blocks = sorted(list(set(room_scope_qs.values_list("block", flat=True))), key=floor_order_key)
     all_floors = []
     seen_floor_displays = set()
     for b in distinct_blocks:
@@ -1143,10 +1201,12 @@ def student_list(request):
             all_floors.append({"code": b, "display": disp, "name": rm_dummy.floor_name})
 
     students_qs = m.Student.objects.select_related("user", "parent__user").prefetch_related(
-        Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room"))
+        Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
     )
 
     all_students = list(students_qs)
+    if active_building:
+        all_students = [s for s in all_students if _student_matches_building(s, active_building)]
     total_count = len(all_students)
     staying_count = sum(1 for s in all_students if s.is_active and not s.is_currently_suspended)
     suspended_count = sum(1 for s in all_students if s.is_currently_suspended)
@@ -1154,7 +1214,7 @@ def student_list(request):
     allocated_count = sum(1 for s in all_students if s.room)
     unallocated_count = sum(1 for s in all_students if not s.room)
 
-    # Compute floor student counts across all students
+    # Compute floor student counts across all scoped students
     for fl in all_floors:
         fl["count"] = sum(1 for s in all_students if s.room and str(s.room.block).strip().upper() == fl["code"].upper())
 
@@ -1189,6 +1249,10 @@ def student_list(request):
     if course_filter and course_filter != "all":
         filtered = [s for s in filtered if (s.course or "").strip().lower() == course_filter.lower()]
 
+    # 4b. Academic year filter
+    if year_filter in ("1", "2", "3", "4"):
+        filtered = [s for s in filtered if s.year_of_study == int(year_filter)]
+
     # 5. Search query
     if q:
         ql = q.lower()
@@ -1196,27 +1260,60 @@ def student_list(request):
             s for s in filtered
             if (ql in s.user.display_name.lower() or
                 ql in s.roll_no.lower() or
+                ql in s.year_label.lower() or
+                ql in s.year_short.lower() or
                 ql in (s.course or "").lower() or
                 (s.room and (ql in str(s.room).lower() or ql in s.room.floor_name.lower())))
         ]
 
-    # Build categorized groupings (floors and unallocated)
+    # Build categorized groupings (building+floors and unallocated)
     categories = []
     if allocation_filter != "unallocated":
-        for fl in all_floors:
-            if floor_filter != "all" and floor_filter.upper() != fl["code"].upper():
-                continue
-            fl_students = [s for s in filtered if s.room and str(s.room.block).strip().upper() == fl["code"].upper()]
-            if fl_students or (floor_filter != "all" and floor_filter.upper() == fl["code"].upper()):
-                categories.append({
-                    "type": "floor",
-                    "code": fl["code"],
-                    "title": fl["display"],
-                    "subtitle": f"Residents residing on {fl['name']}",
-                    "badge_class": "text-bg-primary",
-                    "count": len(fl_students),
-                    "students": fl_students,
-                })
+        if active_building:
+            for fl in all_floors:
+                if floor_filter != "all" and floor_filter.upper() != fl["code"].upper():
+                    continue
+                fl_students = [s for s in filtered if s.room and str(s.room.block).strip().upper() == fl["code"].upper()]
+                if fl_students or (floor_filter != "all" and floor_filter.upper() == fl["code"].upper()):
+                    categories.append({
+                        "type": "floor",
+                        "code": fl["code"],
+                        "title": f"{active_building.code} · {fl['display']}",
+                        "subtitle": f"{active_building.name} — {fl['name']}",
+                        "badge_class": "text-bg-primary",
+                        "count": len(fl_students),
+                        "students": fl_students,
+                    })
+        else:
+            seen_bld_fl = {}
+            for r in m.Room.objects.select_related("building").all():
+                key = (r.building_id or 0, r.block.upper())
+                if key not in seen_bld_fl:
+                    seen_bld_fl[key] = (r.building, r.block, r.floor_display, r.floor_name)
+            ordered_groups = sorted(
+                seen_bld_fl.values(),
+                key=lambda item: ((item[0].code if item[0] else ""), floor_order_key(item[1])),
+            )
+            for bld, b_code, fl_disp, fl_name in ordered_groups:
+                if floor_filter != "all" and floor_filter.upper() != b_code.upper():
+                    continue
+                fl_students = [
+                    s for s in filtered
+                    if s.room
+                    and (s.room.building_id or 0) == (bld.pk if bld else 0)
+                    and str(s.room.block).strip().upper() == b_code.upper()
+                ]
+                if fl_students:
+                    prefix = f"{bld.code} · " if bld else ""
+                    categories.append({
+                        "type": "floor",
+                        "code": b_code,
+                        "title": f"{prefix}{fl_disp}",
+                        "subtitle": f"{bld.name + ' — ' if bld else ''}{fl_name}",
+                        "badge_class": "text-bg-primary",
+                        "count": len(fl_students),
+                        "students": fl_students,
+                    })
 
     if allocation_filter != "allocated" and (floor_filter == "all" or floor_filter in ("unallocated", "none")):
         unallocated_students = [s for s in filtered if not s.room]
@@ -1239,6 +1336,7 @@ def student_list(request):
                 "cells": [
                     s.roll_no,
                     s.user.display_name,
+                    s.year_short,
                     s.course or "—",
                     s.room.floor_display if s.room else "—",
                     s.room or "Unallocated",
@@ -1255,7 +1353,9 @@ def student_list(request):
         (floor_filter and floor_filter != "all") or
         (allocation_filter and allocation_filter != "all") or
         (status_filter and status_filter != "all") or
-        (course_filter and course_filter != "all")
+        (course_filter and course_filter != "all") or
+        (year_filter and year_filter != "all") or
+        (active_building and not is_building_locked)
     )
 
     context = {
@@ -1271,7 +1371,16 @@ def student_list(request):
         "unallocated_count": unallocated_count,
         "all_floors": all_floors,
         "all_courses": all_courses,
-        "available_rooms": _vacant_rooms(),
+        "buildings": buildings,
+        "active_building": active_building,
+        "is_building_locked": is_building_locked,
+        "building_filter": active_building.code if active_building else "all",
+        "year_filter": year_filter,
+        "year_choices": m.Student.YEAR_CHOICES,
+        "available_rooms": _vacant_rooms(
+            building=active_building,
+            student_year=(int(year_filter) if year_filter in ("1", "2", "3", "4") else None),
+        ),
         "q": q,
         "floor_filter": floor_filter,
         "allocation_filter": allocation_filter,
@@ -1281,7 +1390,7 @@ def student_list(request):
         "grouped": grouped,
         "has_active_filters": has_active_filters,
         "table_rows": table_rows,
-        "table_headers": ["Roll no.", "Name", "Course", "Floor", "Room", "Parent", "Status"],
+        "table_headers": ["Roll no.", "Name", "Year", "Course", "Floor", "Room", "Parent", "Status"],
         "add": reverse("students_new"),
         "add_label": "Add student",
     }
@@ -1290,8 +1399,23 @@ def student_list(request):
 
 @staff
 def student_new(request):
+    _, active_building, is_building_locked = _get_building_scope(request)
     form = f.StudentAddForm(request.POST or None)
+    if is_building_locked and active_building:
+        form.fields["year_of_study"].choices = [
+            c for c in m.Student.YEAR_CHOICES if active_building.allows_year(c[0])
+        ]
+        form.fields["room"].queryset = m.Room.objects.filter(
+            building=active_building, is_blacklisted=False
+        )
     if request.method == "POST" and form.is_valid():
+        yr_val = form.cleaned_data.get("year_of_study")
+        rm_val = form.cleaned_data.get("room")
+        if is_building_locked and active_building:
+            if (rm_val and rm_val.building_id != active_building.pk) or not active_building.allows_year(yr_val):
+                raise PermissionDenied(
+                    f"Your warden role is scoped to {active_building.code} ({active_building.name}, {active_building.years_summary})."
+                )
         try:
             s = form.save()
         except ValidationError as e:
@@ -1305,12 +1429,23 @@ def student_new(request):
 
 @staff
 def student_import(request):
+    _, active_building, is_building_locked = _get_building_scope(request)
     form = f.ImportForm(request.POST or None, request.FILES or None)
     result = None
     if request.method == "POST" and form.is_valid():
         try:
             text = decode_csv_file(request.FILES["file"])
-            result = import_rows(csv.DictReader(text))
+            rows_list = list(csv.DictReader(text))
+            if is_building_locked and active_building:
+                for row in rows_list:
+                    yr = parse_year(row.get("year_of_study") or row.get("year"), default=1)
+                    b_raw = (row.get("building") or "").strip()
+                    row_bld = find_building(b_raw) if b_raw else active_building
+                    if not row_bld or row_bld.pk != active_building.pk or not active_building.allows_year(yr):
+                        raise PermissionDenied(
+                            f"Your warden role is scoped to {active_building.code} ({active_building.name}, {active_building.years_summary})."
+                        )
+            result = import_rows(rows_list)
         except Exception as e:
             form.add_error("file", f"Could not read file: {e}")
     return show(request, "import", form=form, result=result)
@@ -1318,11 +1453,13 @@ def student_import(request):
 
 @staff
 def import_template(request):
-    r = HttpResponse("name,roll_no,course,phone,parent_name,parent_phone,room,start_date\n"
-                     "Asha Nair,CS2101,B.Tech CSE,9876500001,Mohan Nair,9876500002,A-101,2026-11-21\n"
-                     "Rahul Menon,CS2102,B.Tech CSE,9876500003,Suresh Menon,9876500004,A-101,2026-11-21\n"
-                     "Fatima Beevi,CS2103,B.Tech ECE,9876500005,Ali Beevi,9876500006,B-102,2026-11-21\n",
-                     content_type="text/csv")
+    r = HttpResponse(
+        "name,roll_no,course,year_of_study,building,phone,parent_name,parent_phone,room,start_date\n"
+        "Asha Nair,CS2601,B.Tech CSE,1,B1,9876500001,Mohan Nair,9876500002,G-101,2026-11-21\n"
+        "Rahul Menon,CS2502,B.Tech CSE,2,B2,9876500003,Suresh Menon,9876500004,1-201,2026-11-21\n"
+        "Fatima Beevi,CS2403,B.Tech ECE,3,B2,9876500005,Ali Beevi,9876500006,2-202,2026-11-21\n",
+        content_type="text/csv",
+    )
     r["Content-Disposition"] = 'attachment; filename="students_and_allocations_template.csv"'
     return r
 
@@ -1859,6 +1996,7 @@ def notification_delete(request, pk):
 @staff
 def student_detail(request, pk):
     s = get_object_or_404(m.Student.objects.select_related("user", "parent__user"), pk=pk)
+    _assert_building_access(request, student=s)
     return show(
         request,
         "overview",
@@ -1871,6 +2009,7 @@ def student_detail(request, pk):
 @require_POST
 def student_allocate(request, pk):
     s = get_object_or_404(m.Student.objects.select_related("user", "parent__user"), pk=pk)
+    _assert_building_access(request, student=s)
     room_id = request.POST.get("room_id", "").strip()
     start_date_str = request.POST.get("start_date", "").strip()
 
@@ -1878,7 +2017,14 @@ def student_allocate(request, pk):
         messages.error(request, "Please select a room to allocate.")
         return redirect("student_detail", pk=s.pk)
 
-    room = get_object_or_404(m.Room, pk=room_id)
+    room = get_object_or_404(m.Room.objects.select_related("building"), pk=room_id)
+    _assert_building_access(request, room=room)
+    if room.building and not room.building.allows_year(s.year_of_study):
+        messages.error(
+            request,
+            f"Anti-ragging rule: {s.user.display_name} ({s.year_label}) cannot be allocated to {room.building.code} ({room.building.years_summary}).",
+        )
+        return redirect("student_detail", pk=s.pk)
 
     if room.is_blacklisted:
         messages.error(request, f"Room {room} is blacklisted ({room.blacklist_reason or 'Maintenance'}) and cannot accept allocations.")

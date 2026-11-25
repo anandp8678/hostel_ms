@@ -83,11 +83,11 @@
         Select
       </button>
       <div class="btn-group" role="group" aria-label="View Mode">
-        <a href="?view=grid&grouped={{ grouped|yesno:'1,0' }}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+        <a href="?view=grid&grouped={{ grouped|yesno:'1,0' }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}{% if year_filter != 'all' %}&year={{ year_filter }}{% endif %}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
            class="btn btn-sm {% if view_mode != 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
           Boxes Grid
         </a>
-        <a href="?view=table&grouped={{ grouped|yesno:'1,0' }}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+        <a href="?view=table&grouped={{ grouped|yesno:'1,0' }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}{% if year_filter != 'all' %}&year={{ year_filter }}{% endif %}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
            class="btn btn-sm {% if view_mode == 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
           Table View
         </a>
@@ -107,7 +107,23 @@
      class="badge {% if not has_active_filters %}text-bg-navy{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
     All Students ({{ total_count }})
   </a>
-  <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}&allocation=allocated"
+  {% if buildings %}
+    {% for bld in buildings %}
+      {% if not is_building_locked or building_filter == bld.code %}
+        <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}&building={{ bld.code }}"
+           class="badge {% if building_filter == bld.code %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          {{ bld.code }} &mdash; {{ bld.name }} ({{ bld.years_summary }})
+        </a>
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+  {% for yv, yl in year_choices %}
+    <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}&year={{ yv }}"
+       class="badge {% if year_filter == yv|stringformat:'s' %}text-bg-info text-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+      {{ yl }}
+    </a>
+  {% endfor %}
+  <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}&allocation=allocated"
      class="badge {% if allocation_filter == 'allocated' and floor_filter == 'all' and status_filter == 'all' %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
     Allocated ({{ allocated_count }})
   </a>
@@ -143,6 +159,24 @@
           <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}" class="btn btn-outline-secondary" title="Reset all filters">&times;</a>
         {% endif %}
       </div>
+    </div>
+
+    <!-- Building & Year Filter Dropdowns -->
+    <div class="col-6 col-md-2">
+      <select name="building" class="form-select form-select-sm" onchange="this.form.submit()" {% if is_building_locked %}disabled{% endif %}>
+        {% if not is_building_locked %}<option value="all">All Buildings</option>{% endif %}
+        {% for bld in buildings %}
+          <option value="{{ bld.code }}" {% if building_filter == bld.code %}selected{% endif %}>{{ bld.code }} &mdash; {{ bld.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <select name="year" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="all" {% if year_filter == 'all' %}selected{% endif %}>All Years</option>
+        {% for yv, yl in year_choices %}
+          <option value="{{ yv }}" {% if year_filter == yv|stringformat:'s' %}selected{% endif %}>{{ yl }}</option>
+        {% endfor %}
+      </select>
     </div>
 
     <!-- Floor Filter Dropdown -->
@@ -194,11 +228,11 @@
       <div class="d-flex align-items-center gap-2">
         <span class="text-secondary small">Layout:</span>
         <div class="btn-group btn-group-sm" role="group">
-          <a href="?grouped=1&view={{ view_mode }}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+          <a href="?grouped=1&view={{ view_mode }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}{% if year_filter != 'all' %}&year={{ year_filter }}{% endif %}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
              class="btn btn-sm {% if grouped %}btn-secondary text-white{% else %}btn-outline-secondary{% endif %}">
             Categorized by Floor
           </a>
-          <a href="?grouped=0&view={{ view_mode }}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+          <a href="?grouped=0&view={{ view_mode }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}{% if year_filter != 'all' %}&year={{ year_filter }}{% endif %}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
              class="btn btn-sm {% if not grouped %}btn-secondary text-white{% else %}btn-outline-secondary{% endif %}">
             Flat Grid
           </a>
@@ -237,6 +271,7 @@
           <option value="">Choose action...</option>
           <option value="notify">Send Notification to selected</option>
           <option value="allocate_room">Allocate selected to room</option>
+          <option value="set_year">Change Academic Year</option>
           <option value="vacate">Vacate active rooms</option>
           <option value="mark_staying">Mark as Staying</option>
           <option value="mark_left">Mark as Left (Inactive)</option>
@@ -263,6 +298,16 @@
             <option value="">Select vacant room...</option>
             {% for r in available_rooms %}
               <option value="{{ r.pk }}">Room {{ r }} ({{ r.floor_display }}) - {{ r.vacancy }} free</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Bulk Academic Year select -->
+        <div id="setYearActionGroup" style="display:none;" class="align-items-center gap-1">
+          <select name="bulk_year" id="bulkYearSelect" class="form-select form-select-sm" style="width:auto;">
+            <option value="">Select year...</option>
+            {% for yv, yl in year_choices %}
+              <option value="{{ yv }}">{{ yl }}</option>
             {% endfor %}
           </select>
         </div>
@@ -535,6 +580,8 @@ function onStudentBulkActionChange() {
 
   if (notifyGroup) notifyGroup.style.display = (action === "notify") ? "flex" : "none";
   if (allocateGroup) allocateGroup.style.display = (action === "allocate_room") ? "flex" : "none";
+  var setYearGroup = document.getElementById("setYearActionGroup");
+  if (setYearGroup) setYearGroup.style.display = (action === "set_year") ? "flex" : "none";
   if (suspendGroup) suspendGroup.style.display = (action === "suspend") ? "flex" : "none";
 
   updateStudentApplyBtn();
@@ -553,6 +600,16 @@ function confirmStudentBulkAction() {
   var action = document.getElementById("bulkActionSelect").value;
   var count = document.querySelectorAll(".student-checkbox:checked").length;
   if (!action || count === 0) return false;
+
+  if (action === "set_year") {
+    var yrVal = document.getElementById("bulkYearSelect").value;
+    if (!yrVal) {
+      alert("Please select a target academic year.");
+      document.getElementById("bulkYearSelect").focus();
+      return false;
+    }
+    return confirm("Update academic year for " + count + " selected student(s)? Students residing in an incompatible building will be skipped.");
+  }
 
   if (action === "notify") {
     var msg = document.getElementById("notifyMessageInput").value.trim();

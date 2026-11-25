@@ -19,7 +19,7 @@
         </span>
       </div>
       <div class="text-secondary small">
-        Roll No: <b>{{ s.roll_no }}</b> · Course: <b>{{ s.course|default:"Not specified" }}</b>
+        Roll No: <b>{{ s.roll_no }}</b> · <span class="badge text-bg-primary">{{ s.year_label }}</span> {% if room and room.building %}· <span class="badge text-bg-dark">{{ room.building.code }} &mdash; {{ room.building.name }}</span>{% endif %} · Course: <b>{{ s.course|default:"Not specified" }}</b>
         {% if parent_view and all_children|length > 1 %}
           <div class="mt-2 d-flex align-items-center gap-2">
             <span class="small fw-semibold text-dark">Switch Ward:</span>
@@ -973,11 +973,11 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
         <div class="modal-body p-4">
           <div class="alert alert-info small mb-3">
-            Select an active room with vacant beds to allocate <strong>{{ s.user.display_name }}</strong> (Roll No: {{ s.roll_no }}). The student and linked parent will automatically receive an allocation notice.
+            Select an active room with vacant beds to allocate <strong>{{ s.user.display_name }}</strong> (Roll No: {{ s.roll_no }}, <strong>{{ s.year_label }}</strong>). Only compatible building rooms are listed to enforce anti-ragging segregation.
           </div>
 
           <div class="mb-3">
-            <label class="form-label small fw-semibold text-secondary">Select Room with Open Vacancy *</label>
+            <label class="form-label small fw-semibold text-secondary">Select Compatible Vacant Room *</label>
             {% if available_rooms %}
               <select name="room_id" class="form-select" required>
                 <option value="" disabled selected>Choose a vacant room...</option>
@@ -988,7 +988,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 {% endfor %}
               </select>
               <div class="form-text small text-muted">
-                Only active, non-blacklisted rooms with available beds are shown.
+                Only active, non-blacklisted rooms compatible with {{ s.year_label }} are shown.
               </div>
             {% else %}
               <div class="alert alert-warning small mb-0">
