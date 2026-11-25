@@ -10,6 +10,9 @@
       </div>
       <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
         <h3 class="mb-0 fw-bold" style="color:var(--navy);">Room {{ room }}</h3>
+        {% if room.building %}
+          <span class="badge text-bg-dark rounded-pill fs-6">{{ room.building.code }} &mdash; {{ room.building.name }} ({{ room.building.years_summary }})</span>
+        {% endif %}
         <span class="badge text-bg-primary rounded-pill fs-6">{{ room.floor_display }}</span>
         {% if room.is_blacklisted %}
           <span class="badge text-bg-danger rounded-pill fs-6" title="{{ room.blacklist_reason }}">
@@ -173,7 +176,7 @@
                     </a>
                   </h5>
                   <div class="text-secondary small">
-                    Roll No: <b>{{ s.roll_no }}</b> · Course: <b>{{ s.course|default:"Not specified" }}</b>
+                    Roll No: <b>{{ s.roll_no }}</b> · <span class="badge text-bg-light border text-dark">{{ s.year_short }}</span> · Course: <b>{{ s.course|default:"Not specified" }}</b>
                   </div>
                 </div>
                 <div class="d-flex flex-column align-items-end gap-1">

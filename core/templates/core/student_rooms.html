@@ -22,6 +22,14 @@
 <!-- Search & Sort Filter Bar -->
 <div class="card p-3 mb-4 bg-white border-0 shadow-sm">
   <form method="get" action="{% url 'student_rooms' %}" class="row g-2 align-items-center">
+    <div class="col-md-3 col-lg-2">
+      <select name="building" class="form-select" onchange="this.form.submit()" {% if is_building_locked %}disabled{% endif %}>
+        {% if not is_building_locked %}<option value="">All Buildings</option>{% endif %}
+        {% for bld in buildings %}
+          <option value="{{ bld.code }}" {% if selected_building == bld.code %}selected{% endif %}>{{ bld.code }} &mdash; {{ bld.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
     <!-- Search Query Input -->
     <div class="col-12 col-md-5 col-lg-4">
       <div class="input-group">
@@ -69,13 +77,27 @@
 
     <!-- Clean Floor Filter Pills (Unique floors only, no duplicate clutter) -->
     <div class="col-12 mt-2 pt-2 border-top d-flex flex-wrap align-items-center gap-1">
+      {% if buildings and not is_building_locked %}
+        <span class="text-secondary small fw-semibold me-2">Building:</span>
+        <a href="{% url 'student_rooms' %}?sort={{ sort_by }}{% if q %}&q={{ q }}{% endif %}"
+           class="badge {% if not selected_building %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          All Buildings
+        </a>
+        {% for bld in buildings %}
+          <a href="{% url 'student_rooms' %}?building={{ bld.code }}&sort={{ sort_by }}{% if q %}&q={{ q }}{% endif %}"
+             class="badge {% if selected_building == bld.code %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+            {{ bld.code }} &mdash; {{ bld.name }}
+          </a>
+        {% endfor %}
+        <span class="mx-2 text-muted">|</span>
+      {% endif %}
       <span class="text-secondary small fw-semibold me-2">Quick Floor Filter:</span>
-      <a href="{% url 'student_rooms' %}?sort={{ sort_by }}{% if q %}&q={{ q }}{% endif %}"
+      <a href="{% url 'student_rooms' %}?sort={{ sort_by }}{% if selected_building %}&building={{ selected_building }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
          class="badge {% if not selected_block %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
         All Floors
       </a>
       {% for b in blocks %}
-        <a href="{% url 'student_rooms' %}?block={{ b.code }}&sort={{ sort_by }}{% if q %}&q={{ q }}{% endif %}"
+        <a href="{% url 'student_rooms' %}?block={{ b.code }}&sort={{ sort_by }}{% if selected_building %}&building={{ selected_building }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
            class="badge {% if selected_block == b.code %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
           {{ b.label }}
         </a>

@@ -22,6 +22,8 @@ from .pdf_services import generate_fee_invoice_pdf, generate_fees_report_pdf
 from .services import (
     bulk_create_rooms,
     bulk_create_rooms_floors,
+    find_building,
+    parse_year,
     bulk_create_rooms_from_list,
     calculate_student_monthly_fee,
     import_allocations,
@@ -1350,11 +1352,20 @@ def allocation_import_template(request):
 
 @staff
 def room_bulk_add(request):
+    buildings, active_building, is_building_locked = _get_building_scope(request)
     result = None
-    form = f.RoomBulkAddForm(request.POST or None, request.FILES or None)
+    initial = {"building": active_building} if active_building else {}
+    form = f.RoomBulkAddForm(request.POST or None, request.FILES or None, initial=initial)
+    if is_building_locked and active_building and "building" in form.fields:
+        form.fields["building"].queryset = m.Building.objects.filter(pk=active_building.pk)
+        form.fields["building"].empty_label = None
+
     if request.method == "POST" and form.is_valid():
         mode = form.cleaned_data.get("mode") or request.POST.get("mode", "count")
         d = form.cleaned_data
+        target_building = active_building if is_building_locked else (d.get("building") or active_building)
+        if target_building:
+            _assert_building_access(request, building=target_building)
         try:
             if mode == "count":
                 blocks = request.POST.getlist("block")
@@ -1372,6 +1383,7 @@ def room_bulk_add(request):
                     end_number=end_no,
                     capacity=cap,
                     prefix=prefix,
+                    building=target_building,
                 )
             elif mode == "floor":
                 block = d.get("floor_block") or d.get("block") or "A"
@@ -1385,6 +1397,7 @@ def room_bulk_add(request):
                     end_floor=end_fl,
                     rooms_per_floor=r_per_fl,
                     capacity=cap,
+                    building=target_building,
                 )
             elif mode == "list":
                 block = d.get("list_block") or d.get("block") or "A"
@@ -1394,21 +1407,40 @@ def room_bulk_add(request):
                     block=block,
                     text=text,
                     default_capacity=cap,
+                    building=target_building,
                 )
             elif mode == "csv":
                 if "file" not in request.FILES:
                     raise ValueError("Please select a CSV file to upload.")
                 text = decode_csv_file(request.FILES["file"])
-                result = import_rooms_csv(csv.DictReader(text))
+                rows_list = list(csv.DictReader(text))
+                if is_building_locked and active_building:
+                    for row in rows_list:
+                        b_raw = (row.get("building") or "").strip()
+                        if b_raw:
+                            row_bld = find_building(b_raw)
+                            if not row_bld or row_bld.pk != active_building.pk:
+                                raise PermissionDenied(
+                                    f"Your access is scoped to {active_building.code} ({active_building.name}). Cannot import rooms for '{b_raw}'."
+                                )
+                result = import_rooms_csv(rows_list, building=target_building)
         except Exception as e:
             form.add_error(None, f"{getattr(e, 'messages', [str(e)])[0]}")
 
-    return show(request, "room_bulk_add", form=form, result=result)
+    return show(
+        request,
+        "room_bulk_add",
+        form=form,
+        result=result,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
+    )
 
 
 @staff
 def room_bulk_template(request):
-    r = HttpResponse("block,number,capacity\nA,101,2\nA,102,2\nB,201,3\n",
+    r = HttpResponse("building,block,number,capacity\nB1,G,101,2\nB1,G,102,2\nB2,1,201,3\n",
                      content_type="text/csv")
     r["Content-Disposition"] = 'attachment; filename="rooms_template.csv"'
     return r
@@ -1416,6 +1448,8 @@ def room_bulk_template(request):
 
 @staff
 def room_list(request):
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+
     if request.method == "POST":
         action = request.POST.get("bulk_action", "").strip()
         selected_ids = request.POST.getlist("selected_rooms")
@@ -1423,7 +1457,14 @@ def room_list(request):
             messages.warning(request, "No rooms were selected.")
             return redirect(request.get_full_path())
 
-        rooms_qs = m.Room.objects.filter(pk__in=selected_ids)
+        rooms_qs = m.Room.objects.select_related("building").filter(pk__in=selected_ids)
+        if is_building_locked and active_building:
+            if rooms_qs.exclude(building=active_building).exists():
+                raise PermissionDenied(
+                    f"Your warden role is scoped to {active_building.code} ({active_building.name})."
+                )
+        elif active_building:
+            rooms_qs = rooms_qs.filter(building=active_building)
 
         if action == "blacklist":
             cause = request.POST.get("blacklist_cause", "").strip() or "Maintenance"
@@ -1469,12 +1510,14 @@ def room_list(request):
     capacity = request.GET.get("capacity", "").strip()
     view_mode = request.GET.get("view", "grid").strip()
 
-    rooms_qs = m.Room.objects.all().prefetch_related(
+    rooms_qs = m.Room.objects.select_related("building").all().prefetch_related(
         Prefetch(
             "allocations",
             queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("student__user")
         )
     )
+    if active_building:
+        rooms_qs = rooms_qs.filter(building=active_building)
 
     if block:
         rooms_qs = rooms_qs.filter(block__iexact=block)
@@ -1508,6 +1551,7 @@ def room_list(request):
                 q_lower in r.block.lower() or
                 q_lower in r.floor_name.lower() or
                 q_lower in r.number.lower() or
+                (r.building and (q_lower in r.building.code.lower() or q_lower in r.building.name.lower())) or
                 q_lower in (r.blacklist_reason or "").lower() or
                 any(q_lower in a.student.user.display_name.lower() or q_lower in a.student.roll_no.lower() for a in r.allocations.all()))
         ]
@@ -1519,7 +1563,8 @@ def room_list(request):
     elif status == "empty":
         rooms = [r for r in rooms if r.occupied == 0 and not r.is_blacklisted]
 
-    distinct_blocks = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
+    scope_base_qs = m.Room.objects.filter(building=active_building) if active_building else m.Room.objects.all()
+    distinct_blocks = sorted(list(set(scope_base_qs.values_list("block", flat=True))), key=floor_order_key)
     all_blocks = []
     seen_displays = set()
     for b in distinct_blocks:
@@ -1528,9 +1573,9 @@ def room_list(request):
         if disp not in seen_displays:
             seen_displays.add(disp)
             all_blocks.append({"code": b, "display": disp, "name": rm_dummy.floor_name})
-    all_causes = sorted(list(set(m.Room.objects.filter(is_blacklisted=True).exclude(blacklist_reason="").values_list("blacklist_reason", flat=True))))
+    all_causes = sorted(list(set(scope_base_qs.filter(is_blacklisted=True).exclude(blacklist_reason="").values_list("blacklist_reason", flat=True))))
 
-    rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
+    rooms.sort(key=lambda r: ((r.building.code if r.building else ""), floor_order_key(r.block), r.number))
 
     # Active complaints per student
     active_complaints_students = set(
@@ -1543,28 +1588,34 @@ def room_list(request):
         r.inmate_names = [s.user.display_name for s in r.inmates_list]
         r.active_complaints_count = sum(1 for s in r.inmates_list if s.pk in active_complaints_students)
 
-    # Group rooms by floor for Grid View
+    # Group rooms by (building, floor) for Grid View so Building 1 & Building 2 floors never merge
     grouped_floors = {}
     for r in rooms:
         b = r.block
-        if b not in grouped_floors:
-            grouped_floors[b] = {
+        grp_key = (r.building_id or 0, b)
+        if grp_key not in grouped_floors:
+            floor_title = f"{r.building.code} · {r.floor_display}" if (r.building and not active_building) else r.floor_display
+            grouped_floors[grp_key] = {
                 "floor_code": b,
                 "floor_name": r.floor_name,
-                "floor_display": r.floor_display,
+                "floor_display": floor_title,
+                "building": r.building,
                 "rooms": [],
                 "total_capacity": 0,
                 "total_occupied": 0,
                 "total_vacant": 0,
                 "active_complaints": 0,
             }
-        grouped_floors[b]["rooms"].append(r)
-        grouped_floors[b]["total_capacity"] += r.capacity
-        grouped_floors[b]["total_occupied"] += len(r.inmates_list)
-        grouped_floors[b]["total_vacant"] += r.vacancy
-        grouped_floors[b]["active_complaints"] += r.active_complaints_count
+        grouped_floors[grp_key]["rooms"].append(r)
+        grouped_floors[grp_key]["total_capacity"] += r.capacity
+        grouped_floors[grp_key]["total_occupied"] += len(r.inmates_list)
+        grouped_floors[grp_key]["total_vacant"] += r.vacancy
+        grouped_floors[grp_key]["active_complaints"] += r.active_complaints_count
 
-    sorted_floor_keys = sorted(grouped_floors.keys(), key=floor_order_key)
+    sorted_floor_keys = sorted(
+        grouped_floors.keys(),
+        key=lambda k: ((grouped_floors[k]["building"].code if grouped_floors[k]["building"] else ""), floor_order_key(grouped_floors[k]["floor_code"]))
+    )
     floor_groups = [grouped_floors[k] for k in sorted_floor_keys]
 
     total_beds = sum(r.capacity for r in rooms)
@@ -1580,6 +1631,9 @@ def room_list(request):
         floor_groups=floor_groups,
         all_blocks=all_blocks,
         all_causes=all_causes,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
         filter_q=q,
         filter_block=block,
         filter_status=status,
@@ -1597,7 +1651,8 @@ def room_list(request):
 
 @staff
 def room_detail(request, pk):
-    room = get_object_or_404(m.Room, pk=pk)
+    room = get_object_or_404(m.Room.objects.select_related("building"), pk=pk)
+    _assert_building_access(request, room=room)
     today = date.today()
 
     active_allocs = list(
@@ -1675,7 +1730,8 @@ def room_detail(request, pk):
 @staff
 @require_POST
 def room_announcement_create(request, pk):
-    room = get_object_or_404(m.Room, pk=pk)
+    room = get_object_or_404(m.Room.objects.select_related("building"), pk=pk)
+    _assert_building_access(request, room=room)
     title = request.POST.get("title", "").strip()
     body = request.POST.get("body", "").strip()
     audience = request.POST.get("audience", "student").strip()
@@ -1688,6 +1744,7 @@ def room_announcement_create(request, pk):
 
     anc = m.Announcement.objects.create(
         room=room,
+        building=room.building,
         title=title,
         body=body,
         audience=audience,
@@ -1711,7 +1768,8 @@ def room_announcement_create(request, pk):
 @staff
 @require_POST
 def room_announcement_delete(request, pk):
-    anc = get_object_or_404(m.Announcement, pk=pk)
+    anc = get_object_or_404(m.Announcement.objects.select_related("room__building", "building"), pk=pk)
+    _assert_building_access(request, room=anc.room, building=anc.building)
     room_pk = anc.room_id
     anc.delete()
     messages.success(request, "Room announcement removed.")
@@ -1995,7 +2053,8 @@ def student_reinstate(request, pk):
 @staff
 @require_POST
 def room_toggle_blacklist(request, pk):
-    r = get_object_or_404(m.Room, pk=pk)
+    r = get_object_or_404(m.Room.objects.select_related("building"), pk=pk)
+    _assert_building_access(request, room=r)
     if r.is_blacklisted:
         r.is_blacklisted = False
         r.blacklist_reason = ""
@@ -2766,9 +2825,20 @@ def student_rooms(request):
 
     q = request.GET.get("q", "").strip()
     block = request.GET.get("block", "").strip()
+    building_param = request.GET.get("building", "").strip()
     sort_by = request.GET.get("sort", "floor_asc").strip()
 
-    distinct_codes = sorted(list(set(m.Room.objects.values_list("block", flat=True))), key=floor_order_key)
+    buildings = list(m.Building.objects.order_by("code"))
+    is_building_locked = False
+    active_building = None
+    if getattr(request.user, "is_warden_role", False) and request.user.scoped_building:
+        active_building = request.user.scoped_building
+        is_building_locked = True
+    elif building_param:
+        active_building = find_building(building_param)
+
+    scope_qs = m.Room.objects.filter(building=active_building) if active_building else m.Room.objects.all()
+    distinct_codes = sorted(list(set(scope_qs.values_list("block", flat=True))), key=floor_order_key)
     all_blocks = []
     seen_displays = set()
     for b in distinct_codes:
@@ -2778,12 +2848,14 @@ def student_rooms(request):
             seen_displays.add(disp)
             all_blocks.append({"code": b, "label": disp, "name": rm_dummy.floor_name})
 
-    rooms_qs = m.Room.objects.all().prefetch_related(
+    rooms_qs = m.Room.objects.select_related("building").all().prefetch_related(
         Prefetch(
             "allocations",
             queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("student__user")
         )
     )
+    if active_building:
+        rooms_qs = rooms_qs.filter(building=active_building)
 
     if block:
         rooms_qs = rooms_qs.filter(block__iexact=block)
@@ -2799,21 +2871,22 @@ def student_rooms(request):
                 q_lower in r.block.lower() or
                 q_lower in r.floor_name.lower() or
                 q_lower in r.number.lower() or
+                (r.building and (q_lower in r.building.code.lower() or q_lower in r.building.name.lower())) or
                 any(q_lower in name.lower() for name in resident_names)):
                 filtered.append(r)
         all_rooms = filtered
 
     # Sorting
     if sort_by == "floor_desc":
-        all_rooms.sort(key=lambda r: (-floor_order_key(r.block), r.number))
+        all_rooms.sort(key=lambda r: ((r.building.code if r.building else ""), -floor_order_key(r.block), r.number))
     elif sort_by == "room_asc":
-        all_rooms.sort(key=lambda r: r.number)
+        all_rooms.sort(key=lambda r: (r.number, (r.building.code if r.building else "")))
     elif sort_by == "vacant":
-        all_rooms.sort(key=lambda r: (-r.vacancy, floor_order_key(r.block), r.number))
+        all_rooms.sort(key=lambda r: (-r.vacancy, (r.building.code if r.building else ""), floor_order_key(r.block), r.number))
     else:  # floor_asc (default)
-        all_rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
+        all_rooms.sort(key=lambda r: ((r.building.code if r.building else ""), floor_order_key(r.block), r.number))
 
-    # Group rooms by floor
+    # Group rooms by (building, floor) so floors in separate buildings stay grouped separately
     grouped_dict = {}
     room_items = []
     for r in all_rooms:
@@ -2821,6 +2894,7 @@ def student_rooms(request):
         item = {
             "room": r,
             "room_str": str(r),
+            "building": r.building,
             "block": r.block,
             "floor_name": r.floor_name,
             "floor_display": r.floor_display,
@@ -2834,12 +2908,14 @@ def student_rooms(request):
         }
         room_items.append(item)
 
-        fl_key = r.block
+        fl_key = (r.building_id or 0, r.block)
         if fl_key not in grouped_dict:
+            floor_title = f"{r.building.code} · {r.floor_display}" if (r.building and not active_building) else r.floor_display
             grouped_dict[fl_key] = {
                 "floor_code": r.block,
                 "floor_name": r.floor_name,
-                "floor_display": r.floor_display,
+                "floor_display": floor_title,
+                "building": r.building,
                 "rooms": [],
                 "total_capacity": 0,
                 "total_occupied": 0,
@@ -2849,9 +2925,15 @@ def student_rooms(request):
         grouped_dict[fl_key]["total_occupied"] += len(residents)
 
     if sort_by == "floor_desc":
-        sorted_keys = sorted(grouped_dict.keys(), key=lambda k: -floor_order_key(k))
+        sorted_keys = sorted(
+            grouped_dict.keys(),
+            key=lambda k: ((grouped_dict[k]["building"].code if grouped_dict[k]["building"] else ""), -floor_order_key(grouped_dict[k]["floor_code"]))
+        )
     else:
-        sorted_keys = sorted(grouped_dict.keys(), key=floor_order_key)
+        sorted_keys = sorted(
+            grouped_dict.keys(),
+            key=lambda k: ((grouped_dict[k]["building"].code if grouped_dict[k]["building"] else ""), floor_order_key(grouped_dict[k]["floor_code"]))
+        )
 
     floor_groups = [grouped_dict[k] for k in sorted_keys]
 
@@ -2863,6 +2945,10 @@ def student_rooms(request):
         total_rooms=len(room_items),
         blocks=all_blocks,
         selected_block=block,
+        buildings=buildings,
+        active_building=active_building,
+        selected_building=active_building.code if active_building else "",
+        is_building_locked=is_building_locked,
         sort_by=sort_by,
         q=q,
     )

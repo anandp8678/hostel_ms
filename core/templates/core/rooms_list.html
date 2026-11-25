@@ -38,11 +38,11 @@
     <!-- View Mode Switcher & Add Actions -->
     <div class="d-flex flex-wrap align-items-center gap-2">
       <div class="btn-group" role="group" aria-label="View Mode">
-        <a href="?view=grid{% if filter_block %}&block={{ filter_block }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}"
+        <a href="?view=grid{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_block %}&block={{ filter_block }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}"
            class="btn btn-sm {% if view_mode != 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
           Rooms Grid
         </a>
-        <a href="?view=table{% if filter_block %}&block={{ filter_block }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}"
+        <a href="?view=table{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_block %}&block={{ filter_block }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}"
            class="btn btn-sm {% if view_mode == 'table' %}btn-navy{% else %}btn-outline-secondary{% endif %} fw-semibold">
           Table & Bulk Select
         </a>
@@ -117,6 +117,14 @@
 <!-- Filters & Search Bar Card -->
 <div class="card p-3 mb-4 bg-white border-0 shadow-sm">
   <form method="get" class="row g-2 align-items-center">
+    <div class="col-md-2">
+      <select name="building" class="form-select" onchange="this.form.submit()" {% if is_building_locked %}disabled{% endif %}>
+        {% if not is_building_locked %}<option value="">All Buildings</option>{% endif %}
+        {% for bld in buildings %}
+          <option value="{{ bld.code }}" {% if active_building and active_building.pk == bld.pk %}selected{% endif %}>{{ bld.code }} &mdash; {{ bld.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
     <input type="hidden" name="view" value="{{ view_mode }}">
     {% if filter_cause %}<input type="hidden" name="cause" value="{{ filter_cause }}">{% endif %}
 
@@ -125,8 +133,8 @@
       <div class="input-group">
         <span class="input-group-text bg-light text-muted">Filter</span>
         <input type="text" name="q" class="form-control" placeholder="Search room no, floor, resident name..." value="{{ filter_q }}">
-        {% if filter_q or filter_block or filter_status or filter_capacity or filter_cause %}
-          <a href="?view={{ view_mode }}" class="btn btn-outline-secondary" title="Reset all filters">&times;</a>
+        {% if filter_q or filter_block or filter_status or filter_capacity or filter_cause or active_building and not is_building_locked %}
+          <a href="?view={{ view_mode }}{% if is_building_locked and active_building %}&building={{ active_building.code }}{% endif %}" class="btn btn-outline-secondary" title="Reset all filters">&times;</a>
         {% endif %}
       </div>
     </div>
@@ -173,15 +181,34 @@
       <button type="submit" class="btn btn-navy fw-semibold px-3">Filter</button>
     </div>
 
-    <!-- Filter by Floor Pills (Non-duplicate, clean floor navigation) -->
+    <!-- Filter by Building & Floor Pills -->
+    {% if buildings %}
+    <div class="col-12 mt-2 pt-2 border-top d-flex flex-wrap align-items-center gap-1">
+      <span class="text-secondary small fw-semibold me-2">Building:</span>
+      {% if not is_building_locked %}
+        <a href="?view={{ view_mode }}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+           class="badge {% if not active_building %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          All Buildings
+        </a>
+      {% endif %}
+      {% for bld in buildings %}
+        {% if not is_building_locked or active_building.pk == bld.pk %}
+          <a href="?view={{ view_mode }}&building={{ bld.code }}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+             class="badge {% if active_building and active_building.pk == bld.pk %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+            {{ bld.code }} &mdash; {{ bld.name }} ({{ bld.years_summary }})
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
     <div class="col-12 mt-2 pt-2 border-top d-flex flex-wrap align-items-center gap-1">
       <span class="text-secondary small fw-semibold me-2">Filter by Floor:</span>
-      <a href="?view={{ view_mode }}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+      <a href="?view={{ view_mode }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
          class="badge {% if not filter_block %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
         All Floors
       </a>
       {% for b in all_blocks %}
-        <a href="?view={{ view_mode }}&block={{ b.code }}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+        <a href="?view={{ view_mode }}&block={{ b.code }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
            class="badge {% if filter_block == b.code %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
           {{ b.display }}
         </a>

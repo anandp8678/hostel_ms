@@ -35,6 +35,22 @@
     {% csrf_token %}
     <input type="hidden" name="mode" id="modeInput" value="count">
     {{ form.non_field_errors }}
+    <div class="p-3 mb-3 rounded border bg-light-subtle">
+      <div class="row g-2 align-items-center">
+        <div class="col-md-5">
+          <label class="form-label fw-bold mb-1">Target Building</label>
+          {% if is_building_locked and active_building %}
+            <input type="hidden" name="building" value="{{ active_building.pk }}" id="bulkBuildingSelect" data-code="{{ active_building.code }}">
+            <div class="form-control bg-white fw-semibold">{{ active_building.code }} &mdash; {{ active_building.name }} ({{ active_building.years_summary }})</div>
+          {% else %}
+            {{ form.building }}
+          {% endif %}
+        </div>
+        <div class="col-md-7 small text-secondary pt-md-3">
+          Rooms are created inside the selected building. Anti-ragging policy restricts allocations to each building's allowed academic years.
+        </div>
+      </div>
+    </div>
 
     <!-- MODE 1: By Amount / Range -->
     <div id="section-count" class="mode-section">
@@ -126,7 +142,7 @@
 
     <!-- MODE 4: CSV -->
     <div id="section-csv" class="mode-section" style="display:none;">
-      <p class="small text-secondary">Upload a CSV file with columns: <code>block, number, capacity</code> (or <code>room, capacity</code>). <a href="{% url 'rooms_bulk_template' %}">Download template</a>.</p>
+      <p class="small text-secondary">Upload a CSV file with columns: <code>building, block, number, capacity</code> (or <code>block, number, capacity</code> / <code>room, capacity</code>). <a href="{% url 'rooms_bulk_template' %}">Download template</a>.</p>
       <div class="mb-3">
         <input type="file" name="file" class="form-control" accept=".csv">
       </div>
