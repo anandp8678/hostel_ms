@@ -1,0 +1,68 @@
+<div class="col-6 col-sm-4 col-md-3 col-lg-2 student-col"
+     data-name="{{ s.user.display_name|lower }}"
+     data-roll="{{ s.roll_no|lower }}"
+     data-room="{% if s.room %}{{ s.room|lower }}{% endif %}"
+     data-course="{% if s.course %}{{ s.course|lower }}{% endif %}"
+     data-floor="{% if s.room %}{{ s.room.block|lower }}{% else %}unallocated{% endif %}">
+  <div class="card h-100 student-box p-3 d-flex flex-column align-items-center justify-content-between text-center position-relative {% if s.is_currently_suspended %}border-danger-subtle bg-danger-subtle-light{% else %}shadow-sm{% endif %}">
+    <div class="student-select-wrap position-absolute top-0 end-0 p-2">
+      <input type="checkbox"
+             id="student-cb-{{ s.pk }}"
+             name="selected_students"
+             value="{{ s.pk }}"
+             class="form-check-input student-checkbox shadow-sm"
+             aria-label="Select {{ s.user.display_name }}"
+             onchange="onStudentCheckboxChange(this)">
+    </div>
+
+    <a href="{% url 'student_detail' s.pk %}"
+       class="stretched-link text-decoration-none"
+       onclick="return onStudentBoxClick(event, '{{ s.pk }}')"
+       title="Tap to enter {{ s.user.display_name }}'s profile"
+       aria-label="Open {{ s.user.display_name }}'s profile"></a>
+
+    <div class="student-avatar mb-2 {% if s.is_currently_suspended %}student-avatar-suspended{% elif not s.room %}student-avatar-unallocated{% endif %}">
+      {{ s.user.first_name|first|upper }}{{ s.user.last_name|first|upper }}
+    </div>
+
+    <div class="w-100 mb-1">
+      <h6 class="fw-bold mb-1 text-dark text-truncate" style="color:var(--navy) !important;" title="{{ s.user.display_name }}">
+        {{ s.user.display_name }}
+      </h6>
+      <div class="text-secondary small" style="font-size:0.78rem;">
+        {{ s.roll_no }}
+      </div>
+      {% if s.course %}
+        <div class="text-muted small text-truncate mt-1" style="font-size:0.72rem;" title="{{ s.course }}">
+          {{ s.course }}
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="d-flex flex-column align-items-center gap-1 w-100 mt-2">
+      {% if s.room %}
+        <span class="badge text-bg-light border text-secondary rounded-pill" style="font-size:0.72rem;">
+          Room {{ s.room }}
+        </span>
+      {% else %}
+        <span class="badge text-bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill" style="font-size:0.72rem;">
+          Unallocated
+        </span>
+      {% endif %}
+
+      {% if s.is_currently_suspended %}
+        <span class="badge text-bg-danger rounded-pill" style="font-size:0.72rem;">
+          Suspended
+        </span>
+      {% elif s.is_active %}
+        <span class="badge text-bg-success rounded-pill" style="font-size:0.72rem;">
+          Staying
+        </span>
+      {% else %}
+        <span class="badge text-bg-secondary rounded-pill" style="font-size:0.72rem;">
+          Left
+        </span>
+      {% endif %}
+    </div>
+  </div>
+</div>

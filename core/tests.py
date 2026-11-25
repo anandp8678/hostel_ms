@@ -2275,6 +2275,175 @@ class AdminSuspensionProcedureTests(TestCase):
         self.assertEqual(Announcement.objects.filter(student=self.student).count(), 0)
 
 
+class StudentSelectionAndBulkActionsTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="sel_admin", password="p", role="admin", is_staff=True, first_name="Sel", last_name="Admin"
+        )
+        self.warden = User.objects.create_user(
+            username="sel_warden", password="p", role="warden", is_staff=True, first_name="Sel", last_name="Warden"
+        )
+        self.parent_user = User.objects.create_user(
+            username="sel_parent", password="p", role="parent", first_name="Sel", last_name="Parent"
+        )
+        self.parent = Parent.objects.create(user=self.parent_user)
+
+        self.u1 = User.objects.create_user(username="sel_s1", password="p", role="student", first_name="Asha", last_name="Nair")
+        self.s1 = Student.objects.create(user=self.u1, roll_no="SEL001", course="MCA", parent=self.parent)
+
+        self.u2 = User.objects.create_user(username="sel_s2", password="p", role="student", first_name="Binu", last_name="Mathew")
+        self.s2 = Student.objects.create(user=self.u2, roll_no="SEL002", course="MCA")
+
+        self.room = Room.objects.create(block="G", number="101", capacity=3)
+
+    def test_students_page_renders_select_and_select_all_controls(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Grid view
+        resp_grid = c.get(reverse("students"))
+        self.assertEqual(resp_grid.status_code, 200)
+        self.assertContains(resp_grid, 'id="selectToggleBtn"')
+        self.assertContains(resp_grid, 'id="selectAllBtn"')
+        self.assertContains(resp_grid, "Select All")
+        self.assertContains(resp_grid, f'value="{self.s1.pk}"')
+        self.assertContains(resp_grid, f'value="{self.s2.pk}"')
+        self.assertNotContains(resp_grid, '<option value="suspend">')
+
+        # Table view also renders Select and Select All
+        resp_table = c.get(reverse("students") + "?view=table")
+        self.assertEqual(resp_table.status_code, 200)
+        self.assertContains(resp_table, 'id="selectToggleBtn"')
+        self.assertContains(resp_table, 'id="selectAllBtn"')
+        self.assertContains(resp_table, f'id="student-cb-{self.s1.pk}"')
+
+        # Admin sees suspend options
+        c.force_login(self.admin)
+        resp_admin = c.get(reverse("students"))
+        self.assertEqual(resp_admin.status_code, 200)
+        self.assertContains(resp_admin, '<option value="suspend">')
+
+    def test_bulk_allocate_vacate_and_notify_selected_students(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Allocate both unallocated students to self.room
+        resp_alloc = c.post(
+            reverse("students"),
+            {
+                "selected_students": [str(self.s1.pk), str(self.s2.pk)],
+                "bulk_action": "allocate_room",
+                "target_room_id": str(self.room.pk),
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_alloc.status_code, 200)
+        self.s1.refresh_from_db()
+        self.s2.refresh_from_db()
+        self.assertEqual(self.s1.room, self.room)
+        self.assertEqual(self.s2.room, self.room)
+
+        # Bulk notify with parents included
+        resp_notify = c.post(
+            reverse("students"),
+            {
+                "selected_students": [str(self.s1.pk), str(self.s2.pk)],
+                "bulk_action": "notify",
+                "notify_title": "Inspection",
+                "notify_message": "Room inspection at 6 PM",
+                "notify_parents": "1",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_notify.status_code, 200)
+        self.assertTrue(Notification.objects.filter(recipient=self.u1, title="Inspection").exists())
+        self.assertTrue(Notification.objects.filter(recipient=self.u2, title="Inspection").exists())
+        self.assertTrue(Notification.objects.filter(recipient=self.parent_user, title="Inspection").exists())
+
+        # Bulk vacate active rooms
+        resp_vacate = c.post(
+            reverse("students"),
+            {
+                "selected_students": [str(self.s1.pk), str(self.s2.pk)],
+                "bulk_action": "vacate",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_vacate.status_code, 200)
+        self.assertIsNone(self.s1.room)
+        self.assertIsNone(self.s2.room)
+
+    def test_bulk_suspend_restricted_to_admin_and_bulk_delete_cascades(self):
+        c = Client()
+        c.force_login(self.warden)
+
+        # Warden cannot bulk suspend -> 403
+        resp_warden = c.post(
+            reverse("students"),
+            {
+                "selected_students": [str(self.s1.pk)],
+                "bulk_action": "suspend",
+                "suspend_reason": "Unauthorized attempt",
+            },
+        )
+        self.assertEqual(resp_warden.status_code, 403)
+        self.s1.refresh_from_db()
+        self.assertFalse(self.s1.is_suspended)
+
+        # Admin can bulk suspend and reinstate
+        c.force_login(self.admin)
+        resp_susp = c.post(
+            reverse("students"),
+            {
+                "selected_students": [str(self.s1.pk), str(self.s2.pk)],
+                "bulk_action": "suspend",
+                "suspend_reason": "Group curfew violation",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_susp.status_code, 200)
+        self.s1.refresh_from_db()
+        self.s2.refresh_from_db()
+        self.assertTrue(self.s1.is_currently_suspended)
+        self.assertTrue(self.s2.is_currently_suspended)
+        self.assertEqual(Announcement.objects.filter(student__in=[self.s1, self.s2], audience="student").count(), 2)
+
+        resp_reinstate = c.post(
+            reverse("students"),
+            {
+                "selected_students": [str(self.s1.pk), str(self.s2.pk)],
+                "bulk_action": "reinstate",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_reinstate.status_code, 200)
+        self.s1.refresh_from_db()
+        self.s2.refresh_from_db()
+        self.assertFalse(self.s1.is_suspended)
+        self.assertFalse(self.s2.is_suspended)
+        self.assertEqual(Announcement.objects.filter(student__in=[self.s1, self.s2]).count(), 0)
+
+        # Bulk mark left and delete cascades to User accounts
+        resp_left = c.post(
+            reverse("students"),
+            {"selected_students": [str(self.s2.pk)], "bulk_action": "mark_left"},
+            follow=True,
+        )
+        self.assertEqual(resp_left.status_code, 200)
+        self.s2.refresh_from_db()
+        self.assertFalse(self.s2.is_active)
+
+        resp_del = c.post(
+            reverse("students"),
+            {"selected_students": [str(self.s2.pk)], "bulk_action": "delete"},
+            follow=True,
+        )
+        self.assertEqual(resp_del.status_code, 200)
+        self.assertFalse(Student.objects.filter(pk=self.s2.pk).exists())
+        self.assertFalse(User.objects.filter(pk=self.u2.pk).exists())
+
+
+
 
 
 

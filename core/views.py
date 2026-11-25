@@ -703,6 +703,18 @@ def home(request):
     return show(request, "children", children=child_cards, today=today)
 
 
+def _vacant_rooms():
+    """Return active, non-blacklisted rooms with open beds, ordered by floor and number."""
+    rooms = []
+    for r in m.Room.objects.filter(is_blacklisted=False).prefetch_related(
+        Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
+    ):
+        if r.vacancy > 0:
+            rooms.append(r)
+    rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
+    return rooms
+
+
 def overview(s, user):
     today = date.today()
     aud = ["all"]
@@ -735,12 +747,7 @@ def overview(s, user):
         ).exclude(student=s).select_related("student__user", "student__parent__user")
         roommates = [a.student for a in allocs]
     elif user.role in STAFF:
-        for r in m.Room.objects.filter(is_blacklisted=False).prefetch_related(
-            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
-        ):
-            if r.vacancy > 0:
-                available_rooms.append(r)
-        available_rooms.sort(key=lambda r: (floor_order_key(r.block), r.number))
+        available_rooms = _vacant_rooms()
 
     # Fee metrics
     fees = list(s.fees.prefetch_related("payments"))
@@ -813,8 +820,153 @@ def child(request, pk):
 
 
 # ---------- staff workflows ----------
+def _handle_student_bulk_action(request):
+    """Execute bulk actions submitted from the student directory selection toolbar."""
+    action = request.POST.get("bulk_action", "").strip()
+    selected_ids = request.POST.getlist("selected_students")
+    if not selected_ids:
+        messages.warning(request, "No students were selected.")
+        return redirect(request.get_full_path())
+
+    students = list(
+        m.Student.objects.filter(pk__in=selected_ids)
+        .select_related("user", "parent__user")
+        .prefetch_related(
+            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room"))
+        )
+    )
+    if not students:
+        messages.warning(request, "No matching students found.")
+        return redirect(request.get_full_path())
+
+    if action == "notify":
+        title = request.POST.get("notify_title", "").strip() or "Administrative Notice"
+        msg = request.POST.get("notify_message", "").strip()
+        if not msg:
+            messages.error(request, "Please enter a notification message.")
+            return redirect(request.get_full_path())
+        recipients = [s.user for s in students]
+        if request.POST.get("notify_parents") == "1":
+            recipients.extend(s.parent.user for s in students if s.parent and s.parent.user)
+        notify_users(
+            recipients=recipients,
+            title=title,
+            message=msg,
+            category="announcement",
+            link=reverse("home"),
+            actor=request.user,
+        )
+        messages.success(request, f"Notification sent to {len(students)} student(s).")
+
+    elif action == "allocate_room":
+        room_id = request.POST.get("target_room_id", "").strip()
+        if not room_id:
+            messages.error(request, "Please select a target room to allocate.")
+            return redirect(request.get_full_path())
+        room = get_object_or_404(m.Room, pk=room_id)
+        if room.is_blacklisted:
+            messages.error(request, f"Room {room} is blacklisted and cannot accept allocations.")
+            return redirect(request.get_full_path())
+
+        to_allocate = [s for s in students if not s.room]
+        already_allocated = len(students) - len(to_allocate)
+        if not to_allocate:
+            messages.warning(request, "All selected students already have active room allocations.")
+            return redirect(request.get_full_path())
+
+        if len(to_allocate) > room.vacancy:
+            messages.error(
+                request,
+                f"Room {room} only has {room.vacancy} vacant bed(s); cannot allocate {len(to_allocate)} student(s).",
+            )
+            return redirect(request.get_full_path())
+
+        today = date.today()
+        for s in to_allocate:
+            m.RoomAllocation.objects.create(student=s, room=room, start_date=today)
+            notify_user(
+                recipient=s.user,
+                actor=request.user,
+                category="announcement",
+                title="Hostel Room Allocated",
+                message=f"You have been allocated to Room {room} ({room.floor_display}) starting from {today}.",
+                link=reverse("home"),
+            )
+            if s.parent and s.parent.user:
+                notify_user(
+                    recipient=s.parent.user,
+                    actor=request.user,
+                    category="announcement",
+                    title="Ward Room Allocated",
+                    message=f"Your ward {s.user.display_name} has been allocated to Room {room} ({room.floor_display}) starting from {today}.",
+                    link=reverse("home"),
+                )
+        msg = f"Allocated {len(to_allocate)} student(s) to Room {room}."
+        if already_allocated:
+            msg += f" ({already_allocated} already had active rooms and were skipped.)"
+        messages.success(request, msg)
+
+    elif action == "vacate":
+        vacated = m.RoomAllocation.objects.filter(
+            student__in=students, end_date__isnull=True
+        ).update(end_date=date.today())
+        if vacated:
+            messages.success(request, f"Vacated active room allocations for {vacated} student(s).")
+        else:
+            messages.info(request, "None of the selected students had active room allocations.")
+
+    elif action == "mark_staying":
+        updated = m.Student.objects.filter(pk__in=[s.pk for s in students]).update(is_active=True)
+        messages.success(request, f"{updated} student(s) marked as Staying.")
+
+    elif action == "mark_left":
+        pks = [s.pk for s in students]
+        updated = m.Student.objects.filter(pk__in=pks).update(is_active=False)
+        m.RoomAllocation.objects.filter(student_id__in=pks, end_date__isnull=True).update(end_date=date.today())
+        messages.success(request, f"{updated} student(s) marked as Left and active room allocations closed.")
+
+    elif action == "suspend":
+        if request.user.role != "admin":
+            raise PermissionDenied
+        reason = request.POST.get("suspend_reason", "").strip()
+        if not reason:
+            messages.error(request, "A reason is required to suspend selected students.")
+            return redirect(request.get_full_path())
+        end_str = request.POST.get("suspend_end_date", "").strip()
+        start_d = date.today()
+        end_d = parse_date(end_str) if end_str else None
+        if end_d and end_d < start_d:
+            messages.error(request, "Suspension end date cannot be earlier than today.")
+            return redirect(request.get_full_path())
+        for s in students:
+            _enact_student_suspension(s, request.user, reason, start_d, end_d)
+        messages.success(request, f"Suspended {len(students)} student(s). Entry to the hostel is barred.")
+
+    elif action == "reinstate":
+        if request.user.role != "admin":
+            raise PermissionDenied
+        suspended = [s for s in students if s.is_suspended]
+        for s in suspended:
+            _lift_student_suspension(s, request.user)
+        messages.success(request, f"Lifted suspension for {len(suspended)} student(s).")
+
+    elif action == "delete":
+        count = len(students)
+        for s in students:
+            s.delete()
+        messages.success(request, f"Deleted {count} student(s).")
+
+    else:
+        messages.warning(request, "Please choose a valid action.")
+
+    return redirect(request.get_full_path())
+
+
 @staff
 def student_list(request):
+    if request.method == "POST":
+        return _handle_student_bulk_action(request)
+
     q = request.GET.get("q", "").strip()
     floor_filter = request.GET.get("floor", "all").strip()
     allocation_filter = request.GET.get("allocation", "all").strip().lower()
@@ -963,6 +1115,7 @@ def student_list(request):
         "unallocated_count": unallocated_count,
         "all_floors": all_floors,
         "all_courses": all_courses,
+        "available_rooms": _vacant_rooms(),
         "q": q,
         "floor_filter": floor_filter,
         "allocation_filter": allocation_filter,
@@ -1568,6 +1721,91 @@ def student_allocate(request, pk):
     return redirect("student_detail", pk=s.pk)
 
 
+def _enact_student_suspension(s, actor, reason, start_date, end_date=None):
+    """Apply hostel suspension to a student, notify stakeholders, and post student-board announcement."""
+    s.is_suspended = True
+    s.suspension_reason = reason
+    s.suspension_start = start_date
+    s.suspension_end = end_date
+    s.suspended_by = actor
+    s.suspended_at = timezone.now()
+    s.save(update_fields=["is_suspended", "suspension_reason", "suspension_start", "suspension_end", "suspended_by", "suspended_at"])
+
+    notify_user(
+        recipient=s.user,
+        title="Hostel Resident Access Suspended",
+        message=f"You have been suspended from entering or residing in the hostel by Administration. Reason: {reason}.",
+        category="general",
+        link=reverse("home"),
+        actor=actor,
+    )
+    if s.parent and s.parent.user:
+        notify_user(
+            recipient=s.parent.user,
+            title=f"Ward Suspended: {s.user.display_name}",
+            message=f"Your ward {s.user.display_name} ({s.roll_no}) has been suspended from entering the hostel by Administration. Reason: {reason}.",
+            category="general",
+            link=reverse("child", args=[s.pk]),
+            actor=actor,
+        )
+
+    wardens = list(m.User.objects.filter(role="warden", is_active=True))
+    if wardens:
+        notify_users(
+            recipients=wardens,
+            title=f"Student Suspended: {s.user.display_name} ({s.roll_no})",
+            message=f"Suspension enacted by Admin {actor.display_name}. Student is barred from hostel entry. Reason: {reason}.",
+            category="general",
+            link=reverse("student_detail", args=[s.pk]),
+            actor=actor,
+        )
+
+    date_desc = f"From {date_s(start_date)} to {date_s(end_date)}" if end_date else f"From {date_s(start_date)} (Until further notice)"
+    announcement_body = (
+        f"Resident: {s.user.display_name} ({s.roll_no})\n"
+        f"Details: {reason}\n"
+        f"Period: {date_desc}\n\n"
+        f"Notice: The student is barred from entering the hostel premises during this period."
+    )
+    m.Announcement.objects.create(
+        title=f"Suspension Notice: {s.user.display_name} ({s.roll_no})",
+        body=announcement_body,
+        audience="student",
+        student=s,
+        room=None,
+        created_by=actor,
+    )
+
+
+def _lift_student_suspension(s, actor):
+    """Revoke hostel suspension, clear suspension announcements, and notify student and parent."""
+    s.is_suspended = False
+    s.suspension_reason = ""
+    s.suspension_start = None
+    s.suspension_end = None
+    s.save(update_fields=["is_suspended", "suspension_reason", "suspension_start", "suspension_end"])
+
+    m.Announcement.objects.filter(student=s, title__startswith="Suspension Notice:").delete()
+
+    notify_user(
+        recipient=s.user,
+        title="Hostel Suspension Lifted",
+        message="Your hostel suspension has been revoked by Administration. Entry and resident access are restored.",
+        category="general",
+        link=reverse("home"),
+        actor=actor,
+    )
+    if s.parent and s.parent.user:
+        notify_user(
+            recipient=s.parent.user,
+            title=f"Suspension Lifted: {s.user.display_name}",
+            message=f"The hostel suspension for your ward {s.user.display_name} has been lifted. Hostel entry access is reinstated.",
+            category="general",
+            link=reverse("child", args=[s.pk]),
+            actor=actor,
+        )
+
+
 @role_required("admin")
 @require_POST
 def student_suspend(request, pk):
@@ -1586,63 +1824,7 @@ def student_suspend(request, pk):
         messages.error(request, "Suspension end date cannot be earlier than start date.")
         return redirect("student_detail", pk=pk)
 
-    s.is_suspended = True
-    s.suspension_reason = reason
-    s.suspension_start = start_date
-    s.suspension_end = end_date
-    s.suspended_by = request.user
-    s.suspended_at = timezone.now()
-    s.save(update_fields=["is_suspended", "suspension_reason", "suspension_start", "suspension_end", "suspended_by", "suspended_at"])
-
-    # Notify student
-    notify_user(
-        recipient=s.user,
-        title="Hostel Resident Access Suspended",
-        message=f"You have been suspended from entering or residing in the hostel by Administration. Reason: {reason}.",
-        category="general",
-        link=reverse("home"),
-        actor=request.user,
-    )
-    # Notify parent if linked
-    if s.parent and s.parent.user:
-        notify_user(
-            recipient=s.parent.user,
-            title=f"Ward Suspended: {s.user.display_name}",
-            message=f"Your ward {s.user.display_name} ({s.roll_no}) has been suspended from entering the hostel by Administration. Reason: {reason}.",
-            category="general",
-            link=reverse("child", args=[s.pk]),
-            actor=request.user,
-        )
-
-    # Notify wardens
-    wardens = list(m.User.objects.filter(role="warden", is_active=True))
-    if wardens:
-        notify_users(
-            recipients=wardens,
-            title=f"Student Suspended: {s.user.display_name} ({s.roll_no})",
-            message=f"Suspension enacted by Admin {request.user.display_name}. Student is barred from hostel entry. Reason: {reason}.",
-            category="general",
-            link=reverse("student_detail", args=[s.pk]),
-            actor=request.user,
-        )
-
-    # Broadcast announcement to all students (and suspended student's parent)
-    date_desc = f"From {date_s(start_date)} to {date_s(end_date)}" if end_date else f"From {date_s(start_date)} (Until further notice)"
-    announcement_body = (
-        f"Resident: {s.user.display_name} ({s.roll_no})\n"
-        f"Details: {reason}\n"
-        f"Period: {date_desc}\n\n"
-        f"Notice: The student is barred from entering the hostel premises during this period."
-    )
-    m.Announcement.objects.create(
-        title=f"Suspension Notice: {s.user.display_name} ({s.roll_no})",
-        body=announcement_body,
-        audience="student",
-        student=s,
-        room=None,
-        created_by=request.user,
-    )
-
+    _enact_student_suspension(s, request.user, reason, start_date, end_date)
     messages.success(request, f"Student {s.user.display_name} ({s.roll_no}) has been suspended. Entry to the hostel is barred.")
     return redirect("student_detail", pk=pk)
 
@@ -1651,33 +1833,7 @@ def student_suspend(request, pk):
 @require_POST
 def student_reinstate(request, pk):
     s = get_object_or_404(m.Student.objects.select_related("user", "parent__user"), pk=pk)
-    s.is_suspended = False
-    s.suspension_reason = ""
-    s.suspension_start = None
-    s.suspension_end = None
-    s.save(update_fields=["is_suspended", "suspension_reason", "suspension_start", "suspension_end"])
-
-    # Clear suspension announcement
-    m.Announcement.objects.filter(student=s, title__startswith="Suspension Notice:").delete()
-
-    notify_user(
-        recipient=s.user,
-        title="Hostel Suspension Lifted",
-        message="Your hostel suspension has been revoked by Administration. Entry and resident access are restored.",
-        category="general",
-        link=reverse("home"),
-        actor=request.user,
-    )
-    if s.parent and s.parent.user:
-        notify_user(
-            recipient=s.parent.user,
-            title=f"Suspension Lifted: {s.user.display_name}",
-            message=f"The hostel suspension for your ward {s.user.display_name} has been lifted. Hostel entry access is reinstated.",
-            category="general",
-            link=reverse("child", args=[s.pk]),
-            actor=request.user,
-        )
-
+    _lift_student_suspension(s, request.user)
     messages.success(request, f"Suspension lifted for {s.user.display_name}. Hostel entry access has been reinstated.")
     return redirect("student_detail", pk=pk)
 
