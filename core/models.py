@@ -8,15 +8,116 @@ from django.db import models
 from django.db.models import Sum
 
 
+class Building(models.Model):
+    YEAR_CHOICES = [(1, "1st Year"), (2, "2nd Year"), (3, "3rd Year"), (4, "4th Year")]
+    name = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=12, unique=True)
+    description = models.CharField(max_length=255, blank=True)
+    allowed_years = models.CharField(
+        max_length=20,
+        default="1,2,3,4",
+        help_text="Comma-separated allowed academic years (e.g. '1' or '2,3,4')",
+    )
+    is_first_year_only = models.BooleanField("1st-Year Only (Anti-Ragging Block)", default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["code", "name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+    @property
+    def allowed_years_list(self):
+        return sorted(
+            {
+                int(y.strip())
+                for y in (self.allowed_years or "").split(",")
+                if y.strip().isdigit() and int(y.strip()) in (1, 2, 3, 4)
+            }
+        )
+
+    @property
+    def allowed_years_display(self):
+        labels = dict(self.YEAR_CHOICES)
+        yrs = [1] if self.is_first_year_only else self.allowed_years_list
+        return ", ".join(labels[y] for y in yrs if y in labels) or "All Years"
+
+    def allows_year(self, year):
+        if year is None:
+            return True
+        try:
+            yr = int(year)
+        except (TypeError, ValueError):
+            return False
+        if self.is_first_year_only:
+            return yr == 1
+        allowed = self.allowed_years_list
+        return yr in allowed if allowed else True
+
+    def clean(self):
+        self.code = (self.code or "").strip().upper()
+        self.name = (self.name or "").strip()
+        if self.is_first_year_only:
+            self.allowed_years = "1"
+        else:
+            yrs = self.allowed_years_list
+            self.allowed_years = ",".join(str(y) for y in yrs) if yrs else "1,2,3,4"
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
+    @property
+    def total_rooms(self):
+        return self.rooms.count()
+
+    @property
+    def total_capacity(self):
+        return sum(r.capacity for r in self.rooms.all())
+
+    @property
+    def occupied_beds(self):
+        return RoomAllocation.objects.filter(room__building=self, end_date__isnull=True).count()
+
+    @property
+    def vacant_beds(self):
+        return sum(r.vacancy for r in self.rooms.all())
+
+
 class User(AbstractUser):
     ROLES = [("admin", "Super Admin"), ("warden", "Warden"), ("student", "Student"), ("parent", "Parent")]
     role = models.CharField(max_length=10, choices=ROLES, default="student")
     phone = models.CharField(max_length=20, blank=True)
     must_change_password = models.BooleanField(default=False)
+    assigned_building = models.ForeignKey(
+        Building,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="wardens",
+        help_text="Leave empty for Head Warden (full cross-building access). Assign a building to lock this warden exclusively to that building.",
+    )
 
     @property
     def is_staff_role(self):
         return self.role in ("admin", "warden")
+
+    @property
+    def is_head_warden(self):
+        return self.role == "warden" and self.assigned_building_id is None
+
+    @property
+    def scoped_building(self):
+        return self.assigned_building if self.role == "warden" else None
+
+    @property
+    def warden_role_label(self):
+        if self.role != "warden":
+            return self.get_role_display()
+        if self.assigned_building_id:
+            return f"{self.assigned_building.name} Warden"
+        return "Head Warden"
 
     @property
     def display_name(self):
@@ -31,9 +132,11 @@ class Parent(models.Model):
 
 
 class Student(models.Model):
+    YEAR_CHOICES = Building.YEAR_CHOICES
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="student")
     roll_no = models.CharField("Roll no.", max_length=30, unique=True)
     course = models.CharField(max_length=100, blank=True)
+    year_of_study = models.PositiveSmallIntegerField("Academic year", choices=YEAR_CHOICES, default=1)
     parent = models.ForeignKey(Parent, null=True, blank=True, on_delete=models.SET_NULL, related_name="children")
     is_active = models.BooleanField("Currently staying", default=True)
 
@@ -55,9 +158,22 @@ class Student(models.Model):
         self.user.delete()  # cascades to the student record
 
     @property
+    def year_label(self):
+        return self.get_year_of_study_display()
+
+    @property
+    def year_short(self):
+        return {1: "1st Yr", 2: "2nd Yr", 3: "3rd Yr", 4: "4th Yr"}.get(self.year_of_study, f"Yr {self.year_of_study}")
+
+    @property
     def room(self):
-        a = self.allocations.filter(end_date__isnull=True).select_related("room").first()
+        a = self.allocations.filter(end_date__isnull=True).select_related("room__building").first()
         return a.room if a else None
+
+    @property
+    def building(self):
+        r = self.room
+        return r.building if r else None
 
     @property
     def fee_balance(self):
@@ -81,6 +197,7 @@ class Student(models.Model):
 
 
 class Room(models.Model):
+    building = models.ForeignKey(Building, null=True, blank=True, on_delete=models.CASCADE, related_name="rooms")
     block = models.CharField(max_length=20, default="A")
     number = models.CharField(max_length=20)
     capacity = models.PositiveSmallIntegerField(default=2)
@@ -88,10 +205,11 @@ class Room(models.Model):
     blacklist_reason = models.CharField("Blacklist cause", max_length=150, blank=True)
 
     class Meta:
-        unique_together = ("block", "number")
-        ordering = ["block", "number"]
+        unique_together = ("building", "block", "number")
+        ordering = ["building__code", "block", "number"]
 
-    def __str__(self):
+    @property
+    def short_code(self):
         if self.number and self.block:
             b = str(self.block).strip()
             num = str(self.number).strip()
@@ -101,6 +219,12 @@ class Room(models.Model):
                 return f"{b}-{num[len(b):].strip()}"
             return f"{b}-{num}"
         return self.number or ""
+
+    def __str__(self):
+        code = self.short_code
+        if self.building_id:
+            return f"{self.building.code} · {code}"
+        return code
 
     @property
     def occupied(self):
@@ -421,6 +545,7 @@ class Announcement(models.Model):
     title = models.CharField(max_length=150)
     body = models.TextField()
     audience = models.CharField(max_length=10, choices=AUDIENCE, default="all")
+    building = models.ForeignKey(Building, null=True, blank=True, on_delete=models.CASCADE, related_name="announcements")
     room = models.ForeignKey("Room", null=True, blank=True, on_delete=models.CASCADE, related_name="announcements")
     student = models.ForeignKey("Student", null=True, blank=True, on_delete=models.CASCADE, related_name="announcements")
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
@@ -432,6 +557,8 @@ class Announcement(models.Model):
     def __str__(self):
         if self.room:
             return f"[{self.room}] {self.title}"
+        if self.building_id:
+            return f"[{self.building.code}] {self.title}"
         return self.title
 
 
