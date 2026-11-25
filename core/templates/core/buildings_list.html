@@ -1,0 +1,114 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Hostel Buildings & Segregation Management</h4>
+        <span class="badge text-bg-primary rounded-pill">{{ buildings|length }} Building{{ buildings|length|pluralize }}</span>
+      </div>
+      <div class="text-secondary small">
+        Manage residential buildings, anti-ragging academic year restrictions, capacity, and assigned wardens separately.
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary fw-semibold" href="{% url 'wardens' %}">Manage Wardens</a>
+      <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'buildings_new' %}">+ Add Building</a>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  {% for item in building_cards %}
+    {% with b=item.building %}
+    <div class="col-12 col-lg-6">
+      <div class="card h-100 border-0 shadow-sm bg-white p-4">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+          <div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+              <span class="badge text-bg-dark fs-6">{{ b.code }}</span>
+              <h5 class="mb-0 fw-bold" style="color:var(--navy);">{{ b.name }}</h5>
+              {% if b.is_first_year_only %}
+                <span class="badge text-bg-danger rounded-pill">1st Year Only (Anti-Ragging Block)</span>
+              {% else %}
+                <span class="badge text-bg-primary rounded-pill">{{ b.allowed_years_display }}</span>
+              {% endif %}
+              {% if not b.is_active %}
+                <span class="badge text-bg-secondary rounded-pill">Inactive</span>
+              {% endif %}
+            </div>
+            <div class="text-secondary small">{{ b.description|default:"No description provided." }}</div>
+          </div>
+          <div class="d-flex gap-1">
+            <a href="{% url 'buildings_edit' b.pk %}" class="btn btn-sm btn-outline-secondary">Edit</a>
+            <a href="{% url 'buildings_delete' b.pk %}" class="btn btn-sm btn-outline-danger">Delete</a>
+          </div>
+        </div>
+
+        <div class="row g-2 mb-3 text-center">
+          <div class="col-3">
+            <div class="p-2 rounded bg-light border">
+              <div class="fw-bold fs-5 text-dark">{{ item.rooms_count }}</div>
+              <div class="text-muted" style="font-size:0.72rem;">Rooms</div>
+            </div>
+          </div>
+          <div class="col-3">
+            <div class="p-2 rounded bg-light border">
+              <div class="fw-bold fs-5 text-dark">{{ item.capacity }}</div>
+              <div class="text-muted" style="font-size:0.72rem;">Total Beds</div>
+            </div>
+          </div>
+          <div class="col-3">
+            <div class="p-2 rounded bg-light border">
+              <div class="fw-bold fs-5 text-primary">{{ item.occupied }}</div>
+              <div class="text-muted" style="font-size:0.72rem;">Occupied</div>
+            </div>
+          </div>
+          <div class="col-3">
+            <div class="p-2 rounded bg-light border">
+              <div class="fw-bold fs-5 text-success">{{ item.vacant }}</div>
+              <div class="text-muted" style="font-size:0.72rem;">Vacant</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="progress mb-3" style="height: 8px;">
+          <div class="progress-bar {% if b.is_first_year_only %}bg-danger{% else %}bg-primary{% endif %}"
+               role="progressbar" style="width: {{ item.occupancy_pct }}%;"></div>
+        </div>
+
+        <div class="mb-3 pb-3 border-bottom small">
+          <div class="fw-semibold text-secondary mb-1">Assigned Building Wardens:</div>
+          {% if item.wardens %}
+            <div class="d-flex flex-wrap gap-1">
+              {% for w in item.wardens %}
+                <span class="badge text-bg-light border text-dark">{{ w.display_name }} ({{ w.username }})</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <span class="text-muted">No building-locked warden assigned (managed by Admin & Head Wardens).</span>
+          {% endif %}
+        </div>
+
+        <div class="d-flex flex-wrap gap-2 mt-auto">
+          <a href="{% url 'home' %}?building={{ b.pk }}" class="btn btn-sm btn-navy fw-semibold">Dashboard</a>
+          <a href="{% url 'rooms' %}?building={{ b.pk }}" class="btn btn-sm btn-outline-primary">Rooms</a>
+          <a href="{% url 'students' %}?building={{ b.pk }}" class="btn btn-sm btn-outline-primary">Students</a>
+          <a href="{% url 'attendance' %}?building={{ b.pk }}" class="btn btn-sm btn-outline-secondary">Roll Call</a>
+          <a href="{% url 'fees' %}?building={{ b.pk }}" class="btn btn-sm btn-outline-secondary">Fees</a>
+          <a href="{% url 'fees_export_pdf' %}?building={{ b.pk }}" class="btn btn-sm btn-outline-danger">Fees PDF</a>
+        </div>
+      </div>
+    </div>
+    {% endwith %}
+  {% empty %}
+    <div class="col-12">
+      <div class="card p-5 text-center text-secondary bg-white border-0 shadow-sm">
+        <p class="mb-2 fs-5">No hostel buildings configured yet.</p>
+        <div>
+          <a href="{% url 'buildings_new' %}" class="btn btn-sm btn-navy">+ Add Building</a>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

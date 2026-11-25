@@ -73,6 +73,55 @@ def role_required(*roles):
 staff = role_required(*STAFF)
 
 
+def _get_building_scope(request):
+    """
+    Resolve active building scope for staff:
+    - Building-locked Warden (assigned_building set): strictly locked to that building (403 on other buildings).
+    - Admin / Head Warden (assigned_building is None): free to view all or filter by ?building=<id>.
+    """
+    u = request.user
+    all_buildings = list(m.Building.objects.filter(is_active=True).order_by("code", "name"))
+    locked = getattr(u, "scoped_building", None) if getattr(u, "role", None) == "warden" else None
+    if locked is not None:
+        raw_b = (request.GET.get("building") or request.POST.get("building") or "").strip()
+        if raw_b and raw_b.lower() not in ("all", "") and str(locked.pk) != raw_b and locked.code.lower() != raw_b.lower():
+            raise PermissionDenied
+        return [locked], locked, True
+
+    raw_b = (request.GET.get("building") or "").strip()
+    active = None
+    if raw_b and raw_b.lower() != "all":
+        if raw_b.isdigit():
+            active = next((b for b in all_buildings if b.pk == int(raw_b)), None)
+        else:
+            active = next((b for b in all_buildings if b.code.lower() == raw_b.lower()), None)
+    return all_buildings, active, False
+
+
+def _student_matches_building(s, building):
+    """Return True if student belongs to building (by active room or compatible unallocated year)."""
+    if building is None:
+        return True
+    rm = s.room
+    if rm is not None:
+        return rm.building_id == building.pk
+    return building.allows_year(s.year_of_study)
+
+
+def _assert_building_access(request, building=None, room=None, student=None):
+    """Raise PermissionDenied if a building-locked warden accesses records outside their building."""
+    u = request.user
+    locked = getattr(u, "scoped_building", None) if getattr(u, "role", None) == "warden" else None
+    if locked is None:
+        return
+    if building is not None and building.pk != locked.pk:
+        raise PermissionDenied
+    if room is not None and room.building_id != locked.pk:
+        raise PermissionDenied
+    if student is not None and not _student_matches_building(student, locked):
+        raise PermissionDenied
+
+
 def show(request, template, **ctx):
     return render(request, f"core/{template}.html", ctx)
 
@@ -102,8 +151,21 @@ def crud(key, model, form_class, title, columns, roles=STAFF, create=True, delet
 
     @role_required(*roles)
     def lst(request):
+        locked = getattr(request.user, "scoped_building", None)
         rows = []
         for o in objs():
+            if locked is not None:
+                if isinstance(o, m.RoomAllocation) and o.room.building_id != locked.pk:
+                    continue
+                if isinstance(o, (m.Complaint, m.Fee)) and not _student_matches_building(o.student, locked):
+                    continue
+                if isinstance(o, m.Announcement):
+                    if o.building_id and o.building_id != locked.pk:
+                        continue
+                    if o.room_id and o.room.building_id != locked.pk:
+                        continue
+                    if o.student_id and not _student_matches_building(o.student, locked):
+                        continue
             rows.append({"cells": [c(o) for _, c in columns], "edit": reverse(f"{key}_edit", args=[o.pk]),
                          "delete": reverse(f"{key}_delete", args=[o.pk]) if delete else None,
                          "actions": actions(o) if actions else []})
@@ -113,8 +175,22 @@ def crud(key, model, form_class, title, columns, roles=STAFF, create=True, delet
     @role_required(*roles)
     def edit(request, pk=None):
         obj = get_object_or_404(model, pk=pk) if pk else None
+        if obj is not None:
+            if isinstance(obj, m.Room):
+                _assert_building_access(request, room=obj)
+            elif isinstance(obj, m.Student):
+                _assert_building_access(request, student=obj)
+            elif isinstance(obj, m.RoomAllocation):
+                _assert_building_access(request, room=obj.room, student=obj.student)
+            elif isinstance(obj, (m.Complaint, m.Fee)):
+                _assert_building_access(request, student=obj.student)
+            elif isinstance(obj, m.Announcement) and obj.building_id:
+                _assert_building_access(request, building=obj.building)
         initial = request.GET.dict() if (request.method == "GET" and not obj) else None
-        form = form_class(request.POST or None, initial=initial, instance=obj)
+        fk = {}
+        if form_class in (f.RoomForm, f.AllocationForm, f.AnnouncementForm):
+            fk["building"] = getattr(request.user, "scoped_building", None)
+        form = form_class(request.POST or None, initial=initial, instance=obj, **fk)
         if request.method == "POST" and form.is_valid():
             form.save()
             messages.success(request, "Saved.")
@@ -124,6 +200,12 @@ def crud(key, model, form_class, title, columns, roles=STAFF, create=True, delet
     @role_required(*roles)
     def remove(request, pk):
         obj = get_object_or_404(model, pk=pk)
+        if isinstance(obj, m.Room):
+            _assert_building_access(request, room=obj)
+        elif isinstance(obj, m.Student):
+            _assert_building_access(request, student=obj)
+        elif isinstance(obj, (m.Complaint, m.Fee)):
+            _assert_building_access(request, student=obj.student)
         if request.method == "POST":
             obj.delete()
             messages.success(request, "Deleted.")
@@ -191,13 +273,39 @@ V["fees"] = crud("fees", m.Fee, f.FeeForm, "Fees", [
     ("Status", lambda x: badge(x.status))],
     qs=fee_list_qs, actions=fee_actions, add_label="Add custom fee")
 V["announcements"] = crud("announcements", m.Announcement, f.AnnouncementForm, "Announcements", [
-    ("Title", lambda a: a.title), ("For", lambda a: a.get_audience_display()), ("Posted", lambda a: date_s(a.created_at))],
+    ("Title", lambda a: a.title), ("For", lambda a: a.get_audience_display()),
+    ("Building / Target", lambda a: a.room or a.building or "All Buildings"),
+    ("Posted", lambda a: date_s(a.created_at))],
     add_label="Post")
 V["wardens"] = crud("wardens", m.User, f.WardenEditForm, "Wardens", [
-    ("Name", lambda u: u.display_name), ("Username", lambda u: u.username), ("Phone", lambda u: u.phone or "—")],
-    roles=("admin",), qs=lambda: m.User.objects.filter(role="warden"), add_label="Add warden")
+    ("Name", lambda u: u.display_name), ("Username", lambda u: u.username), ("Phone", lambda u: u.phone or "—"),
+    ("Scope / Tier", lambda u: format_html('<span class="badge text-bg-{}">{}</span>', "primary" if u.is_head_warden else "warning text-dark", "Head Warden (All Buildings)" if u.is_head_warden else u.warden_role_label))],
+    roles=("admin",), qs=lambda: m.User.objects.filter(role="warden").select_related("assigned_building"), add_label="Add warden")
+V["buildings"] = crud("buildings", m.Building, f.BuildingForm, "Buildings", [
+    ("Code", lambda b: b.code), ("Name", lambda b: b.name), ("Allowed Years", lambda b: b.allowed_years_display)],
+    roles=("admin",), add_label="Add building")
 
-# the generic edit for wardens/fees needs special create logic; override below
+
+@role_required("admin")
+def buildings_list(request):
+    buildings = list(m.Building.objects.prefetch_related("rooms", "wardens").order_by("code", "name"))
+    building_cards = []
+    for b in buildings:
+        rooms = list(b.rooms.all())
+        cap = sum(r.capacity for r in rooms)
+        occ = m.RoomAllocation.objects.filter(room__building=b, end_date__isnull=True).count()
+        vac = sum(r.vacancy for r in rooms)
+        pct = round(100 * occ / cap) if cap > 0 else 0
+        building_cards.append({
+            "building": b,
+            "rooms_count": len(rooms),
+            "capacity": cap,
+            "occupied": occ,
+            "vacant": vac,
+            "occupancy_pct": pct,
+            "wardens": [w for w in b.wardens.filter(role="warden", is_active=True)],
+        })
+    return show(request, "buildings_list", buildings=buildings, building_cards=building_cards)
 
 
 @role_required("admin")
@@ -207,8 +315,17 @@ def warden_new(request):
         d = form.cleaned_data
         first, _, last = d["name"].partition(" ")
         from django.conf import settings
-        m.User.objects.create_user(username=d["username"], password=settings.DEFAULT_PASSWORD, first_name=first, last_name=last,
-                                   role="warden", phone=d["phone"], is_staff=True, must_change_password=True)
+        m.User.objects.create_user(
+            username=d["username"],
+            password=settings.DEFAULT_PASSWORD,
+            first_name=first,
+            last_name=last,
+            role="warden",
+            phone=d["phone"],
+            assigned_building=d.get("assigned_building"),
+            is_staff=True,
+            must_change_password=True,
+        )
         messages.success(request, "Warden created with the default password; they must change it on first login.")
         return redirect("wardens")
     return show(request, "form", title="Add warden", form=form, back=reverse("wardens"))

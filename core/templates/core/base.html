@@ -97,7 +97,7 @@ body{background:var(--sky);min-height:100vh}
        </div>
      </div>
 
-     <span class="text-secondary small d-none d-sm-inline">{{ user.display_name }} · {{ user.get_role_display }}</span>
+     <span class="text-secondary small d-none d-sm-inline">{{ user.display_name }} · {% if user.role == 'warden' %}{{ warden_role_label|default:user.get_role_display }}{% else %}{{ user.get_role_display }}{% endif %}</span>
      <a class="btn btn-sm btn-outline-secondary" href="{% url 'password' %}">Password</a>
      <form method="post" action="{% url 'logout' %}" class="d-inline">{% csrf_token %}<button class="btn btn-sm btn-navy">Log out</button></form>
    </div>

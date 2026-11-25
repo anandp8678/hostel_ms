@@ -7,6 +7,7 @@ def nav(request):
                  ("attendance", "Attendance"), ("leaves", "Leave requests"), ("complaints", "Complaints"),
                  ("menu_manage", "Meal menu"), ("fees", "Fees"), ("announcements", "Announcements"), ("reports", "Reports")]
         if u.role == "admin":
+            items.insert(3, ("buildings", "Buildings"))
             items.append(("wardens", "Wardens"))
     elif u.role == "student":
         items = [("home", "Dashboard"), ("my_announcements", "Announcements"), ("student_rooms", "Room directory"), ("my_attendance", "Attendance"),
@@ -23,4 +24,6 @@ def nav(request):
         "nav_items": items,
         "unread_notifs_count": unread_notifs_count,
         "recent_notifications": recent_notifications,
+        "scoped_building": getattr(u, "scoped_building", None),
+        "warden_role_label": getattr(u, "warden_role_label", ""),
     }
