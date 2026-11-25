@@ -676,57 +676,59 @@ def home(request):
     u = request.user
     if u.role in STAFF:
         today = date.today()
+        buildings, active_building, is_building_locked = _get_building_scope(request)
 
-        # Student metrics
-        all_students = m.Student.objects.select_related("user")
-        active_students = all_students.filter(is_active=True)
-        active_student_count = active_students.count()
-        inactive_student_count = all_students.filter(is_active=False).count()
+        # Student metrics (respecting active/locked building)
+        all_students = list(
+            m.Student.objects.select_related("user").prefetch_related(
+                Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+            )
+        )
+        scoped_students = [s for s in all_students if _student_matches_building(s, active_building)]
+        scoped_student_ids = [s.pk for s in scoped_students]
 
-        # Allocations
-        allocated_student_ids = set(m.RoomAllocation.objects.filter(end_date__isnull=True).values_list("student_id", flat=True))
-        allocated_count = len(allocated_student_ids)
+        active_scoped = [s for s in scoped_students if s.is_active]
+        active_student_count = len(active_scoped)
+        inactive_student_count = len(scoped_students) - active_student_count
+        allocated_count = sum(1 for s in active_scoped if s.room and (not active_building or s.room.building_id == active_building.pk))
         unallocated_count = max(0, active_student_count - allocated_count)
 
-        # Rooms & Beds
-        all_rooms = list(m.Room.objects.all())
+        # Rooms & Beds (respecting active/locked building)
+        rooms_qs = m.Room.objects.select_related("building").prefetch_related(
+            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
+        )
+        if active_building is not None:
+            rooms_qs = rooms_qs.filter(building=active_building)
+        all_rooms = list(rooms_qs)
         total_rooms = len(all_rooms)
         total_beds = sum(r.capacity for r in all_rooms)
-        occupied_beds = allocated_count
+        occupied_beds = sum(r.occupied for r in all_rooms)
         blacklisted_rooms = [r for r in all_rooms if r.is_blacklisted]
         blacklisted_beds = sum(r.capacity for r in blacklisted_rooms)
         free_beds = max(0, total_beds - occupied_beds - blacklisted_beds)
         effective_capacity = total_beds - blacklisted_beds
         occupancy_pct = round(100 * occupied_beds / effective_capacity) if effective_capacity > 0 else 0
 
-        # Floor-wise stats for bar chart (G=Ground, F=First, S=Second, etc.)
+        # Floor-wise stats for bar chart
         floor_dict = {}
         for r in all_rooms:
-            fl_label = r.floor_display
-            b = floor_dict.setdefault(fl_label, {"rooms": 0, "capacity": 0, "occupied": 0, "free": 0})
+            fl_label = f"{r.building.code} · {r.floor_display}" if (active_building is None and r.building_id) else r.floor_display
+            b = floor_dict.setdefault(fl_label, {"rooms": 0, "capacity": 0, "occupied": 0, "free": 0, "b_code": r.building.code if r.building_id else "", "fl_code": r.block})
             b["rooms"] += 1
             b["capacity"] += r.capacity
             b["occupied"] += r.occupied
             b["free"] = max(0, b["capacity"] - b["occupied"])
 
-        def floor_sort_key(label):
-            l = label.lower()
-            if "basement" in l: return -1
-            if "ground" in l or "(g)" in l: return 0
-            if "first" in l or "(f)" in l: return 1
-            if "second" in l or "(s)" in l: return 2
-            if "third" in l or "(t)" in l: return 3
-            if "fourth" in l or "(4)" in l: return 4
-            if "fifth" in l or "(5)" in l: return 5
-            return 100
-
-        block_labels = sorted(floor_dict.keys(), key=floor_sort_key)
+        block_labels = sorted(
+            floor_dict.keys(),
+            key=lambda k: (floor_dict[k]["b_code"], floor_order_key(floor_dict[k]["fl_code"])),
+        )
         block_capacities = [floor_dict[k]["capacity"] for k in block_labels]
         block_occupied = [floor_dict[k]["occupied"] for k in block_labels]
         block_free = [floor_dict[k]["free"] for k in block_labels]
 
         # Attendance metrics for today
-        today_att = m.Attendance.objects.filter(date=today)
+        today_att = m.Attendance.objects.filter(date=today, student_id__in=scoped_student_ids)
         att_marked_count = today_att.count()
         att_present = today_att.filter(status="P").count()
         att_absent = today_att.filter(status="A").count()
@@ -736,13 +738,22 @@ def home(request):
         today_att_pct = round(100 * att_present / att_total_eval) if att_total_eval > 0 else (100 if att_present > 0 else 0)
 
         # Pending items & alerts
-        pending_leaves = list(m.LeaveRequest.objects.filter(status="Pending").select_related("student__user").order_by("from_date")[:4])
-        pending_leaves_count = m.LeaveRequest.objects.filter(status="Pending").count()
-        open_complaints = list(m.Complaint.objects.exclude(status="Resolved").select_related("student__user").order_by("-created_at")[:4])
-        open_complaints_count = m.Complaint.objects.exclude(status="Resolved").count()
+        pending_leaves = list(
+            m.LeaveRequest.objects.filter(status="Pending", student_id__in=scoped_student_ids)
+            .select_related("student__user")
+            .order_by("from_date")[:4]
+        )
+        pending_leaves_count = m.LeaveRequest.objects.filter(status="Pending", student_id__in=scoped_student_ids).count()
+        open_complaints = list(
+            m.Complaint.objects.filter(student_id__in=scoped_student_ids)
+            .exclude(status="Resolved")
+            .select_related("student__user")
+            .order_by("-created_at")[:4]
+        )
+        open_complaints_count = m.Complaint.objects.filter(student_id__in=scoped_student_ids).exclude(status="Resolved").count()
 
         # Fees
-        all_fees = list(m.Fee.objects.all())
+        all_fees = list(m.Fee.objects.filter(student_id__in=scoped_student_ids).prefetch_related("payments"))
         total_fee_amount = sum(f.amount for f in all_fees)
         total_balance_amount = sum(f.balance for f in all_fees)
         total_paid_amount = max(0, total_fee_amount - total_balance_amount)
@@ -751,6 +762,28 @@ def home(request):
 
         # Today's menu
         today_menu = list(m.MealMenu.objects.filter(day=today.weekday()))
+
+        # Per-building overview strip when viewing all buildings
+        building_summaries = []
+        if active_building is None and len(buildings) > 1:
+            all_db_rooms = list(m.Room.objects.select_related("building").prefetch_related(
+                Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
+            ))
+            for b in buildings:
+                b_rooms = [r for r in all_db_rooms if r.building_id == b.pk]
+                b_cap = sum(r.capacity for r in b_rooms)
+                b_occ = sum(r.occupied for r in b_rooms)
+                b_vac = sum(r.vacancy for r in b_rooms)
+                b_students = sum(1 for s in all_students if s.is_active and _student_matches_building(s, b))
+                building_summaries.append({
+                    "building": b,
+                    "rooms": len(b_rooms),
+                    "capacity": b_cap,
+                    "occupied": b_occ,
+                    "vacant": b_vac,
+                    "students": b_students,
+                    "pct": round(100 * b_occ / b_cap) if b_cap > 0 else 0,
+                })
 
         # Backward compatibility for any template referencing stats
         stats = [
@@ -767,6 +800,10 @@ def home(request):
             "dashboard",
             stats=stats,
             today=today,
+            buildings=buildings,
+            active_building=active_building,
+            is_building_locked=is_building_locked,
+            building_summaries=building_summaries,
             active_student_count=active_student_count,
             inactive_student_count=inactive_student_count,
             allocated_count=allocated_count,
