@@ -312,6 +312,11 @@ class RoomAllocation(models.Model):
             if self.room.is_blacklisted:
                 cause = f" ({self.room.blacklist_reason})" if self.room.blacklist_reason else ""
                 raise ValidationError(f"Room {self.room} is blacklisted{cause} and cannot accept allocations.")
+            if self.room.building_id and not self.room.building.allows_year(self.student.year_of_study):
+                raise ValidationError(
+                    f"Anti-ragging policy violation: {self.student.year_label} students cannot be allocated to "
+                    f"{self.room.building.name} (restricted to {self.room.building.allowed_years_display})."
+                )
             others = RoomAllocation.objects.filter(end_date__isnull=True).exclude(pk=self.pk)
             if others.filter(student_id=self.student_id).exists():
                 raise ValidationError("This student already has an active room. Vacate it first.")

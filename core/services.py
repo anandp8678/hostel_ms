@@ -7,7 +7,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from .models import Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
+from .models import Building, Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
 
 
 def _split(name):
@@ -29,6 +29,10 @@ def _normalize_key(k):
         return "capacity"
     if clean in ("block", "hostelblock", "blockno"):
         return "block"
+    if clean in ("building", "buildingcode", "buildingname", "hostelbuilding", "wing"):
+        return "building"
+    if clean in ("year", "yearofstudy", "academicyear", "studyyear", "yr"):
+        return "year_of_study"
     if clean in ("startdate", "fromdate", "from", "start", "date", "allocateddate", "allocationdate"):
         return "start_date"
     if clean in ("name", "studentname", "student"):
@@ -42,6 +46,44 @@ def _normalize_key(k):
     if clean in ("parentphone", "parentmobile", "parentcontact", "fatherphone", "guardianphone", "parentcell"):
         return "parent_phone"
     return clean
+
+
+def parse_year(val, default=1):
+    """Parse academic year strings such as '1', '1st Year', '2', 'Second Year' into 1..4."""
+    if val is None or str(val).strip() == "":
+        return default
+    s = str(val).strip().lower()
+    if s in ("1", "1st", "first", "1st year", "first year", "i"):
+        return 1
+    if s in ("2", "2nd", "second", "2nd year", "second year", "ii"):
+        return 2
+    if s in ("3", "3rd", "third", "3rd year", "third year", "iii"):
+        return 3
+    if s in ("4", "4th", "fourth", "4th year", "fourth year", "iv"):
+        return 4
+    digits = re.search(r"[1-4]", s)
+    if digits:
+        return int(digits.group())
+    raise ValueError(f"Invalid academic year '{val}'. Must be 1, 2, 3, or 4.")
+
+
+def find_building(val=""):
+    """Resolve a Building instance from a Building object, pk, code, or name."""
+    if not val:
+        return None
+    if isinstance(val, Building):
+        return val
+    s = str(val).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        b = Building.objects.filter(pk=int(s)).first()
+        if b:
+            return b
+    b = Building.objects.filter(code__iexact=s).first()
+    if b:
+        return b
+    return Building.objects.filter(name__iexact=s).first()
 
 
 def parse_date(val):
@@ -58,40 +100,80 @@ def parse_date(val):
     return date.today()
 
 
-def find_room(room_str="", block_str=""):
+def _pick_unambiguous_room(qs, student_year=None):
+    """Return single matching room, using student_year compatibility to disambiguate across buildings."""
+    cnt = qs.count()
+    if cnt == 1:
+        return qs.first()
+    if cnt > 1 and student_year is not None:
+        compatible = [r for r in qs.select_related("building") if not r.building_id or r.building.allows_year(student_year)]
+        if len(compatible) == 1:
+            return compatible[0]
+    return None
+
+
+def find_room(room_str="", block_str="", building=None, student_year=None):
     room_str = str(room_str or "").strip()
     block_str = str(block_str or "").strip()
+    b_obj = find_building(building)
+
+    # Support composite room formats like "B1 · G-101" or "B1/G-101"
+    for sep in ("·", "/"):
+        if sep in room_str:
+            b_part, _, rest = room_str.partition(sep)
+            maybe_b = find_building(b_part.strip())
+            if maybe_b:
+                b_obj = maybe_b
+                room_str = rest.strip()
+                break
+
+    qs = Room.objects.select_related("building")
+    if b_obj is not None:
+        qs = qs.filter(building=b_obj)
 
     if block_str and room_str:
-        r = Room.objects.filter(block__iexact=block_str, number__iexact=room_str).first()
+        r = _pick_unambiguous_room(qs.filter(block__iexact=block_str, number__iexact=room_str), student_year)
         if r:
             return r
 
     if not room_str:
         return None
 
+    # Handle "B1-G-101" (3-part prefix)
+    if room_str.count("-") >= 2:
+        first_part, _, rem = room_str.partition("-")
+        maybe_b = find_building(first_part.strip())
+        if maybe_b:
+            b_part, _, num_part = rem.partition("-")
+            r = _pick_unambiguous_room(
+                Room.objects.filter(building=maybe_b, block__iexact=b_part.strip(), number__iexact=num_part.strip()),
+                student_year,
+            )
+            if r:
+                return r
+
     if "-" in room_str:
         b, _, n = room_str.partition("-")
-        r = Room.objects.filter(block__iexact=b.strip(), number__iexact=n.strip()).first()
+        r = _pick_unambiguous_room(qs.filter(block__iexact=b.strip(), number__iexact=n.strip()), student_year)
         if r:
             return r
 
     if " " in room_str:
         b, n = room_str.split(None, 1)
-        r = Room.objects.filter(block__iexact=b.strip(), number__iexact=n.strip()).first()
+        r = _pick_unambiguous_room(qs.filter(block__iexact=b.strip(), number__iexact=n.strip()), student_year)
         if r:
             return r
 
     m = re.match(r"^([a-zA-Z]+)[ -]?(\w+)$", room_str)
     if m:
         b, n = m.group(1), m.group(2)
-        r = Room.objects.filter(block__iexact=b, number__iexact=n).first()
+        r = _pick_unambiguous_room(qs.filter(block__iexact=b, number__iexact=n), student_year)
         if r:
             return r
 
-    rooms_by_num = Room.objects.filter(number__iexact=room_str)
-    if rooms_by_num.count() == 1:
-        return rooms_by_num.first()
+    r = _pick_unambiguous_room(qs.filter(number__iexact=room_str), student_year)
+    if r:
+        return r
 
     return None
 
@@ -124,6 +206,12 @@ def allocate_student_to_room(student, room, start_date=None, vacate_previous=Tru
     if room.is_blacklisted:
         cause = f" ({room.blacklist_reason})" if room.blacklist_reason else ""
         raise ValidationError(f"Room {room} is blacklisted{cause} and cannot accept allocations.")
+
+    if room.building_id and not room.building.allows_year(student.year_of_study):
+        raise ValidationError(
+            f"Anti-ragging policy violation: {student.year_label} students cannot be allocated to "
+            f"{room.building.name} (restricted to {room.building.allowed_years_display})."
+        )
 
     if active_alloc and active_alloc.room_id == room.id:
         if not student.is_active:
@@ -217,7 +305,7 @@ class ImportResult(dict):
 
 
 @transaction.atomic
-def onboard_student(name, roll_no, course="", phone="", parent_name="", parent_phone="", room=None, start_date=None):
+def onboard_student(name, roll_no, course="", phone="", parent_name="", parent_phone="", room=None, start_date=None, year_of_study=1):
     """Create the student login, the parent login (shared between siblings) and optionally a room."""
     roll_no = (roll_no or "").strip()
     name = (name or "").strip()
@@ -225,10 +313,11 @@ def onboard_student(name, roll_no, course="", phone="", parent_name="", parent_p
         raise ValueError("Name and roll number are required.")
     if User.objects.filter(username=roll_no).exists():
         raise ValueError(f"Roll number {roll_no} already exists.")
+    yr = parse_year(year_of_study, default=1)
     first, last = _split(name)
     user = User.objects.create_user(username=roll_no, password=settings.DEFAULT_PASSWORD, first_name=first,
                                     last_name=last, role="student", phone=phone, must_change_password=True)
-    student = Student.objects.create(user=user, roll_no=roll_no, course=course)
+    student = Student.objects.create(user=user, roll_no=roll_no, course=course, year_of_study=yr)
     if parent_phone or parent_name:
         link_or_create_parent(student, parent_name, parent_phone)
     if room:
@@ -241,11 +330,11 @@ def onboard_student(name, roll_no, course="", phone="", parent_name="", parent_p
 def import_rows(rows):
     """
     Unified import for combined CSV:
-    Columns: name, roll_no, course, phone, parent_name, parent_phone, room, start_date.
+    Columns: name, roll_no, course, year_of_study, phone, parent_name, parent_phone, building, room, start_date.
     Handles:
-    - New students + parents
-    - Existing students updating personal / parent details
-    - Room allocation (with start_date, capacity validation, and vacating previous room)
+    - New students + parents (with academic year)
+    - Existing students updating personal / parent / year details
+    - Room allocation (with anti-ragging building validation, capacity validation, and vacating previous room)
     """
     created_count = 0
     updated_count = 0
@@ -259,7 +348,9 @@ def import_rows(rows):
         name = r.get("name", "")
         room_str = r.get("room", "")
         block_str = r.get("block", "")
+        building_str = r.get("building", "")
         course = r.get("course", "")
+        year_raw = r.get("year_of_study", "")
         phone = r.get("phone", "")
         parent_name = r.get("parent_name", "")
         parent_phone = r.get("parent_phone", "")
@@ -271,6 +362,7 @@ def import_rows(rows):
 
         try:
             with transaction.atomic():
+                year_val = parse_year(year_raw, default=1) if year_raw else None
                 student = find_student(roll_no=roll_no, name=name)
                 if student:
                     # Update existing student
@@ -282,6 +374,8 @@ def import_rows(rows):
                             student.user.save(update_fields=["first_name", "last_name"])
                     if course:
                         student.course = course
+                    if year_val is not None:
+                        student.year_of_study = year_val
                     if not student.is_active:
                         student.is_active = True
                     student.save()
@@ -305,14 +399,15 @@ def import_rows(rows):
                         parent_name=parent_name,
                         parent_phone=parent_phone,
                         room=None,
+                        year_of_study=year_val if year_val is not None else 1,
                     )
                     created_count += 1
 
                 # Handle room allocation if room is provided
                 if room_str:
-                    room = find_room(room_str, block_str)
+                    room = find_room(room_str, block_str, building=building_str, student_year=student.year_of_study)
                     if not room:
-                        raise Room.DoesNotExist(f"Room '{room_str}' not found (use format A-101).")
+                        raise Room.DoesNotExist(f"Room '{room_str}' not found (use format A-101 or B1 · G-101).")
                     alloc, newly_allocated = allocate_student_to_room(student, room, start_date=start_date)
                     if newly_allocated:
                         allocated_count += 1
@@ -340,15 +435,34 @@ def import_allocations(rows):
     return import_rows(rows)
 
 
-def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None, capacity=2, prefix="", suffix=""):
+def _create_room_if_absent(building, block, number, capacity, created, skipped, errors, row_prefix=""):
+    """Create a Room scoped to (building, block, number) or append to skipped/errors."""
+    b_obj = find_building(building)
+    exists_qs = Room.objects.filter(building=b_obj, block__iexact=block, number__iexact=number)
+    label = f"{b_obj.code} · {block}-{number}" if b_obj else f"{block}-{number}"
+    if exists_qs.exists():
+        skipped.append(label)
+        return
+    try:
+        r = Room(building=b_obj, block=block, number=number, capacity=capacity)
+        r.full_clean()
+        r.save()
+        created.append(r)
+    except Exception as e:
+        prefix = f"{row_prefix} ({label})" if row_prefix else f"Room {label}"
+        errors.append(f"{prefix}: {getattr(e, 'messages', [str(e)])[0]}")
+
+
+def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None, capacity=2, prefix="", suffix="", building=None):
     """
-    Creates a particular amount (count) or range of rooms for a given block.
-    Block serves as the room prefix (e.g. Block A and room 101 displays like A-101).
+    Creates a particular amount (count) or range of rooms for a given block and building.
+    Block serves as the floor prefix (e.g. G and room 101 displays like B1 · G-101).
     """
     block = (block or "A").strip()
     start_str = str(start_number or "").strip()
     prefix = (prefix or "").strip()
     suffix = (suffix or "").strip()
+    b_obj = find_building(building)
 
     if not start_str:
         raise ValueError("Starting room number is required.")
@@ -395,36 +509,18 @@ def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None
     if capacity <= 0:
         raise ValueError("Room capacity must be greater than 0.")
 
-    created = []
-    skipped = []
-    errors = []
-
+    created, skipped, errors = [], [], []
     for num in range(start_int, end_int + 1):
         num_str = f"{num:0{pad}d}" if pad > 0 else str(num)
         full_number = f"{prefix}{num_str}{suffix}"
+        _create_room_if_absent(b_obj, block, full_number, capacity, created, skipped, errors)
 
-        if Room.objects.filter(block__iexact=block, number__iexact=full_number).exists():
-            skipped.append(f"{block}-{full_number}")
-            continue
-
-        try:
-            r = Room(block=block, number=full_number, capacity=capacity)
-            r.full_clean()
-            r.save()
-            created.append(r)
-        except Exception as e:
-            errors.append(f"Room {block}-{full_number}: {getattr(e, 'messages', [str(e)])[0]}")
-
-    return {
-        "created": created,
-        "skipped": skipped,
-        "errors": errors,
-    }
+    return {"created": created, "skipped": skipped, "errors": errors}
 
 
-def bulk_create_rooms_floors(block="A", start_floor=1, end_floor=3, rooms_per_floor=10, capacity=2, floor_padding=2):
+def bulk_create_rooms_floors(block="A", start_floor=1, end_floor=3, rooms_per_floor=10, capacity=2, floor_padding=2, building=None):
     """
-    Creates rooms floor-by-floor.
+    Creates rooms floor-by-floor inside a given building.
     Example: floors 1 to 3 with 10 rooms each creates 101..110, 201..210, 301..310.
     """
     block = (block or "A").strip()
@@ -441,33 +537,18 @@ def bulk_create_rooms_floors(block="A", start_floor=1, end_floor=3, rooms_per_fl
     if capacity <= 0:
         raise ValueError("Room capacity must be greater than 0.")
 
-    created = []
-    skipped = []
-    errors = []
+    b_obj = find_building(building)
+    created, skipped, errors = [], [], []
 
     for fl in range(start_fl, end_fl + 1):
         for rm in range(1, r_per_fl + 1):
             num_str = f"{fl}{rm:0{floor_padding}d}"
-            if Room.objects.filter(block__iexact=block, number__iexact=num_str).exists():
-                skipped.append(f"{block}-{num_str}")
-                continue
+            _create_room_if_absent(b_obj, block, num_str, capacity, created, skipped, errors)
 
-            try:
-                r = Room(block=block, number=num_str, capacity=capacity)
-                r.full_clean()
-                r.save()
-                created.append(r)
-            except Exception as e:
-                errors.append(f"Room {block}-{num_str}: {getattr(e, 'messages', [str(e)])[0]}")
-
-    return {
-        "created": created,
-        "skipped": skipped,
-        "errors": errors,
-    }
+    return {"created": created, "skipped": skipped, "errors": errors}
 
 
-def bulk_create_rooms_from_list(block="A", text="", default_capacity=2):
+def bulk_create_rooms_from_list(block="A", text="", default_capacity=2, building=None):
     """
     Creates rooms from a comma, semicolon, or newline separated list.
     Supports numbers like '101, 102, 103' or block-included like 'A-101, B-102'.
@@ -477,56 +558,39 @@ def bulk_create_rooms_from_list(block="A", text="", default_capacity=2):
     if capacity <= 0:
         raise ValueError("Room capacity must be greater than 0.")
 
+    b_obj = find_building(building)
     tokens = re.split(r"[,;\n\r\t]+", text or "")
-    created = []
-    skipped = []
-    errors = []
+    created, skipped, errors = [], [], []
 
     for token in tokens:
         token = token.strip()
         if not token:
             continue
-
         b = block
         num = token
         if "-" in token:
             b_part, _, n_part = token.partition("-")
             b = b_part.strip() or block
             num = n_part.strip()
+        _create_room_if_absent(b_obj, b, num, capacity, created, skipped, errors)
 
-        if Room.objects.filter(block__iexact=b, number__iexact=num).exists():
-            skipped.append(f"{b}-{num}")
-            continue
-
-        try:
-            r = Room(block=b, number=num, capacity=capacity)
-            r.full_clean()
-            r.save()
-            created.append(r)
-        except Exception as e:
-            errors.append(f"Room {b}-{num}: {getattr(e, 'messages', [str(e)])[0]}")
-
-    return {
-        "created": created,
-        "skipped": skipped,
-        "errors": errors,
-    }
+    return {"created": created, "skipped": skipped, "errors": errors}
 
 
-def import_rooms_csv(rows):
+def import_rooms_csv(rows, building=None):
     """
     Imports rooms from CSV rows dict.
-    Headers supported: block, number (or room), capacity.
+    Headers supported: building (optional), block, number (or room), capacity.
     """
-    created = []
-    skipped = []
-    errors = []
+    default_b = find_building(building)
+    created, skipped, errors = [], [], []
 
     for i, raw_r in enumerate(rows, start=2):
         r = {_normalize_key(k): (v or "").strip() for k, v in raw_r.items() if k}
         block = r.get("block", "")
         number = r.get("number", "") or r.get("room", "")
         cap_val = r.get("capacity", "") or "2"
+        row_b = find_building(r.get("building", "")) if r.get("building") else default_b
 
         if "-" in number and not block:
             b, _, n = number.partition("-")
@@ -547,23 +611,9 @@ def import_rooms_csv(rows):
             errors.append(f"Row {i}: Invalid capacity '{cap_val}'.")
             continue
 
-        if Room.objects.filter(block__iexact=block, number__iexact=number).exists():
-            skipped.append(f"{block}-{number}")
-            continue
+        _create_room_if_absent(row_b, block, number, capacity, created, skipped, errors, row_prefix=f"Row {i}")
 
-        try:
-            r = Room(block=block, number=number, capacity=capacity)
-            r.full_clean()
-            r.save()
-            created.append(r)
-        except Exception as e:
-            errors.append(f"Row {i} ({block}-{number}): {getattr(e, 'messages', [str(e)])[0]}")
-
-    return {
-        "created": created,
-        "skipped": skipped,
-        "errors": errors,
-    }
+    return {"created": created, "skipped": skipped, "errors": errors}
 
 
 
