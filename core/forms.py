@@ -165,7 +165,7 @@ class RoomForm(MF):
             qs = qs.filter(pk=scoped_building.pk)
             self.fields["building"].initial = scoped_building
         self.fields["building"].queryset = qs
-        self.fields["building"].required = qs.exists()
+        self.fields["building"].required = scoped_building is not None
 
     def clean(self):
         cd = super().clean()

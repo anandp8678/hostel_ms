@@ -20,11 +20,50 @@ class Command(BaseCommand):
         if m.User.objects.filter(username="admin").exists():
             self.stdout.write("Demo data already present."); return
         m.User.objects.create_superuser("admin", password="Admin@123", first_name="Super", last_name="Admin", role="admin")
-        m.User.objects.create_user("warden", password="Warden@123", first_name="Meenakshi", last_name="Warden", role="warden", is_staff=True)
-        rooms = [m.Room.objects.create(block=b, number=n, capacity=2) for b in "AB" for n in ("101", "102", "103")]
+
+        b1, _ = m.Building.objects.get_or_create(
+            code="B1",
+            defaults={
+                "name": "First Year Block",
+                "allowed_years": "1",
+                "is_first_year_only": True,
+                "description": "Dedicated anti-ragging building exclusively for 1st-year students.",
+            },
+        )
+        b2, _ = m.Building.objects.get_or_create(
+            code="B2",
+            defaults={
+                "name": "Senior Block",
+                "allowed_years": "2,3,4",
+                "is_first_year_only": False,
+                "description": "Residential block for 2nd, 3rd, and 4th-year students.",
+            },
+        )
+
+        # Two-tier warden hierarchy: Head Warden (all buildings) & First-Year Warden (B1 only)
+        m.User.objects.create_user("warden", password="Warden@123", first_name="Meenakshi", last_name="HeadWarden", role="warden", is_staff=True, assigned_building=None)
+        m.User.objects.create_user("fywarden", password="Warden@123", first_name="Karthik", last_name="FYWarden", role="warden", is_staff=True, assigned_building=b1)
+
+        b1_rooms = [m.Room.objects.create(building=b1, block=b, number=n, capacity=2) for b in ("G", "1") for n in ("101", "102")]
+        b2_rooms = [m.Room.objects.create(building=b2, block=b, number=n, capacity=2) for b in ("G", "1", "2") for n in ("101", "102")]
+
+        years = [1, 1, 1, 2, 2, 3, 4, 2]
         for i, name in enumerate(NAMES):
-            s = onboard_student(name, f"CS21{i+1:02d}", "B.Tech CSE", f"98765000{i:02d}", f"Parent of {name.split()[0]}",
-                                f"98760000{i//2:02d}", rooms[i // 2] if i < 6 else None)
+            yr = years[i]
+            if yr == 1:
+                room = b1_rooms[i // 2] if i < 2 else None
+            else:
+                room = b2_rooms[(i - 3) // 2] if i < 7 else None
+            s = onboard_student(
+                name,
+                f"CS2{7-yr}{i+1:02d}",
+                "B.Tech CSE",
+                f"98765000{i:02d}",
+                f"Parent of {name.split()[0]}",
+                f"98760000{i//2:02d}",
+                room,
+                year_of_study=yr,
+            )
             s.user.must_change_password = False; s.user.set_password("Student@123"); s.user.save()
             if s.parent:
                 s.parent.user.must_change_password = False; s.parent.user.set_password("Parent@123"); s.parent.user.save()
@@ -33,13 +72,23 @@ class Command(BaseCommand):
                 m.MealMenu.objects.create(day=d, meal=mk, items=MEALS[mk][d])
         random.seed(1)
         students = list(m.Student.objects.all())
+        cur_month = date.today().strftime("%Y-%m")
         for s in students:
             for back in range(1, 11):
                 m.Attendance.objects.create(student=s, date=date.today() - timedelta(days=back), status=random.choice("PPPPPPA"))
-            fee = m.Fee.objects.create(student=s, title="Hostel fee - Term 1", amount=15000, due_date=date.today() - timedelta(days=5))
+            fee = m.Fee.objects.create(
+                student=s,
+                title=f"Hostel & Mess Fee - {date.today().strftime('%B %Y')}",
+                month=cur_month,
+                rent_amount=8000,
+                food_amount=7000,
+                amount=15000,
+                due_date=date.today() - timedelta(days=5),
+            )
             if s.pk % 2:
                 m.Payment.objects.create(fee=fee, amount=15000 if s.pk % 4 == 1 else 6000, method="Cash")
         m.Complaint.objects.create(student=students[0], title="Fan not working", description="The ceiling fan in my room makes noise and stops.")
         m.LeaveRequest.objects.create(student=students[1], from_date=date.today() + timedelta(days=2), to_date=date.today() + timedelta(days=4), reason="Family function")
         m.Announcement.objects.create(title="Welcome", body="Mess timings: breakfast 7:30, lunch 12:30, dinner 7:30.")
+        m.Announcement.objects.create(building=b1, title="First Year Orientation", body="Mandatory anti-ragging orientation in First Year Block courtyard at 5 PM.")
         self.stdout.write(self.style.SUCCESS("Demo data ready."))

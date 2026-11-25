@@ -4,11 +4,12 @@ from datetime import date, timedelta
 
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Announcement, Attendance, Complaint, Fee, FeeConfig, LeaveRequest, MealMenu, Notification, Parent, Room, RoomAllocation, Student, User
+from core.models import Announcement, Attendance, Building, Complaint, Fee, FeeConfig, LeaveRequest, MealMenu, Notification, Parent, Room, RoomAllocation, Student, User
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
@@ -2450,3 +2451,230 @@ class StudentSelectionAndBulkActionsTests(TestCase):
 
 
 
+class BuildingSegregationTests(TestCase):
+    def setUp(self):
+        self.b1, _ = Building.objects.get_or_create(
+            code="B1",
+            defaults={
+                "name": "First Year Block",
+                "allowed_years": "1",
+                "is_first_year_only": True,
+            },
+        )
+        self.b2, _ = Building.objects.get_or_create(
+            code="B2",
+            defaults={
+                "name": "Senior Block",
+                "allowed_years": "2,3,4",
+                "is_first_year_only": False,
+            },
+        )
+        self.admin_u = User.objects.create_superuser(
+            username="bld_admin", password="Password@123", role="admin",
+            first_name="Admin", last_name="Hostel", must_change_password=False,
+        )
+        self.head_warden = User.objects.create_user(
+            username="headwarden", password="Password@123", role="warden", is_staff=True,
+            first_name="Meenakshi", last_name="Head", assigned_building=None, must_change_password=False,
+        )
+        self.fy_warden = User.objects.create_user(
+            username="fywarden", password="Password@123", role="warden", is_staff=True,
+            first_name="Karthik", last_name="FY", assigned_building=self.b1, must_change_password=False,
+        )
+
+        # Identical floor & room number across B1 and B2 must coexist without collision
+        self.r_b1 = Room.objects.create(building=self.b1, block="G", number="101", capacity=2)
+        self.r_b2 = Room.objects.create(building=self.b2, block="G", number="101", capacity=2)
+
+        self.s1_y1 = onboard_student(
+            "Aarav Kumar", "FY2601", "B.Tech CSE", "9800000001",
+            "Ramesh Kumar", "9800000011", room=self.r_b1, year_of_study=1,
+        )
+        self.s1_y1.user.must_change_password = False
+        self.s1_y1.user.save()
+
+        self.s1_unalloc = onboard_student(
+            "Diya Nair", "FY2602", "B.Tech CSE", "9800000002",
+            "Latha Nair", "9800000012", room=None, year_of_study=1,
+        )
+
+        self.s2_y3 = onboard_student(
+            "Vikram Rao", "SR2401", "B.Tech ECE", "9800000003",
+            "Suresh Rao", "9800000013", room=self.r_b2, year_of_study=3,
+        )
+        self.s2_y3.user.must_change_password = False
+        self.s2_y3.user.save()
+
+        self.s2_unalloc = onboard_student(
+            "Neha Verma", "SR2502", "B.Tech ME", "9800000004",
+            "Anil Verma", "9800000014", room=None, year_of_study=2,
+        )
+
+    def test_duplicate_floor_rooms_and_string_formatting(self):
+        self.assertEqual(str(self.r_b1), "B1 · G-101")
+        self.assertEqual(str(self.r_b2), "B2 · G-101")
+        self.assertEqual(self.r_b1.short_code, "G-101")
+        self.assertEqual(self.r_b2.short_code, "G-101")
+
+    def test_antiragging_validation_blocks_cross_building_allocations(self):
+        # Model validation blocks 1st year -> Senior Block and 3rd year -> First Year Block
+        with self.assertRaises(ValidationError):
+            RoomAllocation(student=self.s1_unalloc, room=self.r_b2).full_clean()
+        with self.assertRaises(ValidationError):
+            RoomAllocation(student=self.s2_unalloc, room=self.r_b1).full_clean()
+
+        # Service layer rejects cross-building allocations
+        with self.assertRaises(ValidationError):
+            allocate_student_to_room(self.s1_unalloc, self.r_b2)
+        with self.assertRaises(ValidationError):
+            allocate_student_to_room(self.s2_unalloc, self.r_b1)
+
+        # Head warden HTTP POST allocate rejects incompatible year -> building
+        c = Client()
+        c.force_login(self.head_warden)
+        resp = c.post(
+            reverse("student_allocate", args=[self.s1_unalloc.pk]),
+            {"room_id": str(self.r_b2.pk), "start_date": date.today().isoformat()},
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.s1_unalloc.refresh_from_db()
+        self.assertIsNone(self.s1_unalloc.room)
+
+        # Compatible allocation succeeds cleanly
+        resp_ok = c.post(
+            reverse("student_allocate", args=[self.s1_unalloc.pk]),
+            {"room_id": str(self.r_b1.pk), "start_date": date.today().isoformat()},
+            follow=True,
+        )
+        self.assertEqual(resp_ok.status_code, 200)
+        self.s1_unalloc.refresh_from_db()
+        self.assertEqual(self.s1_unalloc.room, self.r_b1)
+
+    def test_bulk_set_year_skips_incompatible_occupied_building(self):
+        c = Client()
+        c.force_login(self.admin_u)
+        # Updating allocated B2 3rd-year to 1st-year is blocked while residing in B2
+        c.post(
+            reverse("students"),
+            {
+                "selected_students": [str(self.s2_y3.pk), str(self.s2_unalloc.pk)],
+                "bulk_action": "set_year",
+                "bulk_year": "1",
+            },
+            follow=True,
+        )
+        self.s2_y3.refresh_from_db()
+        self.s2_unalloc.refresh_from_db()
+        self.assertEqual(self.s2_y3.year_of_study, 3)
+        self.assertEqual(self.s2_unalloc.year_of_study, 1)
+
+    def test_two_tier_warden_hierarchy_and_strict_first_year_lock(self):
+        c = Client()
+        c.force_login(self.fy_warden)
+
+        # FY Warden views only Building 1
+        dash = c.get(reverse("home"))
+        self.assertEqual(dash.status_code, 200)
+        self.assertEqual(c.get(reverse("home") + "?building=B2").status_code, 403)
+        self.assertEqual(c.get(reverse("buildings")).status_code, 403)
+
+        rooms_resp = c.get(reverse("rooms"))
+        self.assertEqual(rooms_resp.status_code, 200)
+        self.assertContains(rooms_resp, "B1 · G-101")
+        self.assertNotContains(rooms_resp, "B2 · G-101")
+        self.assertEqual(c.get(reverse("room_detail", args=[self.r_b2.pk])).status_code, 403)
+
+        st_resp = c.get(reverse("students"))
+        self.assertEqual(st_resp.status_code, 200)
+        self.assertContains(st_resp, self.s1_y1.roll_no)
+        self.assertNotContains(st_resp, self.s2_y3.roll_no)
+        self.assertEqual(c.get(reverse("student_detail", args=[self.s2_y3.pk])).status_code, 403)
+        self.assertEqual(
+            c.post(reverse("student_allocate", args=[self.s1_unalloc.pk]), {"room_id": str(self.r_b2.pk)}).status_code,
+            403,
+        )
+        self.assertEqual(c.get(reverse("attendance") + "?building=B2").status_code, 403)
+        self.assertEqual(c.get(reverse("fees_export_pdf") + "?building=B2").status_code, 403)
+
+        # Head Warden has unrestricted access across B1 and B2
+        c.force_login(self.head_warden)
+        self.assertEqual(c.get(reverse("home") + "?building=B2").status_code, 200)
+        self.assertEqual(c.get(reverse("room_detail", args=[self.r_b2.pk])).status_code, 200)
+        self.assertEqual(c.get(reverse("student_detail", args=[self.s2_y3.pk])).status_code, 200)
+
+    def test_building_scoped_announcements_only_reach_target_building(self):
+        c = Client()
+        c.force_login(self.admin_u)
+        resp = c.post(
+            reverse("announcements_new"),
+            {
+                "title": "B1 Curfew Drill",
+                "body": "First-year residents assemble in B1 courtyard at 6 PM.",
+                "audience": "all",
+                "building": str(self.b1.pk),
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(Notification.objects.filter(recipient=self.s1_y1.user, title__icontains="B1 Curfew Drill").exists())
+        self.assertFalse(Notification.objects.filter(recipient=self.s2_y3.user, title__icontains="B1 Curfew Drill").exists())
+
+        c.force_login(self.s1_y1.user)
+        self.assertContains(c.get(reverse("my_announcements")), "B1 Curfew Drill")
+        c.force_login(self.s2_y3.user)
+        self.assertNotContains(c.get(reverse("my_announcements")), "B1 Curfew Drill")
+
+    def test_year_and_building_fee_calculation_reports_and_pdfs(self):
+        c = Client()
+        c.force_login(self.head_warden)
+        month_str = date.today().strftime("%Y-%m")
+
+        # Generate monthly bills ONLY for Year 1 / Building 1
+        resp_calc = c.post(
+            f"{reverse('fees_calculate_monthly')}?building=B1&year=1",
+            {
+                "month": month_str,
+                "building": "B1",
+                "year": "1",
+                "title": "First Year November Fee",
+                "due_date": (date.today() + timedelta(days=10)).isoformat(),
+                "selected_students": [str(self.s1_y1.pk)],
+                f"rent_{self.s1_y1.pk}": "8000.00",
+                f"food_{self.s1_y1.pk}": "4500.00",
+                f"mess_days_{self.s1_y1.pk}": "0",
+                f"mess_cut_{self.s1_y1.pk}": "0.00",
+                f"total_{self.s1_y1.pk}": "12500.00",
+                "save_fees": "1",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_calc.status_code, 200)
+        self.assertTrue(Fee.objects.filter(student=self.s1_y1, month=month_str).exists())
+        self.assertFalse(Fee.objects.filter(student=self.s2_y3, month=month_str).exists())
+
+        # Create a B2 / 3rd-year fee directly to verify filtered queries & PDFs
+        b2_fee = Fee.objects.create(
+            student=self.s2_y3, title="Senior Year Fee", month=month_str,
+            rent_amount=9000, food_amount=5000, amount=14000, due_date=date.today(),
+        )
+        b1_fee = Fee.objects.get(student=self.s1_y1, month=month_str)
+
+        # Ledger and reports views load cleanly
+        self.assertEqual(c.get(reverse("fees") + "?year=1&building=B1").status_code, 200)
+        self.assertContains(c.get(reverse("fees") + "?year=1"), self.s1_y1.roll_no)
+        self.assertNotContains(c.get(reverse("fees") + "?year=1"), self.s2_y3.roll_no)
+        self.assertEqual(c.get(reverse("reports") + "?building=B2&year=3").status_code, 200)
+
+        # Year- and building-specific PDF exports return valid %PDF documents
+        for url in [
+            reverse("fees_export_pdf") + "?year=1",
+            reverse("fees_export_pdf") + "?year=3&building=B2&status=pending",
+            reverse("fee_pdf", args=[b1_fee.pk]),
+            reverse("fee_pdf", args=[b2_fee.pk]),
+            reverse("reports") + "?export=fees_pdf&building=B1",
+        ]:
+            pdf_resp = c.get(url)
+            self.assertEqual(pdf_resp.status_code, 200, url)
+            self.assertEqual(pdf_resp["Content-Type"], "application/pdf", url)
+            self.assertTrue(pdf_resp.content.startswith(b"%PDF"), url)
