@@ -1,0 +1,236 @@
+{% extends "core/base.html" %}
+{% block content %}
+
+<!-- Top Header & Primary Actions -->
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Hostel Fees & Billing Ledger</h4>
+        {% if active_building %}
+          <span class="badge text-bg-primary rounded-pill">{{ active_building.code }} &mdash; {{ active_building.name }}</span>
+        {% endif %}
+        {% if year_filter %}
+          <span class="badge text-bg-info text-dark rounded-pill">Year {{ year_filter }}</span>
+        {% endif %}
+      </div>
+      <div class="text-secondary small">
+        Filter student fees by Building, Academic Year, Month, or Status and generate dedicated PDF billing reports.
+      </div>
+    </div>
+
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <a href="{% url 'fees_export_pdf' %}?building={{ building_filter }}&year={{ year_filter }}&month={{ month }}&status={{ status_filter }}&q={{ q }}"
+         class="btn btn-sm btn-danger fw-semibold">
+        Export Filtered PDF
+      </a>
+      <a href="{% url 'fees_calculate_monthly' %}{% if active_building %}?building={{ active_building.code }}{% endif %}{% if year_filter %}{% if active_building %}&{% else %}?{% endif %}year={{ year_filter }}{% endif %}"
+         class="btn btn-sm btn-navy fw-semibold">
+        Calculate Monthly Bills
+      </a>
+      <a href="{% url 'fee_structure' %}" class="btn btn-sm btn-outline-secondary">Settings</a>
+      <a href="{% url 'fees_new' %}" class="btn btn-sm btn-outline-primary fw-semibold">+ Add Custom Fee</a>
+    </div>
+  </div>
+
+  <!-- Building Switcher & 1-Click Year PDF Strip -->
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3 pt-3 border-top">
+    <div class="d-flex flex-wrap align-items-center gap-1">
+      <span class="text-secondary small fw-semibold me-1">Building:</span>
+      {% if not is_building_locked %}
+        <a href="{% url 'fees' %}?year={{ year_filter }}&month={{ month }}&status={{ status_filter }}&q={{ q }}"
+           class="badge {% if not active_building %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          All Buildings
+        </a>
+      {% endif %}
+      {% for bld in buildings %}
+        {% if not is_building_locked or active_building.pk == bld.pk %}
+          <a href="{% url 'fees' %}?building={{ bld.code }}&year={{ year_filter }}&month={{ month }}&status={{ status_filter }}&q={{ q }}"
+             class="badge {% if active_building and active_building.pk == bld.pk %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+            {{ bld.code }} &mdash; {{ bld.name }} ({{ bld.allowed_years_display }})
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <div class="d-flex flex-wrap align-items-center gap-1">
+      <span class="text-secondary small fw-semibold me-1">Quick Year PDFs:</span>
+      {% for yv, yl in year_choices %}
+        <a href="{% url 'fees_export_pdf' %}?year={{ yv }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if month %}&month={{ month }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}"
+           class="btn btn-xs btn-outline-danger py-0 px-2" style="font-size:0.75rem;">
+          {{ yl }} PDF
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- KPI Summary Cards -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Filtered Records</div>
+      <div class="fs-3 fw-bold text-dark mt-1">{{ fees|length }}</div>
+      <div class="text-muted small">{{ pending_count }} pending &middot; {{ overdue_count }} overdue</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Total Billed</div>
+      <div class="fs-3 fw-bold text-dark mt-1">₹{{ total_billed|floatformat:2 }}</div>
+      <div class="text-muted small">Rent + food - mess cuts + fines</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Collected</div>
+      <div class="fs-3 fw-bold text-success mt-1">₹{{ total_paid|floatformat:2 }}</div>
+      <div class="text-muted small">Verified payments recorded</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Outstanding Balance</div>
+      <div class="fs-3 fw-bold {% if total_balance > 0 %}text-danger{% else %}text-success{% endif %} mt-1">₹{{ total_balance|floatformat:2 }}</div>
+      <div class="text-muted small">Remaining dues in selection</div>
+    </div>
+  </div>
+</div>
+
+<!-- Filters Card -->
+<div class="card p-3 mb-4 bg-white border-0 shadow-sm">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label small fw-semibold text-secondary mb-1">Search Student / Roll / Fee</label>
+      <input type="text" name="q" class="form-control form-control-sm" placeholder="Name, roll no, room, title..." value="{{ q }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small fw-semibold text-secondary mb-1">Building</label>
+      <select name="building" class="form-select form-select-sm" onchange="this.form.submit()" {% if is_building_locked %}disabled{% endif %}>
+        {% if not is_building_locked %}<option value="">All Buildings</option>{% endif %}
+        {% for bld in buildings %}
+          <option value="{{ bld.code }}" {% if building_filter == bld.code %}selected{% endif %}>{{ bld.code }} &mdash; {{ bld.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small fw-semibold text-secondary mb-1">Academic Year</label>
+      <select name="year" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Years</option>
+        {% for yv, yl in year_choices %}
+          <option value="{{ yv }}" {% if year_filter == yv|stringformat:'s' %}selected{% endif %}>{{ yl }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small fw-semibold text-secondary mb-1">Billing Month</label>
+      <select name="month" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Months</option>
+        {% for m_val, m_lbl in available_months %}
+          <option value="{{ m_val }}" {% if month == m_val %}selected{% endif %}>{{ m_lbl }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small fw-semibold text-secondary mb-1">Status</label>
+      <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Statuses</option>
+        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending / Partial</option>
+        <option value="overdue" {% if status_filter == 'overdue' %}selected{% endif %}>Overdue</option>
+        <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+      </select>
+    </div>
+    <div class="col-md-1 d-flex gap-1">
+      <button type="submit" class="btn btn-sm btn-navy flex-grow-1">Go</button>
+      <a href="{% url 'fees' %}" class="btn btn-sm btn-outline-secondary" title="Reset Filters">&times;</a>
+    </div>
+  </form>
+</div>
+
+<!-- Fees Ledger Table -->
+<div class="card border-0 shadow-sm bg-white">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr>
+          <th>Roll No.</th>
+          <th>Student</th>
+          <th>Year</th>
+          <th>Room / Bldg</th>
+          <th>Fee Title</th>
+          <th class="text-end">Rent</th>
+          <th class="text-end">Food</th>
+          <th class="text-end">Mess Cut</th>
+          <th class="text-end">Fine</th>
+          <th class="text-end">Total</th>
+          <th class="text-end">Paid</th>
+          <th class="text-end">Balance</th>
+          <th>Due</th>
+          <th>Status</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fee in fees %}
+          <tr>
+            <td class="fw-semibold text-secondary">{{ fee.student.roll_no }}</td>
+            <td>
+              <a href="{% url 'student_detail' fee.student.pk %}" class="text-decoration-none fw-semibold text-dark">
+                {{ fee.student.user.display_name }}
+              </a>
+            </td>
+            <td><span class="badge text-bg-light border text-dark">{{ fee.student.year_short }}</span></td>
+            <td>
+              {% if fee.student.room %}
+                <span class="badge text-bg-light border text-dark">{{ fee.student.room }}</span>
+              {% else %}
+                <span class="text-muted">Unallocated</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="fw-semibold">{{ fee.title }}</div>
+              {% if fee.month %}<div class="text-muted" style="font-size:0.7rem;">Month: {{ fee.month }}</div>{% endif %}
+            </td>
+            <td class="text-end">{% if fee.rent_amount %}₹{{ fee.rent_amount }}{% else %}&mdash;{% endif %}</td>
+            <td class="text-end">{% if fee.food_amount %}₹{{ fee.food_amount }}{% else %}&mdash;{% endif %}</td>
+            <td class="text-end text-success">{% if fee.mess_cut_amount %}-₹{{ fee.mess_cut_amount }} ({{ fee.mess_cut_days }}d){% else %}&mdash;{% endif %}</td>
+            <td class="text-end text-danger">
+              {% if fee.fine_amount > 0 %}+₹{{ fee.fine_amount }} ({{ fee.overdue_days }}d){% elif fee.fine_waived %}Waived{% else %}&mdash;{% endif %}
+            </td>
+            <td class="text-end fw-bold">₹{{ fee.amount }}</td>
+            <td class="text-end text-success">₹{{ fee.paid }}</td>
+            <td class="text-end fw-bold {% if fee.balance > 0 %}text-danger{% else %}text-success{% endif %}">₹{{ fee.balance }}</td>
+            <td>{{ fee.due_date|date:"d M Y" }}</td>
+            <td>
+              <span class="badge {% if fee.status == 'Paid' %}text-bg-success{% elif 'Overdue' in fee.status %}text-bg-danger{% else %}text-bg-warning text-dark{% endif %}">
+                {{ fee.status }}
+              </span>
+            </td>
+            <td class="text-end text-nowrap">
+              <a href="{% url 'fee_pdf' fee.pk %}" class="btn btn-sm btn-outline-danger py-0 px-2" title="Download Invoice PDF">PDF</a>
+              {% if fee.balance > 0 %}
+                <a href="{% url 'payment_new' fee.pk %}" class="btn btn-sm btn-outline-success py-0 px-2">Pay</a>
+              {% endif %}
+              {% if fee.fine_amount > 0 %}
+                <form method="post" action="{% url 'fee_waive_fine' fee.pk %}" class="d-inline" onsubmit="return confirm('Waive late fine for {{ fee.student.user.display_name }}?');">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-sm btn-outline-warning py-0 px-2">Waive</button>
+                </form>
+              {% endif %}
+              <a href="{% url 'fees_edit' fee.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">Edit</a>
+              <a href="{% url 'fees_delete' fee.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">Del</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="15" class="text-center text-secondary py-5">
+              No fee records match the selected filters.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

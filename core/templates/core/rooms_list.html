@@ -195,7 +195,7 @@
         {% if not is_building_locked or active_building.pk == bld.pk %}
           <a href="?view={{ view_mode }}&building={{ bld.code }}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
              class="badge {% if active_building and active_building.pk == bld.pk %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
-            {{ bld.code }} &mdash; {{ bld.name }} ({{ bld.years_summary }})
+            {{ bld.code }} &mdash; {{ bld.name }} ({{ bld.allowed_years_display }})
           </a>
         {% endif %}
       {% endfor %}

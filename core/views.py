@@ -395,12 +395,132 @@ def announcement_new(request):
     return show(request, "form", title="Post · Announcements", form=form, back=reverse("announcements"))
 
 
+def _filter_fees(request, base_qs=None):
+    """Filter fee records by warden building scope, explicit ?building=, ?year=, ?month=, ?status=, and ?q=."""
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+    month = (request.GET.get("month") or "").strip()
+    year_filter = (request.GET.get("year") or "").strip()
+    status_filter = (request.GET.get("status") or "").strip().lower()
+    q = (request.GET.get("q") or "").strip()
+
+    qs = base_qs if base_qs is not None else m.Fee.objects.all()
+    qs = qs.select_related("student__user").prefetch_related(
+        "payments",
+        Prefetch("student__allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building")),
+    )
+    if month:
+        qs = qs.filter(month=month)
+    if year_filter in ("1", "2", "3", "4"):
+        qs = qs.filter(student__year_of_study=int(year_filter))
+
+    today = date.today()
+    fee_list = list(qs)
+    for fee_obj in fee_list:
+        if fee_obj.due_date and fee_obj.due_date < today:
+            fee_obj.sync_late_fine()
+
+    if active_building:
+        fee_list = [fee_obj for fee_obj in fee_list if _student_matches_building(fee_obj.student, active_building)]
+
+    if q:
+        ql = q.lower()
+        fee_list = [
+            fee_obj for fee_obj in fee_list
+            if (ql in fee_obj.student.roll_no.lower()
+                or ql in fee_obj.student.user.display_name.lower()
+                or ql in fee_obj.title.lower()
+                or (fee_obj.student.room and ql in str(fee_obj.student.room).lower()))
+        ]
+
+    if status_filter == "pending":
+        fee_list = [fee_obj for fee_obj in fee_list if fee_obj.balance > 0]
+    elif status_filter == "overdue":
+        fee_list = [fee_obj for fee_obj in fee_list if fee_obj.balance > 0 and fee_obj.due_date and fee_obj.due_date < today]
+    elif status_filter == "paid":
+        fee_list = [fee_obj for fee_obj in fee_list if fee_obj.balance <= 0]
+
+    meta = {
+        "buildings": buildings,
+        "active_building": active_building,
+        "is_building_locked": is_building_locked,
+        "building_filter": active_building.code if active_building else "",
+        "month": month,
+        "year_filter": year_filter,
+        "status_filter": status_filter,
+        "q": q,
+    }
+    return fee_list, meta
+
+
+@staff
+def fees_list(request):
+    """Dedicated building- and year-filterable fee ledger with 1-click Year PDF export."""
+    fee_list, meta = _filter_fees(request)
+
+    existing_months = set(m.Fee.objects.exclude(month="").values_list("month", flat=True).distinct())
+    today = date.today()
+    y_cur, m_cur = today.year, today.month
+    for _ in range(6):
+        existing_months.add(f"{y_cur:04d}-{m_cur:02d}")
+        if m_cur == 1:
+            m_cur = 12
+            y_cur -= 1
+        else:
+            m_cur -= 1
+
+    available_months = []
+    for ym in sorted(existing_months, reverse=True):
+        try:
+            y_i, m_i = map(int, ym.split("-"))
+            available_months.append((ym, date(y_i, m_i, 1).strftime("%B %Y")))
+        except ValueError:
+            continue
+
+    total_billed = sum((f_obj.amount for f_obj in fee_list), Decimal("0.00"))
+    total_paid = sum((f_obj.paid for f_obj in fee_list), Decimal("0.00"))
+    total_balance = sum((f_obj.balance for f_obj in fee_list), Decimal("0.00"))
+    pending_count = sum(1 for f_obj in fee_list if f_obj.balance > 0)
+    overdue_count = sum(1 for f_obj in fee_list if f_obj.balance > 0 and f_obj.due_date and f_obj.due_date < today)
+
+    return show(
+        request,
+        "fees_list",
+        fees=fee_list,
+        available_months=available_months,
+        total_billed=total_billed,
+        total_paid=total_paid,
+        total_balance=total_balance,
+        pending_count=pending_count,
+        overdue_count=overdue_count,
+        year_choices=m.Student.YEAR_CHOICES,
+        **meta,
+    )
+
+
 @staff
 def fee_create(request):
+    _, active_building, is_building_locked = _get_building_scope(request)
     form = f.FeeForm(request.POST or None)
+    if is_building_locked and active_building and "student" in form.fields:
+        scoped_ids = [
+            s.pk for s in m.Student.objects.filter(is_active=True).prefetch_related(
+                Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+            )
+            if _student_matches_building(s, active_building)
+        ]
+        form.fields["student"].queryset = m.Student.objects.filter(pk__in=scoped_ids).select_related("user")
     if request.method == "POST" and form.is_valid():
         d = form.cleaned_data
-        targets = [d["student"]] if d["student"] else list(m.Student.objects.filter(is_active=True))
+        if d["student"]:
+            _assert_building_access(request, student=d["student"])
+            targets = [d["student"]]
+        else:
+            candidates = list(
+                m.Student.objects.filter(is_active=True).prefetch_related(
+                    Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+                )
+            )
+            targets = [s for s in candidates if _student_matches_building(s, active_building)] if active_building else candidates
         m.Fee.objects.bulk_create([
             m.Fee(
                 student=s,
@@ -453,6 +573,8 @@ def fees_calculate_monthly(request):
     calculates monthly hostel rent, food charges, and mess cut rebates.
     Allows the warden to adjust any student's figures directly before saving bills.
     """
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+    year_filter = (request.POST.get("year") or request.GET.get("year") or "").strip()
     cfg = m.FeeConfig.get_config()
     today = date.today()
 
@@ -486,7 +608,17 @@ def fees_calculate_monthly(request):
         else:
             m_num -= 1
 
-    active_students = list(m.Student.objects.filter(is_active=True).select_related("user").prefetch_related("allocations__room"))
+    active_students = list(
+        m.Student.objects.filter(is_active=True)
+        .select_related("user")
+        .prefetch_related(
+            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+        )
+    )
+    if active_building:
+        active_students = [s for s in active_students if _student_matches_building(s, active_building)]
+    if year_filter in ("1", "2", "3", "4"):
+        active_students = [s for s in active_students if s.year_of_study == int(year_filter)]
 
     # Handle generation/saving of bills
     if request.method == "POST" and "save_fees" in request.POST:
@@ -609,13 +741,20 @@ def fees_calculate_monthly(request):
         "total_students": len(active_students),
         "total_projected": total_projected,
         "total_mess_cut_all": total_mess_cut_all,
+        "buildings": buildings,
+        "active_building": active_building,
+        "is_building_locked": is_building_locked,
+        "building_filter": active_building.code if active_building else "",
+        "year_filter": year_filter,
+        "year_choices": m.Student.YEAR_CHOICES,
     }
     return render(request, "core/fees_calculate_monthly.html", context)
 
 
 @staff
 def payment_new(request, fee_id):
-    fee = get_object_or_404(m.Fee, pk=fee_id)
+    fee = get_object_or_404(m.Fee.objects.select_related("student__user"), pk=fee_id)
+    _assert_building_access(request, student=fee.student)
     fee.sync_late_fine()
     form = f.PaymentForm(request.POST or None, initial={"amount": fee.balance})
     form.instance.fee = fee
@@ -632,7 +771,8 @@ def payment_new(request, fee_id):
 @require_POST
 def fee_waive_fine(request, pk):
     """Allows wardens or admins to waive the late fine for a student."""
-    fee = get_object_or_404(m.Fee, pk=pk)
+    fee = get_object_or_404(m.Fee.objects.select_related("student__user"), pk=pk)
+    _assert_building_access(request, student=fee.student)
     fee.fine_waived = True
     fee.sync_late_fine(save=True)
     messages.success(request, f"Late fine waived for {fee.student}. Total fee adjusted to ₹{fee.amount}.")
@@ -641,39 +781,53 @@ def fee_waive_fine(request, pk):
 
 @staff
 def fees_export_pdf(request):
-    """Exports all or filtered hostel fees as a master PDF report."""
-    month = request.GET.get("month")
-    status_filter = request.GET.get("status")
-    qs = m.Fee.objects.select_related("student__user").prefetch_related("payments")
+    """Exports all or filtered hostel fees as a master PDF report (supports building, year, month, status)."""
+    fee_list, meta = _filter_fees(request)
+    active_building = meta["active_building"]
+    year_filter = meta["year_filter"]
+    month = meta["month"]
+    status_filter = meta["status_filter"]
 
-    title = "Hostel Fees & Resident Billing Statement"
-    subtitle = ""
+    title_parts = ["Hostel Fee Report"]
+    sub_parts = []
+    if active_building:
+        title_parts.append(f"{active_building.code} - {active_building.name}")
+        sub_parts.append(f"Building: {active_building.name} ({active_building.allowed_years_display})")
+    if year_filter in ("1", "2", "3", "4"):
+        y_lbl = dict(m.Student.YEAR_CHOICES).get(int(year_filter), f"Year {year_filter}")
+        title_parts.append(y_lbl)
+        sub_parts.append(f"Academic Year: {y_lbl}")
     if month:
-        qs = qs.filter(month=month)
         try:
             parts = month.split("-")
             month_lbl = date(int(parts[0]), int(parts[1]), 1).strftime("%B %Y")
-            title = f"Hostel Fee Report · {month_lbl}"
-            subtitle = f"All billed resident fees and mess charges for {month_lbl}"
+            title_parts.append(month_lbl)
+            sub_parts.append(f"Billing Month: {month_lbl}")
         except Exception:
             pass
-
-    fee_list = list(qs)
-    for f in fee_list:
-        if f.due_date and f.due_date < date.today():
-            f.sync_late_fine()
-
     if status_filter == "pending":
-        fee_list = [f for f in fee_list if f.balance > 0]
-        title = "Hostel Pending Fees & Dues Statement"
-        subtitle = "All residents with outstanding fee balances"
+        sub_parts.append("Status: Pending Balances Only")
     elif status_filter == "overdue":
-        fee_list = [f for f in fee_list if f.balance > 0 and f.due_date and f.due_date < date.today()]
-        title = "Hostel Overdue Fees & Penalties Report"
-        subtitle = "Residents with past-due balances incurring late fines"
+        sub_parts.append("Status: Overdue & Penalized Only")
+    elif status_filter == "paid":
+        sub_parts.append("Status: Paid Invoices Only")
+
+    title = " · ".join(title_parts)
+    subtitle = " | ".join(sub_parts) if sub_parts else "Itemized resident billing, mess cuts, and balance ledger"
 
     pdf_bytes = generate_fees_report_pdf(fee_list, title=title, subtitle=subtitle, staff_user=request.user)
-    filename = f"hostel_fees_{month or 'report'}_{date.today().strftime('%Y%m%d')}.pdf"
+    slug_parts = ["hostel_fees"]
+    if active_building:
+        slug_parts.append(active_building.code)
+    if year_filter in ("1", "2", "3", "4"):
+        slug_parts.append(f"year{year_filter}")
+    if month:
+        slug_parts.append(month)
+    if status_filter:
+        slug_parts.append(status_filter)
+    slug_parts.append(date.today().strftime("%Y%m%d"))
+    filename = "_".join(slug_parts) + ".pdf"
+
     resp = HttpResponse(pdf_bytes, content_type="application/pdf")
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
@@ -682,7 +836,7 @@ def fees_export_pdf(request):
 @login_required
 def fee_invoice_pdf(request, pk):
     """Exports an individual fee invoice / receipt as a downloadable PDF."""
-    fee = get_object_or_404(m.Fee, pk=pk)
+    fee = get_object_or_404(m.Fee.objects.select_related("student__user"), pk=pk)
     u = request.user
     if u.role == "student" and fee.student.user != u:
         raise PermissionDenied
@@ -690,6 +844,8 @@ def fee_invoice_pdf(request, pk):
         p = getattr(u, "parent", None)
         if not p or fee.student not in p.children.all():
             raise PermissionDenied
+    if u.role == "warden":
+        _assert_building_access(request, student=fee.student)
 
     pdf_bytes = generate_fee_invoice_pdf(fee, current_user=u)
     filename = f"fee_receipt_{fee.student.roll_no}_{fee.pk}.pdf"
@@ -1102,7 +1258,7 @@ def _handle_student_bulk_action(request):
                 names = ", ".join(f"{s.user.display_name} ({s.year_short})" for s in incompatible[:4])
                 messages.error(
                     request,
-                    f"Anti-ragging rule: {room.building.code} ({room.building.years_summary}) does not allow {names}.",
+                    f"Anti-ragging rule: {room.building.code} ({room.building.allowed_years_display}) does not allow {names}.",
                 )
                 return redirect(request.get_full_path())
 
@@ -1462,7 +1618,7 @@ def student_new(request):
         if is_building_locked and active_building:
             if (rm_val and rm_val.building_id != active_building.pk) or not active_building.allows_year(yr_val):
                 raise PermissionDenied(
-                    f"Your warden role is scoped to {active_building.code} ({active_building.name}, {active_building.years_summary})."
+                    f"Your warden role is scoped to {active_building.code} ({active_building.name}, {active_building.allowed_years_display})."
                 )
         try:
             s = form.save()
@@ -1491,7 +1647,7 @@ def student_import(request):
                     row_bld = find_building(b_raw) if b_raw else active_building
                     if not row_bld or row_bld.pk != active_building.pk or not active_building.allows_year(yr):
                         raise PermissionDenied(
-                            f"Your warden role is scoped to {active_building.code} ({active_building.name}, {active_building.years_summary})."
+                            f"Your warden role is scoped to {active_building.code} ({active_building.name}, {active_building.allowed_years_display})."
                         )
             result = import_rows(rows_list)
         except Exception as e:
@@ -2071,7 +2227,7 @@ def student_allocate(request, pk):
     if room.building and not room.building.allows_year(s.year_of_study):
         messages.error(
             request,
-            f"Anti-ragging rule: {s.user.display_name} ({s.year_label}) cannot be allocated to {room.building.code} ({room.building.years_summary}).",
+            f"Anti-ragging rule: {s.user.display_name} ({s.year_label}) cannot be allocated to {room.building.code} ({room.building.allowed_years_display}).",
         )
         return redirect("student_detail", pk=s.pk)
 
@@ -2671,39 +2827,144 @@ def leave_decide(request, pk, decision):
 
 @staff
 def reports(request):
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+    year_filter = (request.GET.get("year") or "").strip()
     exp = request.GET.get("export")
-    students = m.Student.objects.filter(is_active=True).select_related("user")
-    fee_rows = [(x.student.roll_no, x.student.user.display_name, x.title, x.amount, x.paid, x.balance, x.due_date, x.status)
-                for x in m.Fee.objects.select_related("student__user") if x.balance > 0]
-    att_rows = [(s.roll_no, s.user.display_name, s.attendance_percent() if s.attendance_percent() is not None else "") for s in students]
+
+    students_all = list(
+        m.Student.objects.filter(is_active=True)
+        .select_related("user")
+        .prefetch_related(
+            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+        )
+    )
+    students = [
+        s for s in students_all
+        if _student_matches_building(s, active_building)
+        and (year_filter not in ("1", "2", "3", "4") or s.year_of_study == int(year_filter))
+    ]
+
+    fees_all = list(
+        m.Fee.objects.select_related("student__user").prefetch_related(
+            "payments",
+            Prefetch("student__allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building")),
+        )
+    )
+    today = date.today()
+    for fee_obj in fees_all:
+        if fee_obj.due_date and fee_obj.due_date < today:
+            fee_obj.sync_late_fine()
+
+    building_fees = [
+        fee_obj for fee_obj in fees_all
+        if _student_matches_building(fee_obj.student, active_building)
+    ]
+    scoped_fees = [
+        fee_obj for fee_obj in building_fees
+        if year_filter not in ("1", "2", "3", "4") or fee_obj.student.year_of_study == int(year_filter)
+    ]
+
+    pending_fees = [x for x in scoped_fees if x.balance > 0]
+    fee_rows = [
+        (x.student.roll_no, x.student.user.display_name, x.student.year_short, x.title, x.amount, x.paid, x.balance, x.due_date, x.status)
+        for x in pending_fees
+    ]
+    att_rows = [
+        (s.roll_no, s.user.display_name, s.year_short, s.attendance_percent() if s.attendance_percent() is not None else "")
+        for s in students
+    ]
+
     if exp:
         if exp == "fees_pdf":
-            pending_fees = [x for x in m.Fee.objects.select_related("student__user").prefetch_related("payments") if x.balance > 0]
             pdf_bytes = generate_fees_report_pdf(
                 pending_fees,
                 title="Hostel Outstanding Fees & Ledger Report",
-                subtitle="All active resident accounts with pending balances",
+                subtitle="Filtered active resident accounts with pending balances",
                 staff_user=request.user,
             )
             resp = HttpResponse(pdf_bytes, content_type="application/pdf")
-            resp["Content-Disposition"] = f'attachment; filename="pending_fees_{date.today().strftime("%Y%m%d")}.pdf"'
+            resp["Content-Disposition"] = f'attachment; filename="pending_fees_{today.strftime("%Y%m%d")}.pdf"'
             return resp
         resp = HttpResponse(content_type="text/csv")
         resp["Content-Disposition"] = f'attachment; filename="{exp}_report.csv"'
         w = csv.writer(resp)
         if exp == "fees":
-            w.writerow(["Roll no", "Name", "Fee", "Amount", "Paid", "Balance", "Due", "Status"]); w.writerows(fee_rows)
+            w.writerow(["Roll no", "Name", "Year", "Fee", "Amount", "Paid", "Balance", "Due", "Status"])
+            w.writerows(fee_rows)
         else:
-            w.writerow(["Roll no", "Name", "Attendance %"]); w.writerows(att_rows)
+            w.writerow(["Roll no", "Name", "Year", "Attendance %"])
+            w.writerows(att_rows)
         return resp
+
+    # Building summaries
+    target_buildings = [active_building] if active_building else buildings
+    building_summaries = []
+    for bld in target_buildings:
+        b_rooms = list(m.Room.objects.filter(building=bld).prefetch_related(
+            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
+        ))
+        b_beds = sum(r.capacity for r in b_rooms)
+        b_occ = sum(r.occupied for r in b_rooms)
+        b_blk = sum(r.capacity for r in b_rooms if r.is_blacklisted)
+        b_eff = max(0, b_beds - b_blk)
+        building_summaries.append({
+            "building": bld,
+            "total_rooms": len(b_rooms),
+            "total_beds": b_beds,
+            "occupied_beds": b_occ,
+            "free_beds": max(0, b_eff - b_occ),
+            "occupancy_pct": round(100 * b_occ / b_eff) if b_eff > 0 else 0,
+        })
+
+    # Year-wise fee breakdown
+    year_fee_summaries = []
+    for yv, yl in m.Student.YEAR_CHOICES:
+        if active_building and not active_building.allows_year(yv):
+            continue
+        yf = [f_obj for f_obj in building_fees if f_obj.student.year_of_study == yv]
+        year_fee_summaries.append({
+            "year": yv,
+            "label": yl,
+            "short": m.Student(year_of_study=yv).year_short,
+            "count": len(yf),
+            "total_billed": sum((x.amount for x in yf), Decimal("0.00")),
+            "total_paid": sum((x.paid for x in yf), Decimal("0.00")),
+            "total_balance": sum((x.balance for x in yf), Decimal("0.00")),
+            "pending_count": sum(1 for x in yf if x.balance > 0),
+        })
+
     floors = {}
-    for r in m.Room.objects.all():
-        b = floors.setdefault(r.block, [0, 0])
-        b[0] += r.capacity; b[1] += r.occupied
-    sorted_codes = sorted(floors.keys(), key=floor_order_key)
-    occupancy = [(m.Room(block=k).floor_display, floors[k][0], floors[k][1], max(0, floors[k][0] - floors[k][1])) for k in sorted_codes]
-    low = sorted([r for r in att_rows if r[2] != ""], key=lambda r: r[2])[:10]
-    return show(request, "reports", occupancy=occupancy, fee_rows=fee_rows[:50], low=low, badge=badge)
+    room_qs = m.Room.objects.select_related("building").prefetch_related(
+        Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
+    )
+    if active_building:
+        room_qs = room_qs.filter(building=active_building)
+    for r in room_qs:
+        key = (r.building.code if r.building else "", r.block)
+        label = f"{r.building.code} · {r.floor_display}" if (r.building and not active_building) else r.floor_display
+        b = floors.setdefault(key, [label, 0, 0])
+        b[1] += r.capacity
+        b[2] += r.occupied
+    sorted_keys = sorted(floors.keys(), key=lambda k: (k[0], floor_order_key(k[1])))
+    occupancy = [(floors[k][0], floors[k][1], floors[k][2], max(0, floors[k][1] - floors[k][2])) for k in sorted_keys]
+
+    low = sorted([r for r in att_rows if r[3] != ""], key=lambda r: r[3])[:10]
+    return show(
+        request,
+        "reports",
+        occupancy=occupancy,
+        fee_rows=fee_rows[:50],
+        low=low,
+        badge=badge,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
+        building_filter=active_building.code if active_building else "",
+        year_filter=year_filter,
+        year_choices=m.Student.YEAR_CHOICES,
+        building_summaries=building_summaries,
+        year_fee_summaries=year_fee_summaries,
+    )
 
 
 # ---------- student ----------

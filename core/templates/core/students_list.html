@@ -112,7 +112,7 @@
       {% if not is_building_locked or building_filter == bld.code %}
         <a href="{% url 'students' %}?view={{ view_mode }}&grouped={{ grouped|yesno:'1,0' }}&building={{ bld.code }}"
            class="badge {% if building_filter == bld.code %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
-          {{ bld.code }} &mdash; {{ bld.name }} ({{ bld.years_summary }})
+          {{ bld.code }} &mdash; {{ bld.name }} ({{ bld.allowed_years_display }})
         </a>
       {% endif %}
     {% endfor %}

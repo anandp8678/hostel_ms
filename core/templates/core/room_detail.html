@@ -11,7 +11,7 @@
       <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
         <h3 class="mb-0 fw-bold" style="color:var(--navy);">Room {{ room }}</h3>
         {% if room.building %}
-          <span class="badge text-bg-dark rounded-pill fs-6">{{ room.building.code }} &mdash; {{ room.building.name }} ({{ room.building.years_summary }})</span>
+          <span class="badge text-bg-dark rounded-pill fs-6">{{ room.building.code }} &mdash; {{ room.building.name }} ({{ room.building.allowed_years_display }})</span>
         {% endif %}
         <span class="badge text-bg-primary rounded-pill fs-6">{{ room.floor_display }}</span>
         {% if room.is_blacklisted %}

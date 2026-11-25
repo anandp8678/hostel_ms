@@ -6,19 +6,30 @@
       Automated calculation based on attendance: Fixed Rent ₹{{ cfg.rent_amount }} + Food ({{ calc_rows.0.calc.num_days|default:30 }} days @ ₹{{ cfg.food_rate_per_day }}/day) minus Mess Cut (absent ≥ {{ cfg.mess_cut_min_days }} consecutive days).
     </p>
   </div>
-  <div class="d-flex align-items-center gap-2">
-    <!-- Month Selector -->
-    <form method="get" class="d-flex align-items-center gap-2">
-      <label class="small text-secondary fw-semibold text-nowrap">Month:</label>
-      <select name="month" class="form-select form-select-sm" onchange="this.form.submit()">
+  <div class="d-flex flex-wrap align-items-center gap-2">
+    <!-- Month, Building & Year Selector -->
+    <form method="get" class="d-flex flex-wrap align-items-center gap-2">
+      <select name="building" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()" {% if is_building_locked %}disabled{% endif %}>
+        {% if not is_building_locked %}<option value="">All Buildings</option>{% endif %}
+        {% for bld in buildings %}
+          <option value="{{ bld.code }}" {% if building_filter == bld.code %}selected{% endif %}>{{ bld.code }} &mdash; {{ bld.name }}</option>
+        {% endfor %}
+      </select>
+      <select name="year" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()">
+        <option value="">All Years</option>
+        {% for yv, yl in year_choices %}
+          <option value="{{ yv }}" {% if year_filter == yv|stringformat:'s' %}selected{% endif %}>{{ yl }}</option>
+        {% endfor %}
+      </select>
+      <select name="month" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()">
         {% for m_val, m_lbl in available_months %}
           <option value="{{ m_val }}" {% if m_val == month_str %}selected{% endif %}>{{ m_lbl }}</option>
         {% endfor %}
       </select>
     </form>
-    <a href="{% url 'fees_export_pdf' %}?month={{ month_str }}" class="btn btn-sm btn-outline-danger text-nowrap">Export PDF</a>
+    <a href="{% url 'fees_export_pdf' %}?month={{ month_str }}{% if building_filter %}&building={{ building_filter }}{% endif %}{% if year_filter %}&year={{ year_filter }}{% endif %}" class="btn btn-sm btn-outline-danger text-nowrap">Export PDF</a>
     <a href="{% url 'fee_structure' %}" class="btn btn-sm btn-outline-secondary text-nowrap">Settings</a>
-    <a href="{% url 'fees' %}" class="btn btn-sm btn-outline-secondary text-nowrap">&larr; Fees</a>
+    <a href="{% url 'fees' %}{% if building_filter %}?building={{ building_filter }}{% endif %}" class="btn btn-sm btn-outline-secondary text-nowrap">&larr; Fees</a>
   </div>
 </div>
 
@@ -66,6 +77,8 @@
 <form method="post" id="monthlyFeeForm">
   {% csrf_token %}
   <input type="hidden" name="month" value="{{ month_str }}">
+  {% if building_filter %}<input type="hidden" name="building" value="{{ building_filter }}">{% endif %}
+  {% if year_filter %}<input type="hidden" name="year" value="{{ year_filter }}">{% endif %}
 
   <!-- Batch Settings Bar -->
   <div class="card p-3 mb-3 bg-white border-0 shadow-sm">
@@ -118,7 +131,7 @@
                 </td>
                 <td>
                   <div class="fw-bold text-dark">{{ s.user.display_name }}</div>
-                  <div class="text-muted small" style="font-size:0.75rem;">Roll: {{ s.roll_no }}</div>
+                  <div class="text-muted small" style="font-size:0.75rem;">Roll: {{ s.roll_no }} &middot; <span class="badge text-bg-light border text-dark">{{ s.year_short }}</span></div>
                 </td>
                 <td>
                   {% if r.room %}

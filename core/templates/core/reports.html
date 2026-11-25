@@ -1,5 +1,182 @@
-{% extends "core/base.html" %}{% block content %}
-<h4 style="color:var(--navy)" class="mb-3">Reports</h4>
-<div class="card mb-3"><div class="card-header bg-white">Occupancy by floor</div><table class="table mb-0"><thead><tr><th>Floor</th><th>Beds</th><th>Occupied</th><th>Free</th></tr></thead><tbody>{% for r in occupancy %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% empty %}<tr><td colspan="4" class="text-secondary text-center py-3">No rooms yet.</td></tr>{% endfor %}</tbody></table></div>
-<div class="card mb-3"><div class="card-header bg-white d-flex justify-content-between align-items-center"><span>Pending fees</span><div><a href="{% url 'fees_export_pdf' %}?status=pending" class="btn btn-sm btn-outline-danger py-0 px-2 me-2">Download PDF</a><a href="?export=fees" class="small text-decoration-none">Download CSV</a></div></div><div class="table-responsive"><table class="table mb-0"><thead><tr><th>Roll no.</th><th>Name</th><th>Fee</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Due</th><th>Status</th></tr></thead><tbody>{% for r in fee_rows %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% empty %}<tr><td colspan="8" class="text-secondary text-center py-3">No pending fees.</td></tr>{% endfor %}</tbody></table></div></div>
-<div class="card"><div class="card-header bg-white d-flex justify-content-between">Lowest attendance <a href="?export=attendance">Download CSV (all students)</a></div><table class="table mb-0"><thead><tr><th>Roll no.</th><th>Name</th><th>Attendance %</th></tr></thead><tbody>{% for r in low %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% empty %}<tr><td colspan="3" class="text-secondary text-center py-3">No attendance recorded yet.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
+{% extends "core/base.html" %}
+{% block content %}
+
+<!-- Header & Building / Year Filter Bar -->
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 style="color:var(--navy)" class="mb-0 fw-bold">Hostel Reports & Fee Exports</h4>
+        {% if active_building %}
+          <span class="badge text-bg-primary rounded-pill">{{ active_building.code }} &mdash; {{ active_building.name }}</span>
+        {% endif %}
+        {% if year_filter %}
+          <span class="badge text-bg-info text-dark rounded-pill">Year {{ year_filter }}</span>
+        {% endif %}
+      </div>
+      <div class="text-secondary small">
+        Building-wise occupancy, academic-year fee ledgers with PDF export, and low-attendance monitoring.
+      </div>
+    </div>
+
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <form method="get" class="d-flex flex-wrap align-items-center gap-2">
+        <select name="building" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()" {% if is_building_locked %}disabled{% endif %}>
+          {% if not is_building_locked %}<option value="">All Buildings</option>{% endif %}
+          {% for bld in buildings %}
+            <option value="{{ bld.code }}" {% if building_filter == bld.code %}selected{% endif %}>{{ bld.code }} &mdash; {{ bld.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="year" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()">
+          <option value="">All Years</option>
+          {% for yv, yl in year_choices %}
+            <option value="{{ yv }}" {% if year_filter == yv|stringformat:'s' %}selected{% endif %}>{{ yl }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <a href="{% url 'fees_export_pdf' %}?{% if building_filter %}building={{ building_filter }}&{% endif %}{% if year_filter %}year={{ year_filter }}&{% endif %}status=pending"
+         class="btn btn-sm btn-danger fw-semibold">
+        Pending Fees PDF
+      </a>
+      <a href="{% url 'fees' %}{% if building_filter %}?building={{ building_filter }}{% endif %}" class="btn btn-sm btn-outline-primary">Full Fee Ledger</a>
+    </div>
+  </div>
+</div>
+
+<!-- Building Capacity Summary -->
+{% if building_summaries %}
+<div class="row g-3 mb-4">
+  {% for bs in building_summaries %}
+    <div class="col-12 col-md-6">
+      <div class="card p-3 bg-white border-0 shadow-sm h-100">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div>
+            <span class="badge text-bg-dark me-1">{{ bs.building.code }}</span>
+            <span class="fw-bold" style="color:var(--navy);">{{ bs.building.name }}</span>
+          </div>
+          <span class="badge text-bg-light border text-dark">{{ bs.building.allowed_years_display }}</span>
+        </div>
+        <div class="d-flex justify-content-between small text-secondary mb-1">
+          <span>{{ bs.occupied_beds }} / {{ bs.total_beds }} Beds Occupied ({{ bs.total_rooms }} rooms)</span>
+          <span class="fw-bold text-dark">{{ bs.occupancy_pct }}%</span>
+        </div>
+        <div class="progress" style="height:8px;">
+          <div class="progress-bar bg-primary" style="width:{{ bs.occupancy_pct }}%;"></div>
+        </div>
+        <div class="mt-2 d-flex justify-content-between small">
+          <span class="text-muted">{{ bs.free_beds }} bed{{ bs.free_beds|pluralize }} free</span>
+          <a href="{% url 'fees_export_pdf' %}?building={{ bs.building.code }}" class="text-decoration-none text-danger fw-semibold">Export {{ bs.building.code }} Fees PDF &rarr;</a>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Year-wise Fee Summary & Direct PDF Downloads -->
+<div class="card mb-4 border-0 shadow-sm bg-white">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+    <div>
+      <h6 class="mb-0 fw-bold" style="color:var(--navy);">Fee Summary by Academic Year</h6>
+      <span class="text-muted small">Generate building- and year-specific fee PDFs directly from any row</span>
+    </div>
+    <a href="{% url 'fees_export_pdf' %}{% if building_filter %}?building={{ building_filter }}{% endif %}" class="btn btn-sm btn-outline-danger">Export All Selected Years PDF</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr>
+          <th>Academic Year</th>
+          <th class="text-center">Bills</th>
+          <th class="text-end">Total Billed</th>
+          <th class="text-end">Paid</th>
+          <th class="text-end">Pending Balance</th>
+          <th class="text-center">Pending Bills</th>
+          <th class="text-end">PDF Exports</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ys in year_fee_summaries %}
+          <tr>
+            <td class="fw-bold">{{ ys.label }}</td>
+            <td class="text-center">{{ ys.count }}</td>
+            <td class="text-end">₹{{ ys.total_billed|floatformat:2 }}</td>
+            <td class="text-end text-success">₹{{ ys.total_paid|floatformat:2 }}</td>
+            <td class="text-end fw-bold {% if ys.total_balance > 0 %}text-danger{% else %}text-success{% endif %}">₹{{ ys.total_balance|floatformat:2 }}</td>
+            <td class="text-center">{{ ys.pending_count }}</td>
+            <td class="text-end text-nowrap">
+              <a href="{% url 'fees_export_pdf' %}?year={{ ys.year }}{% if building_filter %}&building={{ building_filter }}{% endif %}" class="btn btn-sm btn-outline-danger py-0 px-2">All PDF</a>
+              <a href="{% url 'fees_export_pdf' %}?year={{ ys.year }}{% if building_filter %}&building={{ building_filter }}{% endif %}&status=pending" class="btn btn-sm btn-outline-warning text-dark py-0 px-2">Pending PDF</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Occupancy by Building & Floor -->
+<div class="card mb-4 border-0 shadow-sm bg-white">
+  <div class="card-header bg-white fw-bold" style="color:var(--navy);">Occupancy by Building & Floor</div>
+  <div class="table-responsive">
+    <table class="table mb-0 small">
+      <thead class="table-light">
+        <tr><th>Building / Floor</th><th>Beds</th><th>Occupied</th><th>Free</th></tr>
+      </thead>
+      <tbody>
+        {% for r in occupancy %}
+          <tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>
+        {% empty %}
+          <tr><td colspan="4" class="text-secondary text-center py-3">No rooms found in selected scope.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Pending Fees -->
+<div class="card mb-4 border-0 shadow-sm bg-white">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold" style="color:var(--navy);">Pending Fees ({{ fee_rows|length }})</span>
+    <div>
+      <a href="{% url 'fees_export_pdf' %}?status=pending{% if building_filter %}&building={{ building_filter }}{% endif %}{% if year_filter %}&year={{ year_filter }}{% endif %}" class="btn btn-sm btn-outline-danger py-0 px-2 me-2">Download PDF</a>
+      <a href="?export=fees{% if building_filter %}&building={{ building_filter }}{% endif %}{% if year_filter %}&year={{ year_filter }}{% endif %}" class="small text-decoration-none">Download CSV</a>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table mb-0 small">
+      <thead class="table-light">
+        <tr><th>Roll no.</th><th>Name</th><th>Year</th><th>Fee</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Due</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for r in fee_rows %}
+          <tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>
+        {% empty %}
+          <tr><td colspan="9" class="text-secondary text-center py-3">No pending fees in selected scope.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Lowest Attendance -->
+<div class="card border-0 shadow-sm bg-white">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold" style="color:var(--navy);">Lowest Attendance</span>
+    <a href="?export=attendance{% if building_filter %}&building={{ building_filter }}{% endif %}{% if year_filter %}&year={{ year_filter }}{% endif %}" class="small text-decoration-none">Download CSV</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table mb-0 small">
+      <thead class="table-light"><tr><th>Roll no.</th><th>Name</th><th>Year</th><th>Attendance %</th></tr></thead>
+      <tbody>
+        {% for r in low %}
+          <tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>
+        {% empty %}
+          <tr><td colspan="4" class="text-secondary text-center py-3">No attendance recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

@@ -168,7 +168,8 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
     headers = [
         Paragraph("Roll No", styles["TableHeader"]),
         Paragraph("Resident Name", styles["TableHeader"]),
-        Paragraph("Room", styles["TableHeader"]),
+        Paragraph("Year", styles["TableHeader"]),
+        Paragraph("Room / Bldg", styles["TableHeader"]),
         Paragraph("Fee Description", styles["TableHeader"]),
         Paragraph("Rent (₹)", styles["TableHeader"]),
         Paragraph("Food (₹)", styles["TableHeader"]),
@@ -191,6 +192,7 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
             st_badge = styles["BadgeOverdue"]
 
         room_str = str(f.student.room) if f.student.room else "—"
+        year_str = getattr(f.student, "year_short", "") or "—"
         rent_str = f"{f.rent_amount:,.2f}" if f.rent_amount else "—"
         food_str = f"{f.food_amount:,.2f}" if f.food_amount else "—"
         mess_str = f"-{f.mess_cut_amount:,.2f}" if f.mess_cut_amount > 0 else "—"
@@ -200,6 +202,7 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
         row = [
             Paragraph(f.student.roll_no, styles["TableCellBold"]),
             Paragraph(f.student.user.display_name, styles["TableCell"]),
+            Paragraph(year_str, styles["TableCellCenter"]),
             Paragraph(room_str, styles["TableCellCenter"]),
             Paragraph(f.title[:28], styles["TableCell"]),
             Paragraph(rent_str, styles["TableCellRight"]),
@@ -220,6 +223,7 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
         Paragraph(f"<b>{total_count} records</b>", styles["TableCellBold"]),
         Paragraph("", styles["TableCell"]),
         Paragraph("", styles["TableCell"]),
+        Paragraph("", styles["TableCell"]),
         Paragraph(f"<b>₹{total_rent:,.2f}</b>", styles["TableCellRightBold"]),
         Paragraph(f"<b>₹{total_food:,.2f}</b>", styles["TableCellRightBold"]),
         Paragraph(f"<b>-₹{total_mess_cut:,.2f}</b>", styles["TableCellRightBold"]),
@@ -231,7 +235,7 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
         Paragraph("", styles["TableCell"]),
     ])
 
-    widths = [55, 95, 42, 105, 50, 52, 54, 50, 62, 52, 58, 55, 40]
+    widths = [50, 96, 36, 54, 98, 46, 46, 48, 44, 56, 48, 54, 52, 42]
     t = Table(table_data, colWidths=widths, repeatRows=1)
     
     t_style = [
@@ -314,7 +318,7 @@ def generate_fee_invoice_pdf(fee, current_user=None):
             Paragraph(f"<b>Fee Title:</b> {fee.title}", styles["TableCell"]),
         ],
         [
-            Paragraph(f"<b>Roll No:</b> {s.roll_no}", styles["TableCell"]),
+            Paragraph(f"<b>Roll No:</b> {s.roll_no} ({getattr(s, 'year_short', '')})", styles["TableCell"]),
             Paragraph(f"<b>Billing Month:</b> {fee.month or '—'}", styles["TableCell"]),
         ],
         [
@@ -322,12 +326,12 @@ def generate_fee_invoice_pdf(fee, current_user=None):
             Paragraph(f"<b>Due Date:</b> {fee.due_date.strftime('%d %b %Y') if fee.due_date else '—'}", styles["TableCell"]),
         ],
         [
+            Paragraph(f"<b>Academic Year / Bldg:</b> {getattr(s, 'year_label', '—')} · {s.room.building.name if (s.room and s.room.building) else 'Unassigned'}", styles["TableCell"]),
             Paragraph(f"<b>Course:</b> {s.course or '—'}", styles["TableCell"]),
-            Paragraph(f"<b>Payment Status:</b> <b>{fee.status}</b>", styles["TableCellBold"]),
         ],
         [
             Paragraph(f"<b>Parent / Guardian:</b> {parent_str} ({parent_phone})", styles["TableCell"]),
-            Paragraph(f"<b>Overdue Days:</b> {fee.overdue_days} days" if fee.overdue_days > 0 else "<b>Overdue:</b> No", styles["TableCell"]),
+            Paragraph(f"<b>Payment Status:</b> <b>{fee.status}</b> ({('Overdue ' + str(fee.overdue_days) + 'd') if fee.overdue_days > 0 else 'On Time'})", styles["TableCellBold"]),
         ],
     ]
     info_table = Table(info_data, colWidths=[260, 255])

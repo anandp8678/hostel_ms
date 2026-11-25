@@ -41,7 +41,7 @@
           <label class="form-label fw-bold mb-1">Target Building</label>
           {% if is_building_locked and active_building %}
             <input type="hidden" name="building" value="{{ active_building.pk }}" id="bulkBuildingSelect" data-code="{{ active_building.code }}">
-            <div class="form-control bg-white fw-semibold">{{ active_building.code }} &mdash; {{ active_building.name }} ({{ active_building.years_summary }})</div>
+            <div class="form-control bg-white fw-semibold">{{ active_building.code }} &mdash; {{ active_building.name }} ({{ active_building.allowed_years_display }})</div>
           {% else %}
             {{ form.building }}
           {% endif %}

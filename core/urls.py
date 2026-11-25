@@ -33,6 +33,7 @@ urlpatterns = [
     path("leaves/", v.leaves, name="leaves"),
     path("leaves/<int:pk>/<str:decision>/", v.leave_decide, name="leave_decide"),
     path("allocations/<int:pk>/vacate/", v.allocation_vacate, name="allocation_vacate"),
+    path("fees/", v.fees_list, name="fees"),
     path("fees/structure/", v.fee_structure, name="fee_structure"),
     path("fees/calculate/", v.fees_calculate_monthly, name="fees_calculate_monthly"),
     path("fees/export/pdf/", v.fees_export_pdf, name="fees_export_pdf"),
@@ -58,7 +59,7 @@ urlpatterns = [
     path("complaints/<int:pk>/edit/", v.complaint_edit, name="complaints_edit"),
     path("announcements/new/", v.announcement_new, name="announcements_new"),
 ]
-special = {("fees", "new"), ("wardens", "new"), ("students", "new"), ("complaints", "new"), ("complaints", "edit"), ("announcements", "new"), ("rooms", "list"), ("students", "list"), ("buildings", "list")}
+special = {("fees", "list"), ("fees", "new"), ("wardens", "new"), ("students", "new"), ("complaints", "new"), ("complaints", "edit"), ("announcements", "new"), ("rooms", "list"), ("students", "list"), ("buildings", "list")}
 for key, d in v.V.items():
     path_key = "menu/manage" if key == "menu_manage" else key
     for kind, view in d.items():
