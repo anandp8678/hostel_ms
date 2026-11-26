@@ -88,6 +88,9 @@ class StudentAddForm(BS, forms.Form):
     phone = forms.CharField(max_length=20, required=False)
     parent_name = forms.CharField(max_length=100, required=False)
     parent_phone = forms.CharField(max_length=20, required=False, label="Parent phone (parent's login is created from this)")
+    preferred_room_type = forms.ChoiceField(
+        choices=m.ROOM_PREF_CHOICES, required=False, initial="", label="Preferred room sharing type"
+    )
     room = forms.ModelChoiceField(m.Room.objects.all(), required=False, empty_label="No room yet")
 
     def __init__(self, *a, **k):
@@ -100,7 +103,11 @@ class StudentAddForm(BS, forms.Form):
             qs = qs.filter(building=scoped_building)
             if scoped_building.is_first_year_only:
                 self.fields["year_of_study"].initial = 1
+        cfg = m.FeeConfig.get_config()
         self.fields["room"].queryset = qs
+        self.fields["room"].label_from_instance = (
+            lambda r: f"{r} — {r.room_type_label} ({r.vacancy} free · ₹{cfg.get_rent_for_room(r):,.0f}/mo)"
+        )
 
     def clean(self):
         cd = super().clean()
@@ -126,7 +133,8 @@ class StudentAddForm(BS, forms.Form):
 class StudentEditForm(MF):
     class Meta:
         model = m.Student
-        fields = ["course", "year_of_study", "is_active"]
+        fields = ["course", "year_of_study", "preferred_room_type", "is_active"]
+        labels = {"preferred_room_type": "Preferred Room Sharing Type"}
 
     def clean(self):
         cd = super().clean()
@@ -145,16 +153,19 @@ class StudentEditForm(MF):
 class RoomForm(MF):
     class Meta:
         model = m.Room
-        fields = ["building", "block", "number", "capacity", "is_blacklisted", "blacklist_reason"]
+        fields = ["building", "block", "number", "room_type", "capacity", "is_blacklisted", "blacklist_reason"]
         labels = {
             "building": "Hostel Building",
             "block": "Floor / Prefix (e.g. G for Ground, F for 1st)",
             "number": "Room number (e.g. 101, displays as B1 · G-101)",
+            "room_type": "Room Sharing Type",
+            "capacity": "Bed Capacity",
         }
         help_texts = {
             "building": "Select whether this room is in Building 1 (1st Year) or Building 2 (Senior Block).",
             "block": "Floor prefix indicates the floor: G = Ground Floor, F = First Floor, S = Second Floor, etc.",
             "number": "Enter room number (e.g. 101). If entered as G-101, the prefix is formatted automatically.",
+            "room_type": "Choose 1 Sharing (1 bed), 2 Sharing (2 beds), or 3 Sharing (3 beds) for billing and assignment.",
         }
 
     def __init__(self, *a, **k):
@@ -166,6 +177,8 @@ class RoomForm(MF):
             self.fields["building"].initial = scoped_building
         self.fields["building"].queryset = qs
         self.fields["building"].required = scoped_building is not None
+        self.fields["room_type"].required = False
+        self.fields["capacity"].required = False
 
     def clean(self):
         cd = super().clean()
@@ -176,6 +189,26 @@ class RoomForm(MF):
             cd["number"] = m_prefix.group(2).strip()
             self.instance.block = cd["block"]
             self.instance.number = cd["number"]
+        raw_rt = (self.data.get(self.add_prefix("room_type")) or "").strip() if hasattr(self, "data") and self.data else ""
+        raw_cap = str(self.data.get(self.add_prefix("capacity")) or "").strip() if hasattr(self, "data") and self.data else ""
+        rt = (cd.get("room_type") or "").strip()
+        cap = cd.get("capacity")
+        if raw_rt and not raw_cap:
+            cap = m.ROOM_TYPE_CAPACITY.get(rt, 2)
+        elif raw_cap and not raw_rt:
+            rt = m.CAPACITY_TO_ROOM_TYPE.get(int(cap), "2_sharing")
+        else:
+            if not rt:
+                rt = self.instance.room_type if self.instance and self.instance.pk else "2_sharing"
+            if cap is None:
+                cap = m.ROOM_TYPE_CAPACITY.get(rt, 2)
+        if int(cap) < 1:
+            self.add_error("capacity", "Capacity must be at least 1.")
+        else:
+            cd["room_type"] = rt
+            cd["capacity"] = int(cap)
+            self.instance.room_type = rt
+            self.instance.capacity = int(cap)
         return cd
 
 
@@ -186,6 +219,7 @@ class AllocationForm(MF):
 
     def __init__(self, *a, **k):
         scoped_building = k.pop("building", None)
+        room_type = k.pop("room_type", None)
         super().__init__(*a, **k)
         students_qs = m.Student.objects.filter(is_active=True).select_related("user")
         rooms_qs = m.Room.objects.filter(is_blacklisted=False).select_related("building")
@@ -196,8 +230,14 @@ class AllocationForm(MF):
                 students_qs = students_qs.filter(year_of_study=1)
             elif allowed_yrs:
                 students_qs = students_qs.filter(year_of_study__in=allowed_yrs)
+        if room_type in m.ROOM_TYPE_CAPACITY:
+            rooms_qs = rooms_qs.filter(room_type=room_type)
+        cfg = m.FeeConfig.get_config()
         self.fields["student"].queryset = students_qs
         self.fields["room"].queryset = rooms_qs
+        self.fields["room"].label_from_instance = (
+            lambda r: f"{r} — {r.room_type_label} ({r.vacancy} free · ₹{cfg.get_rent_for_room(r):,.0f}/mo)"
+        )
 
 
 class MenuForm(MF):
@@ -249,6 +289,9 @@ class FeeConfigForm(MF):
     class Meta:
         model = m.FeeConfig
         fields = [
+            "rent_1_sharing",
+            "rent_2_sharing",
+            "rent_3_sharing",
             "rent_amount",
             "food_rate_per_day",
             "mess_cut_min_days",
@@ -259,7 +302,10 @@ class FeeConfigForm(MF):
             "late_fine_interval_days",
         ]
         labels = {
-            "rent_amount": "Fixed Monthly Rent (₹)",
+            "rent_1_sharing": "1 Sharing Monthly Rent (₹)",
+            "rent_2_sharing": "2 Sharing Monthly Rent (₹)",
+            "rent_3_sharing": "3 Sharing Monthly Rent (₹)",
+            "rent_amount": "Fallback Room Rent — Unallocated (₹)",
             "food_rate_per_day": "Food Rate per Day (₹)",
             "mess_cut_min_days": "Consecutive Absent Days for Mess Cut",
             "mess_cut_rate_per_day": "Mess Cut Deduction Rate per Day (₹)",
@@ -269,7 +315,10 @@ class FeeConfigForm(MF):
             "late_fine_interval_days": "Late Fine Overdue Interval (Days)",
         }
         help_texts = {
-            "rent_amount": "Default fixed hostel room rent per student per month (e.g. ₹1500).",
+            "rent_1_sharing": "Monthly hostel rent per student assigned to a 1 Sharing (single) room.",
+            "rent_2_sharing": "Monthly hostel rent per student assigned to a 2 Sharing (double) room.",
+            "rent_3_sharing": "Monthly hostel rent per student assigned to a 3 Sharing (triple) room.",
+            "rent_amount": "Fallback monthly rent applied only if a student is unallocated or in a custom-capacity room.",
             "food_rate_per_day": "Daily food / mess charge (e.g. ₹130).",
             "mess_cut_min_days": "Minimum consecutive absent days required to qualify for mess cut (default: 3 days).",
             "mess_cut_rate_per_day": "Amount to reduce per eligible day (default: ₹130 = daily food rate).",
@@ -279,9 +328,27 @@ class FeeConfigForm(MF):
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
-        for f_name in ["late_fine_amount", "late_fine_interval_days", "count_leaves"]:
+        for f_name in [
+            "rent_1_sharing", "rent_2_sharing", "rent_3_sharing", "rent_amount",
+            "late_fine_amount", "late_fine_interval_days", "count_leaves",
+        ]:
             if f_name in self.fields:
                 self.fields[f_name].required = False
+
+    def clean(self):
+        cd = super().clean()
+        for f_name, fallback in (
+            ("rent_1_sharing", getattr(self.instance, "rent_1_sharing", 3000)),
+            ("rent_2_sharing", getattr(self.instance, "rent_2_sharing", 2000)),
+            ("rent_3_sharing", getattr(self.instance, "rent_3_sharing", 1500)),
+            ("rent_amount", getattr(self.instance, "rent_amount", 1500)),
+        ):
+            val = cd.get(f_name)
+            if val is None:
+                cd[f_name] = fallback
+            elif val < 0:
+                self.add_error(f_name, "Rent amount cannot be negative.")
+        return cd
 
 
 class FeeForm(MF):
@@ -389,6 +456,7 @@ class RoomBulkAddForm(BS, forms.Form):
     start_number = forms.CharField(max_length=20, initial="101", required=False, label="Starting room number (e.g. 101 -> G-101)")
     count = forms.IntegerField(min_value=1, initial=10, required=False, label="Number of rooms to add (amount)")
     end_number = forms.CharField(max_length=20, required=False, label="Or ending room number (optional)")
+    room_type = forms.ChoiceField(choices=m.ROOM_TYPE_CHOICES, initial="2_sharing", required=False, label="Room sharing type")
     capacity = forms.IntegerField(min_value=1, initial=2, required=False, label="Capacity per room")
     count_capacity = forms.IntegerField(min_value=1, required=False)
     prefix = forms.CharField(max_length=10, required=False, widget=forms.HiddenInput)
@@ -398,10 +466,12 @@ class RoomBulkAddForm(BS, forms.Form):
     start_floor = forms.IntegerField(min_value=0, initial=1, required=False, label="From floor")
     end_floor = forms.IntegerField(min_value=0, initial=3, required=False, label="To floor")
     rooms_per_floor = forms.IntegerField(min_value=1, initial=10, required=False, label="Rooms per floor")
+    floor_room_type = forms.ChoiceField(choices=m.ROOM_TYPE_CHOICES, initial="2_sharing", required=False, label="Room sharing type")
     floor_capacity = forms.IntegerField(min_value=1, initial=2, required=False, label="Capacity per room")
 
     # List mode fields
     list_block = forms.CharField(max_length=20, initial="G", required=False, label="Default Floor Prefix")
+    list_room_type = forms.ChoiceField(choices=m.ROOM_TYPE_CHOICES, initial="2_sharing", required=False, label="Room sharing type")
     list_capacity = forms.IntegerField(min_value=1, initial=2, required=False, label="Capacity per room")
     room_list = forms.CharField(widget=forms.Textarea(attrs={"rows": 4, "placeholder": "e.g. 101, 102, 103, 104\nor one per line"}),
                                 required=False, label="Room numbers")
