@@ -552,17 +552,41 @@ def fee_create(request):
 
 @staff
 def fee_structure(request):
-    """Allows wardens and admins to configure fixed rent, food daily rates, and mess cut rules."""
+    """Allows wardens and admins to configure tiered room rents, food daily rates, and mess cut rules."""
     cfg = m.FeeConfig.get_config()
     form = f.FeeConfigForm(request.POST or None, instance=cfg)
     if request.method == "POST" and form.is_valid():
         form.save()
-        messages.success(request, "Fee structure and mess cut settings updated successfully.")
+        messages.success(request, "Fee structure and tiered room sharing rates updated successfully.")
         return redirect("fee_structure")
+    food_30 = cfg.food_rate_per_day * 30
+    cut_example = cfg.mess_cut_rate_per_day
+    tier_examples = [
+        {
+            "label": "1 Sharing",
+            "rent": cfg.rent_1_sharing,
+            "gross": cfg.rent_1_sharing + food_30,
+            "net": max(Decimal("0.00"), cfg.rent_1_sharing + food_30 - cut_example),
+        },
+        {
+            "label": "2 Sharing",
+            "rent": cfg.rent_2_sharing,
+            "gross": cfg.rent_2_sharing + food_30,
+            "net": max(Decimal("0.00"), cfg.rent_2_sharing + food_30 - cut_example),
+        },
+        {
+            "label": "3 Sharing",
+            "rent": cfg.rent_3_sharing,
+            "gross": cfg.rent_3_sharing + food_30,
+            "net": max(Decimal("0.00"), cfg.rent_3_sharing + food_30 - cut_example),
+        },
+    ]
     return render(request, "core/fee_structure.html", {
         "title": "Fee Structure & Mess Cut Rules",
         "form": form,
         "cfg": cfg,
+        "food_30": food_30,
+        "tier_examples": tier_examples,
     })
 
 

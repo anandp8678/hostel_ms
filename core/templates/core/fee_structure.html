@@ -2,7 +2,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h4 style="color:var(--navy)" class="mb-1">Hostel Fee Structure & Mess Cut Settings</h4>
-    <p class="text-secondary small mb-0">Configure fixed monthly rent, daily food rates, and attendance-based mess cut deduction rules.</p>
+    <p class="text-secondary small mb-0">Configure separate monthly room rents for 1, 2, and 3 sharing rooms alongside daily food rates and mess cut rules.</p>
   </div>
   <div>
     <a href="{% url 'fees_calculate_monthly' %}" class="btn btn-outline-primary me-2">Calculate Monthly Fees</a>
@@ -20,13 +20,48 @@
         {{ form.non_field_errors }}
 
         <div class="row g-3">
+          <div class="col-12">
+            <h6 class="fw-bold mb-1" style="color:var(--navy);">Room Rent Tiers by Sharing Type</h6>
+            <p class="small text-muted mb-2">Monthly rent is automatically selected from each student's assigned room sharing type (combined into one unified monthly PDF).</p>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">1 Sharing Rent (₹)</label>
+            <div class="input-group">
+              <span class="input-group-text">₹</span>
+              {{ form.rent_1_sharing }}
+            </div>
+            <div class="form-text small text-muted">Single-occupancy room.</div>
+            {% if form.rent_1_sharing.errors %}<div class="text-danger small">{{ form.rent_1_sharing.errors|join:", " }}</div>{% endif %}
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">2 Sharing Rent (₹)</label>
+            <div class="input-group">
+              <span class="input-group-text">₹</span>
+              {{ form.rent_2_sharing }}
+            </div>
+            <div class="form-text small text-muted">Double-sharing room.</div>
+            {% if form.rent_2_sharing.errors %}<div class="text-danger small">{{ form.rent_2_sharing.errors|join:", " }}</div>{% endif %}
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">3 Sharing Rent (₹)</label>
+            <div class="input-group">
+              <span class="input-group-text">₹</span>
+              {{ form.rent_3_sharing }}
+            </div>
+            <div class="form-text small text-muted">Triple-sharing room.</div>
+            {% if form.rent_3_sharing.errors %}<div class="text-danger small">{{ form.rent_3_sharing.errors|join:", " }}</div>{% endif %}
+          </div>
+
           <div class="col-md-6">
-            <label class="form-label fw-semibold">Fixed Room Rent (₹)</label>
+            <label class="form-label fw-semibold">Fallback Unallocated Rent (₹)</label>
             <div class="input-group">
               <span class="input-group-text">₹</span>
               {{ form.rent_amount }}
             </div>
-            <div class="form-text small text-muted">Fixed monthly room rent charged to each resident (e.g. ₹1500).</div>
+            <div class="form-text small text-muted">Applied when a resident has no active room or custom capacity.</div>
             {% if form.rent_amount.errors %}<div class="text-danger small">{{ form.rent_amount.errors|join:", " }}</div>{% endif %}
           </div>
 
@@ -121,9 +156,30 @@
     <div class="card p-4 bg-white border-0 shadow-sm mb-4">
       <h6 class="fw-bold text-uppercase text-secondary small tracking-wider mb-3">Active Policy Overview</h6>
       
+      <div class="row g-2 mb-2">
+        <div class="col-4">
+          <div class="p-2 bg-light rounded text-center border">
+            <div class="text-secondary" style="font-size:.72rem;">1 Sharing</div>
+            <div class="fw-bold text-dark">₹{{ cfg.rent_1_sharing }}</div>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="p-2 bg-light rounded text-center border">
+            <div class="text-secondary" style="font-size:.72rem;">2 Sharing</div>
+            <div class="fw-bold text-dark">₹{{ cfg.rent_2_sharing }}</div>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="p-2 bg-light rounded text-center border">
+            <div class="text-secondary" style="font-size:.72rem;">3 Sharing</div>
+            <div class="fw-bold text-dark">₹{{ cfg.rent_3_sharing }}</div>
+          </div>
+        </div>
+      </div>
+
       <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
-        <span class="text-secondary small">Fixed Monthly Rent</span>
-        <span class="fw-bold text-dark fs-5">₹{{ cfg.rent_amount }}</span>
+        <span class="text-secondary small">Fallback Rent (Unallocated)</span>
+        <span class="fw-semibold text-dark">₹{{ cfg.rent_amount }}</span>
       </div>
 
       <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-light rounded">
@@ -154,18 +210,34 @@
 
     <!-- Example Breakdown Card -->
     <div class="card p-4 border-0 shadow-sm" style="background: linear-gradient(135deg, #eef5fc 0%, #ffffff 100%);">
-      <h6 class="fw-bold text-dark mb-2">Example Calculation (30-Day Month)</h6>
-      <ul class="list-unstyled small mb-3">
-        <li class="mb-1 text-secondary">• <b>Fixed Rent:</b> ₹{{ cfg.rent_amount }}</li>
-        <li class="mb-1 text-secondary">• <b>Base Food (30 days @ ₹{{ cfg.food_rate_per_day }}):</b> ₹3,900</li>
-        <li class="mb-1 text-secondary">• <b>Gross Billed:</b> ₹5,400</li>
-        <li class="mb-1 text-success">• <b>Mess Cut (Absent for 3 consecutive days):</b> -₹{{ cfg.mess_cut_rate_per_day }}</li>
-        <li class="mb-1 fw-bold text-dark">• <b>Base Net Amount (On-time):</b> ₹5,270</li>
-        <li class="pt-2 border-top text-danger fw-semibold">• <b>Unpaid 5 days past due:</b> +₹{{ cfg.late_fine_amount }} fine &rarr; <b>₹5,570</b></li>
-        <li class="text-danger fw-semibold">• <b>Unpaid 10 days past due:</b> +₹{{ cfg.late_fine_amount|add:cfg.late_fine_amount }} fine &rarr; <b>₹5,870</b></li>
-      </ul>
+      <h6 class="fw-bold text-dark mb-2">Example Monthly Comparison (30-Day Month)</h6>
+      <p class="small text-secondary mb-2">
+        Base food (30 days @ ₹{{ cfg.food_rate_per_day }}/day) = <b>₹{{ food_30 }}</b>; 3-day absence mess cut = <b class="text-success">-₹{{ cfg.mess_cut_rate_per_day }}</b>.
+      </p>
+      <div class="table-responsive mb-2">
+        <table class="table table-sm table-bordered bg-white mb-0 small">
+          <thead class="table-light">
+            <tr>
+              <th>Sharing Type</th>
+              <th class="text-end">Rent</th>
+              <th class="text-end">Gross</th>
+              <th class="text-end">Net w/ 1 Cut</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ex in tier_examples %}
+            <tr>
+              <td class="fw-semibold">{{ ex.label }}</td>
+              <td class="text-end">₹{{ ex.rent }}</td>
+              <td class="text-end">₹{{ ex.gross }}</td>
+              <td class="text-end fw-bold text-dark">₹{{ ex.net }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
       <p class="small text-muted mb-0">
-        <i>Note: If a student is absent for only 1 or 2 days, no mess cut is applied according to policy rules. Fines accumulate every 5 overdue days. Wardens can waive or edit late fines for any resident.</i>
+        <i>Note: All sharing tiers are combined into a single unified monthly billing PDF. Overdue fines add ₹{{ cfg.late_fine_amount }} every {{ cfg.late_fine_interval_days }} days past due.</i>
       </p>
     </div>
   </div>
