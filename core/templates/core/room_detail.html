@@ -14,6 +14,7 @@
           <span class="badge text-bg-dark rounded-pill fs-6">{{ room.building.code }} &mdash; {{ room.building.name }} ({{ room.building.allowed_years_display }})</span>
         {% endif %}
         <span class="badge text-bg-primary rounded-pill fs-6">{{ room.floor_display }}</span>
+        <span class="badge text-bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill fs-6">{{ room.room_type_label }} · ₹{{ room.monthly_rent|floatformat:0 }}/mo</span>
         {% if room.is_blacklisted %}
           <span class="badge text-bg-danger rounded-pill fs-6" title="{{ room.blacklist_reason }}">
             Under Maintenance: {{ room.blacklist_reason|default:"Unavailable" }}
@@ -27,7 +28,7 @@
         {% endif %}
       </div>
       <div class="text-secondary small">
-        Floor: <b>{{ room.floor_name }}</b> (Prefix: <code>{{ room.block }}</code>) · Room Number: <b>{{ room.number }}</b> · Capacity: <b>{{ room.capacity }} Bed{{ room.capacity|pluralize }}</b>
+        Floor: <b>{{ room.floor_name }}</b> (Prefix: <code>{{ room.block }}</code>) · Room Number: <b>{{ room.number }}</b> · Sharing Type: <b>{{ room.room_type_label }}</b> (₹{{ room.monthly_rent|floatformat:0 }}/mo) · Capacity: <b>{{ room.capacity }} Bed{{ room.capacity|pluralize }}</b>
       </div>
     </div>
 

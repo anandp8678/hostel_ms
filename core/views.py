@@ -1741,6 +1741,7 @@ def room_bulk_add(request):
                 end_no = d.get("end_number") or None
                 caps = request.POST.getlist("capacity")
                 cap = d.get("count_capacity") or (caps[0] if caps else None) or d.get("capacity") or 2
+                rt = d.get("room_type") or request.POST.get("room_type") or ""
                 prefix = d.get("prefix") or ""
                 result = bulk_create_rooms(
                     block=block,
@@ -1750,6 +1751,7 @@ def room_bulk_add(request):
                     capacity=cap,
                     prefix=prefix,
                     building=target_building,
+                    room_type=rt,
                 )
             elif mode == "floor":
                 block = d.get("floor_block") or d.get("block") or "A"
@@ -1757,6 +1759,7 @@ def room_bulk_add(request):
                 end_fl = d.get("end_floor") or 1
                 r_per_fl = d.get("rooms_per_floor") or 10
                 cap = d.get("floor_capacity") or d.get("capacity") or 2
+                floor_rt = d.get("floor_room_type") or request.POST.get("floor_room_type") or ""
                 result = bulk_create_rooms_floors(
                     block=block,
                     start_floor=start_fl,
@@ -1764,16 +1767,19 @@ def room_bulk_add(request):
                     rooms_per_floor=r_per_fl,
                     capacity=cap,
                     building=target_building,
+                    room_type=floor_rt,
                 )
             elif mode == "list":
                 block = d.get("list_block") or d.get("block") or "A"
                 text = d.get("room_list") or ""
                 cap = d.get("list_capacity") or d.get("capacity") or 2
+                list_rt = d.get("list_room_type") or request.POST.get("list_room_type") or ""
                 result = bulk_create_rooms_from_list(
                     block=block,
                     text=text,
                     default_capacity=cap,
                     building=target_building,
+                    room_type=list_rt,
                 )
             elif mode == "csv":
                 if "file" not in request.FILES:
@@ -1801,13 +1807,19 @@ def room_bulk_add(request):
         buildings=buildings,
         active_building=active_building,
         is_building_locked=is_building_locked,
+        cfg=m.FeeConfig.get_config(),
     )
 
 
 @staff
 def room_bulk_template(request):
-    r = HttpResponse("building,block,number,capacity\nB1,G,101,2\nB1,G,102,2\nB2,1,201,3\n",
-                     content_type="text/csv")
+    r = HttpResponse(
+        "building,block,number,room_type,capacity\n"
+        "B1,G,101,1_sharing,1\n"
+        "B1,G,102,2_sharing,2\n"
+        "B2,1,201,3_sharing,3\n",
+        content_type="text/csv",
+    )
     r["Content-Disposition"] = 'attachment; filename="rooms_template.csv"'
     return r
 
@@ -1848,6 +1860,25 @@ def room_list(request):
                 count = rooms_qs.count()
                 rooms_qs.delete()
                 messages.success(request, f"{count} room(s) deleted successfully.")
+        elif action == "change_room_type":
+            new_rt = (request.POST.get("new_room_type") or "").strip()
+            if new_rt not in m.ROOM_TYPE_CAPACITY:
+                messages.error(request, "Please choose a valid room sharing type (1, 2, or 3 Sharing).")
+            else:
+                new_cap = m.ROOM_TYPE_CAPACITY[new_rt]
+                updated = 0
+                for r in rooms_qs:
+                    if r.occupied > new_cap:
+                        messages.warning(
+                            request,
+                            f"Room {r} currently has {r.occupied} occupant(s); cannot change to {dict(m.ROOM_TYPE_CHOICES)[new_rt]}.",
+                        )
+                    else:
+                        r.room_type = new_rt
+                        r.capacity = new_cap
+                        r.save()
+                        updated += 1
+                messages.success(request, f"Sharing type updated to {dict(m.ROOM_TYPE_CHOICES)[new_rt]} for {updated} room(s).")
         elif action == "change_capacity":
             try:
                 new_cap = int(request.POST.get("new_capacity", 2))
@@ -1859,7 +1890,8 @@ def room_list(request):
                         messages.warning(request, f"Room {r} already has {r.occupied} students; capacity cannot be lower.")
                     else:
                         r.capacity = new_cap
-                        r.save(update_fields=["capacity"])
+                        r.room_type = m.CAPACITY_TO_ROOM_TYPE.get(new_cap, r.room_type)
+                        r.save()
                         updated += 1
                 messages.success(request, f"Capacity updated for {updated} room(s).")
             except ValueError:
@@ -1874,6 +1906,7 @@ def room_list(request):
     status = request.GET.get("status", "").strip()
     cause = request.GET.get("cause", "").strip()
     capacity = request.GET.get("capacity", "").strip()
+    room_type = request.GET.get("room_type", "").strip()
     view_mode = request.GET.get("view", "grid").strip()
 
     rooms_qs = m.Room.objects.select_related("building").all().prefetch_related(
@@ -1887,6 +1920,9 @@ def room_list(request):
 
     if block:
         rooms_qs = rooms_qs.filter(block__iexact=block)
+
+    if room_type in m.ROOM_TYPE_CAPACITY:
+        rooms_qs = rooms_qs.filter(room_type=room_type)
 
     if capacity:
         try:
@@ -1948,11 +1984,14 @@ def room_list(request):
         m.Complaint.objects.exclude(status="Resolved").values_list("student_id", flat=True)
     )
 
-    # Enrich each room with inmates and active complaints count
+    cfg = m.FeeConfig.get_config()
+
+    # Enrich each room with inmates, monthly rent, and active complaints count
     for r in rooms:
         r.inmates_list = [a.student for a in r.allocations.all()]
         r.inmate_names = [s.user.display_name for s in r.inmates_list]
         r.active_complaints_count = sum(1 for s in r.inmates_list if s.pk in active_complaints_students)
+        r.monthly_rent_display = cfg.get_rent_for_room(r)
 
     # Group rooms by (building, floor) for Grid View so Building 1 & Building 2 floors never merge
     grouped_floors = {}
@@ -2005,6 +2044,9 @@ def room_list(request):
         filter_status=status,
         filter_cause=cause,
         filter_capacity=capacity,
+        filter_room_type=room_type,
+        room_type_choices=m.ROOM_TYPE_CHOICES,
+        cfg=cfg,
         total_rooms=len(rooms),
         total_beds=total_beds,
         total_occupied=total_occupied,
@@ -3366,6 +3408,7 @@ def student_rooms(request):
     q = request.GET.get("q", "").strip()
     block = request.GET.get("block", "").strip()
     building_param = request.GET.get("building", "").strip()
+    room_type = request.GET.get("room_type", "").strip()
     sort_by = request.GET.get("sort", "floor_asc").strip()
 
     buildings = list(m.Building.objects.order_by("code"))
@@ -3400,6 +3443,9 @@ def student_rooms(request):
     if block:
         rooms_qs = rooms_qs.filter(block__iexact=block)
 
+    if room_type in m.ROOM_TYPE_CAPACITY:
+        rooms_qs = rooms_qs.filter(room_type=room_type)
+
     all_rooms = list(rooms_qs)
 
     if q:
@@ -3426,6 +3472,8 @@ def student_rooms(request):
     else:  # floor_asc (default)
         all_rooms.sort(key=lambda r: ((r.building.code if r.building else ""), floor_order_key(r.block), r.number))
 
+    cfg = m.FeeConfig.get_config()
+
     # Group rooms by (building, floor) so floors in separate buildings stay grouped separately
     grouped_dict = {}
     room_items = []
@@ -3439,6 +3487,9 @@ def student_rooms(request):
             "floor_name": r.floor_name,
             "floor_display": r.floor_display,
             "number": r.number,
+            "room_type": r.room_type,
+            "room_type_label": r.room_type_label,
+            "monthly_rent": cfg.get_rent_for_room(r),
             "capacity": r.capacity,
             "occupied": len(residents),
             "vacancy": r.vacancy,
@@ -3485,6 +3536,8 @@ def student_rooms(request):
         total_rooms=len(room_items),
         blocks=all_blocks,
         selected_block=block,
+        selected_room_type=room_type,
+        room_type_choices=m.ROOM_TYPE_CHOICES,
         buildings=buildings,
         active_building=active_building,
         selected_building=active_building.code if active_building else "",

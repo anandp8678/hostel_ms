@@ -73,15 +73,24 @@
       </div>
 
       <div class="row g-3 mb-3">
-        <div class="col-md-6">
+        <div class="col-md-4">
           <label class="form-label fw-semibold">Or Ending Room No. (optional)</label>
           <input type="text" name="end_number" id="countEnd" class="form-control" value="{{ form.end_number.value|default:'' }}" placeholder="e.g. 120">
           <div class="form-text">Overrides amount if filled</div>
         </div>
-        <div class="col-md-6">
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Room Sharing Type</label>
+          <select name="room_type" id="countRoomType" class="form-select" onchange="syncRoomTypeCapacity('countRoomType', 'countCap')">
+            <option value="1_sharing" {% if form.room_type.value == '1_sharing' %}selected{% endif %}>1 Sharing (₹{{ cfg.rent_1_sharing|floatformat:0 }}/mo)</option>
+            <option value="2_sharing" {% if not form.room_type.value or form.room_type.value == '2_sharing' %}selected{% endif %}>2 Sharing (₹{{ cfg.rent_2_sharing|floatformat:0 }}/mo)</option>
+            <option value="3_sharing" {% if form.room_type.value == '3_sharing' %}selected{% endif %}>3 Sharing (₹{{ cfg.rent_3_sharing|floatformat:0 }}/mo)</option>
+          </select>
+          <div class="form-text">Sets room tier & default beds</div>
+        </div>
+        <div class="col-md-4">
           <label class="form-label fw-semibold">Capacity per Room</label>
           <input type="number" name="capacity" id="countCap" class="form-control" value="{{ form.capacity.value|default:'2' }}" min="1">
-          <div class="form-text">Beds per room (default: 2)</div>
+          <div class="form-text">Auto-synced with sharing type</div>
         </div>
       </div>
 
@@ -113,8 +122,16 @@
       </div>
       <div class="row g-3 mb-3">
         <div class="col-md-4">
+          <label class="form-label fw-semibold">Room Sharing Type</label>
+          <select name="floor_room_type" id="floorRoomType" class="form-select" onchange="syncRoomTypeCapacity('floorRoomType', 'floorCap')">
+            <option value="1_sharing">1 Sharing (₹{{ cfg.rent_1_sharing|floatformat:0 }}/mo)</option>
+            <option value="2_sharing" selected>2 Sharing (₹{{ cfg.rent_2_sharing|floatformat:0 }}/mo)</option>
+            <option value="3_sharing">3 Sharing (₹{{ cfg.rent_3_sharing|floatformat:0 }}/mo)</option>
+          </select>
+        </div>
+        <div class="col-md-4">
           <label class="form-label fw-semibold">Capacity per Room</label>
-          <input type="number" name="floor_capacity" class="form-control" value="{{ form.floor_capacity.value|default:form.capacity.value|default:'2' }}" min="1">
+          <input type="number" name="floor_capacity" id="floorCap" class="form-control" value="{{ form.floor_capacity.value|default:form.capacity.value|default:'2' }}" min="1">
         </div>
       </div>
       <p class="small text-secondary mb-3">Example: Block A with floors 1 to 3 and 10 rooms per floor creates A-101–A-110, A-201–A-210, A-301–A-310 (30 rooms total).</p>
@@ -129,8 +146,16 @@
           <input type="text" name="list_block" class="form-control" value="{{ form.list_block.value|default:form.block.value|default:'G' }}" placeholder="e.g. G">
         </div>
         <div class="col-md-4">
+          <label class="form-label fw-semibold">Room Sharing Type</label>
+          <select name="list_room_type" id="listRoomType" class="form-select" onchange="syncRoomTypeCapacity('listRoomType', 'listCap')">
+            <option value="1_sharing">1 Sharing (₹{{ cfg.rent_1_sharing|floatformat:0 }}/mo)</option>
+            <option value="2_sharing" selected>2 Sharing (₹{{ cfg.rent_2_sharing|floatformat:0 }}/mo)</option>
+            <option value="3_sharing">3 Sharing (₹{{ cfg.rent_3_sharing|floatformat:0 }}/mo)</option>
+          </select>
+        </div>
+        <div class="col-md-4">
           <label class="form-label fw-semibold">Capacity per Room</label>
-          <input type="number" name="list_capacity" class="form-control" value="{{ form.list_capacity.value|default:form.capacity.value|default:'2' }}" min="1">
+          <input type="number" name="list_capacity" id="listCap" class="form-control" value="{{ form.list_capacity.value|default:form.capacity.value|default:'2' }}" min="1">
         </div>
       </div>
       <div class="mb-3">
@@ -142,7 +167,7 @@
 
     <!-- MODE 4: CSV -->
     <div id="section-csv" class="mode-section" style="display:none;">
-      <p class="small text-secondary">Upload a CSV file with columns: <code>building, block, number, capacity</code> (or <code>block, number, capacity</code> / <code>room, capacity</code>). <a href="{% url 'rooms_bulk_template' %}">Download template</a>.</p>
+      <p class="small text-secondary">Upload a CSV file with columns: <code>building, block, number, room_type, capacity</code> (where <code>room_type</code> can be <code>1_sharing</code>, <code>2_sharing</code>, <code>3_sharing</code>, or <code>1 Sharing</code>/<code>2 Sharing</code>/<code>3 Sharing</code>). <a href="{% url 'rooms_bulk_template' %}">Download template</a>.</p>
       <div class="mb-3">
         <input type="file" name="file" class="form-control" accept=".csv">
       </div>
@@ -187,6 +212,17 @@
 {% endif %}
 
 <script>
+const ROOM_TYPE_CAPS = {"1_sharing": 1, "2_sharing": 2, "3_sharing": 3};
+
+function syncRoomTypeCapacity(selectId, capId) {
+  var sel = document.getElementById(selectId);
+  var capEl = document.getElementById(capId);
+  if (sel && capEl && ROOM_TYPE_CAPS[sel.value]) {
+    capEl.value = ROOM_TYPE_CAPS[sel.value];
+  }
+  if (selectId === 'countRoomType') updatePreview();
+}
+
 function setMode(mode) {
   document.getElementById('modeInput').value = mode;
   var modes = ['count', 'floor', 'list', 'csv'];

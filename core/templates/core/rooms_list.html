@@ -129,22 +129,32 @@
     {% if filter_cause %}<input type="hidden" name="cause" value="{{ filter_cause }}">{% endif %}
 
     <!-- Search Query Input -->
-    <div class="col-12 col-md-5 col-lg-4">
+    <div class="col-12 col-md-4 col-lg-3">
       <div class="input-group">
         <span class="input-group-text bg-light text-muted">Filter</span>
-        <input type="text" name="q" class="form-control" placeholder="Search room no, floor, resident name..." value="{{ filter_q }}">
-        {% if filter_q or filter_block or filter_status or filter_capacity or filter_cause or active_building and not is_building_locked %}
+        <input type="text" name="q" class="form-control" placeholder="Search room no, floor, resident..." value="{{ filter_q }}">
+        {% if filter_q or filter_block or filter_status or filter_capacity or filter_room_type or filter_cause or active_building and not is_building_locked %}
           <a href="?view={{ view_mode }}{% if is_building_locked and active_building %}&building={{ active_building.code }}{% endif %}" class="btn btn-outline-secondary" title="Reset all filters">&times;</a>
         {% endif %}
       </div>
     </div>
 
+    <!-- Sharing Type Dropdown Filter -->
+    <div class="col-6 col-md-2 col-lg-2">
+      <select name="room_type" class="form-select" onchange="this.form.submit()">
+        <option value="">All Sharing Types</option>
+        {% for rt_val, rt_lbl in room_type_choices %}
+          <option value="{{ rt_val }}" {% if filter_room_type == rt_val %}selected{% endif %}>{{ rt_lbl }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
     <!-- Floor Dropdown Filter -->
-    <div class="col-6 col-md-3 col-lg-3">
+    <div class="col-6 col-md-2 col-lg-2">
       <div class="input-group">
         <span class="input-group-text bg-light text-muted small">Floor:</span>
         <select name="block" class="form-select" onchange="this.form.submit()">
-          <option value="">All Floors</option>
+          <option value="">All</option>
           {% for b in all_blocks %}
             <option value="{{ b.code }}" {% if filter_block == b.code %}selected{% endif %}>
               {{ b.display }}
@@ -155,7 +165,7 @@
     </div>
 
     <!-- Status Dropdown Filter -->
-    <div class="col-6 col-md-4 col-lg-3">
+    <div class="col-6 col-md-2 col-lg-2">
       <div class="input-group">
         <span class="input-group-text bg-light text-muted small">Status:</span>
         <select name="status" class="form-select" onchange="this.form.submit()">
@@ -181,19 +191,19 @@
       <button type="submit" class="btn btn-navy fw-semibold px-3">Filter</button>
     </div>
 
-    <!-- Filter by Building & Floor Pills -->
+    <!-- Filter by Building, Sharing Type & Floor Pills -->
     {% if buildings %}
     <div class="col-12 mt-2 pt-2 border-top d-flex flex-wrap align-items-center gap-1">
       <span class="text-secondary small fw-semibold me-2">Building:</span>
       {% if not is_building_locked %}
-        <a href="?view={{ view_mode }}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+        <a href="?view={{ view_mode }}{% if filter_room_type %}&room_type={{ filter_room_type }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
            class="badge {% if not active_building %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
           All Buildings
         </a>
       {% endif %}
       {% for bld in buildings %}
         {% if not is_building_locked or active_building.pk == bld.pk %}
-          <a href="?view={{ view_mode }}&building={{ bld.code }}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+          <a href="?view={{ view_mode }}&building={{ bld.code }}{% if filter_room_type %}&room_type={{ filter_room_type }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
              class="badge {% if active_building and active_building.pk == bld.pk %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
             {{ bld.code }} &mdash; {{ bld.name }} ({{ bld.allowed_years_display }})
           </a>
@@ -202,13 +212,26 @@
     </div>
     {% endif %}
     <div class="col-12 mt-2 pt-2 border-top d-flex flex-wrap align-items-center gap-1">
+      <span class="text-secondary small fw-semibold me-2">Sharing Type:</span>
+      <a href="?view={{ view_mode }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_block %}&block={{ filter_block }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+         class="badge {% if not filter_room_type %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+        All Types
+      </a>
+      {% for rt_val, rt_lbl in room_type_choices %}
+        <a href="?view={{ view_mode }}&room_type={{ rt_val }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_block %}&block={{ filter_block }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+           class="badge {% if filter_room_type == rt_val %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          {{ rt_lbl }}
+        </a>
+      {% endfor %}
+    </div>
+    <div class="col-12 mt-2 pt-2 border-top d-flex flex-wrap align-items-center gap-1">
       <span class="text-secondary small fw-semibold me-2">Filter by Floor:</span>
-      <a href="?view={{ view_mode }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+      <a href="?view={{ view_mode }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_room_type %}&room_type={{ filter_room_type }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
          class="badge {% if not filter_block %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
         All Floors
       </a>
       {% for b in all_blocks %}
-        <a href="?view={{ view_mode }}&block={{ b.code }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+        <a href="?view={{ view_mode }}&block={{ b.code }}{% if active_building %}&building={{ active_building.code }}{% endif %}{% if filter_room_type %}&room_type={{ filter_room_type }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}{% if filter_status %}&status={{ filter_status }}{% endif %}"
            class="badge {% if filter_block == b.code %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
           {{ b.display }}
         </a>
@@ -263,8 +286,11 @@
                 {% endif %}
               </div>
 
-              <!-- Occupancy Status Badge -->
-              <div class="mb-2">
+              <!-- Occupancy Status & Sharing Tier Badge -->
+              <div class="mb-2 d-flex flex-wrap gap-1">
+                <span class="badge text-bg-light border text-dark rounded-pill" style="font-size: 0.7rem;">
+                  {{ r.room_type_label }} · ₹{{ r.monthly_rent_display|floatformat:0 }}/mo
+                </span>
                 {% if r.is_blacklisted %}
                   <span class="badge text-bg-danger rounded-pill" style="font-size: 0.72rem;" title="{{ r.blacklist_reason }}">
                     Maintenance: {{ r.blacklist_reason|default:"Unavailable" }}
@@ -338,11 +364,20 @@
         <div class="d-flex flex-wrap align-items-center gap-2">
           <select name="bulk_action" id="bulkActionSelect" class="form-select form-select-sm" style="width:auto;" onchange="onActionChange()">
             <option value="">Choose action...</option>
+            <option value="change_room_type">Set room sharing type (1/2/3)</option>
+            <option value="change_capacity">Change capacity</option>
             <option value="blacklist">Mark Maintenance / Blacklist selected</option>
             <option value="activate">Activate selected (Remove maintenance)</option>
-            <option value="change_capacity">Change capacity</option>
             <option value="delete">Delete selected</option>
           </select>
+
+          <div id="roomTypeGroup" style="display:none;" class="align-items-center gap-1">
+            <select name="new_room_type" id="newRoomTypeSelect" class="form-select form-select-sm" style="width:auto;">
+              {% for rt_val, rt_lbl in room_type_choices %}
+                <option value="{{ rt_val }}">{{ rt_lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
 
           <!-- Cause input for blacklisting -->
           <div id="blacklistCauseGroup" style="display:none;" class="align-items-center gap-1">
@@ -402,7 +437,10 @@
                     <span class="text-muted small">—</span>
                   {% endif %}
                 </td>
-                <td>{{ r.capacity }} bed{{ r.capacity|pluralize }}</td>
+                <td>
+                  <div class="fw-semibold text-dark">{{ r.room_type_label }}</div>
+                  <div class="text-muted" style="font-size:0.75rem;">{{ r.capacity }} bed{{ r.capacity|pluralize }} · ₹{{ r.monthly_rent_display|floatformat:0 }}/mo</div>
+                </td>
                 <td>
                   {% if r.occupied > 0 %}
                     <span class="badge text-bg-primary">{{ r.occupied }}</span>
@@ -462,9 +500,11 @@ function onActionChange() {
   var action = document.getElementById('bulkActionSelect').value;
   var causeGroup = document.getElementById('blacklistCauseGroup');
   var capGroup = document.getElementById('capacityGroup');
+  var rtGroup = document.getElementById('roomTypeGroup');
 
   if (causeGroup) causeGroup.style.display = (action === 'blacklist') ? 'flex' : 'none';
   if (capGroup) capGroup.style.display = (action === 'change_capacity') ? 'flex' : 'none';
+  if (rtGroup) rtGroup.style.display = (action === 'change_room_type') ? 'flex' : 'none';
 
   updateApplyButton();
 }
@@ -517,6 +557,10 @@ function confirmBulkAction() {
   } else if (action === 'change_capacity') {
     var cap = document.getElementById('newCapacityInput').value;
     return confirm('Set capacity of ' + count + ' room(s) to ' + cap + ' beds?');
+  } else if (action === 'change_room_type') {
+    var rtSel = document.getElementById('newRoomTypeSelect');
+    var rtText = rtSel ? rtSel.options[rtSel.selectedIndex].text : '';
+    return confirm('Set ' + count + ' room(s) to ' + rtText + ' sharing type?');
   }
   return true;
 }
