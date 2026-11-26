@@ -913,14 +913,14 @@ class FeeStructureAndMessCutTests(TestCase):
         self.assertEqual(cfg.mess_cut_rate_per_day, Decimal("140.00"))
 
     def test_mess_cut_consecutive_absent_days_rule(self):
-        # Month: November 2026 (30 days)
+        # Month: November 2026 (30 days); self.room is capacity=2 (2 Sharing -> ₹2000.00 default rent)
         # 1. Full attendance -> no mess cut
         calc_full = calculate_student_monthly_fee(self.student, 2026, 11)
-        self.assertEqual(calc_full["rent_amount"], Decimal("1500.00"))
+        self.assertEqual(calc_full["rent_amount"], Decimal("2000.00"))
         self.assertEqual(calc_full["food_amount"], Decimal("3900.00"))  # 30 * 130
         self.assertEqual(calc_full["mess_cut_days"], 0)
         self.assertEqual(calc_full["mess_cut_amount"], Decimal("0.00"))
-        self.assertEqual(calc_full["total_amount"], Decimal("5400.00"))
+        self.assertEqual(calc_full["total_amount"], Decimal("5900.00"))
 
         # 2. Absent for 2 consecutive days -> below threshold of 3 days -> 0 mess cut
         Attendance.objects.create(student=self.student, date=date(2026, 11, 4), status="A")
@@ -935,7 +935,7 @@ class FeeStructureAndMessCutTests(TestCase):
         # Per streak mode (default): 1 day cut of ₹130
         self.assertEqual(calc_3d["mess_cut_days"], 1)
         self.assertEqual(calc_3d["mess_cut_amount"], Decimal("130.00"))
-        self.assertEqual(calc_3d["total_amount"], Decimal("5270.00"))  # 1500 + 3900 - 130
+        self.assertEqual(calc_3d["total_amount"], Decimal("5770.00"))  # 2000 + 3900 - 130
 
         # 4. Another single absence later in the month (e.g. Nov 20) -> does not form 3 consecutive days
         Attendance.objects.create(student=self.student, date=date(2026, 11, 20), status="A")
@@ -955,7 +955,7 @@ class FeeStructureAndMessCutTests(TestCase):
         calc = calculate_student_monthly_fee(self.student, 2026, 11, config=cfg)
         self.assertEqual(calc["mess_cut_days"], 3)
         self.assertEqual(calc["mess_cut_amount"], Decimal("390.00"))  # 3 * 130
-        self.assertEqual(calc["total_amount"], Decimal("5010.00"))  # 1500 + 3900 - 390
+        self.assertEqual(calc["total_amount"], Decimal("5510.00"))  # 2000 + 3900 - 390
 
     def test_warden_generate_monthly_fees_and_manual_override(self):
         # Mark 3 consecutive absences
@@ -2678,3 +2678,220 @@ class BuildingSegregationTests(TestCase):
             self.assertEqual(pdf_resp.status_code, 200, url)
             self.assertEqual(pdf_resp["Content-Type"], "application/pdf", url)
             self.assertTrue(pdf_resp.content.startswith(b"%PDF"), url)
+
+
+class RoomTypePricingTests(TestCase):
+    """Verify 1/2/3 sharing room types, separate pricing, unified monthly PDF, and room-type allocation."""
+
+    def setUp(self):
+        self.b1, _ = Building.objects.get_or_create(
+            code="B1",
+            defaults={
+                "name": "First Year Block",
+                "allowed_years": "1",
+                "is_first_year_only": True,
+            },
+        )
+        self.b2, _ = Building.objects.get_or_create(
+            code="B2",
+            defaults={
+                "name": "Senior Block",
+                "allowed_years": "2,3,4",
+                "is_first_year_only": False,
+            },
+        )
+        self.admin_u = User.objects.create_superuser(
+            username="rt_admin", password="Pass@1234", role="admin", first_name="Super", last_name="Admin"
+        )
+        self.head_warden = User.objects.create_user(
+            username="rt_headwarden", password="Pass@1234", role="warden", is_staff=True, first_name="Head", last_name="Warden"
+        )
+        self.fy_warden = User.objects.create_user(
+            username="rt_fywarden", password="Pass@1234", role="warden", is_staff=True, assigned_building=self.b1, first_name="FY", last_name="Warden"
+        )
+        self.cfg = FeeConfig.get_config()
+        self.cfg.rent_1_sharing = Decimal("3500.00")
+        self.cfg.rent_2_sharing = Decimal("2200.00")
+        self.cfg.rent_3_sharing = Decimal("1600.00")
+        self.cfg.rent_amount = Decimal("1200.00")
+        self.cfg.food_rate_per_day = Decimal("100.00")
+        self.cfg.save()
+
+        self.r_b1_1s = Room.objects.create(building=self.b1, block="G", number="801", room_type="1_sharing")
+        self.r_b1_2s = Room.objects.create(building=self.b1, block="G", number="802", room_type="2_sharing")
+        self.r_b2_3s = Room.objects.create(building=self.b2, block="1", number="803", room_type="3_sharing")
+
+        self.s_1s = onboard_student(
+            "Single Resident", "RT101", "CSE", "9800000101", room=self.r_b1_1s, year_of_study=1, preferred_room_type="1_sharing"
+        )
+        self.s_2s = onboard_student(
+            "Double Resident", "RT102", "CSE", "9800000102", room=self.r_b1_2s, year_of_study=1, preferred_room_type="2_sharing"
+        )
+        self.s_3s = onboard_student(
+            "Triple Resident", "RT201", "ECE", "9800000201", room=self.r_b2_3s, year_of_study=3, preferred_room_type="3_sharing"
+        )
+        self.s_unalloc = onboard_student(
+            "Unalloc Resident", "RT103", "MECH", "9800000103", room=None, year_of_study=1, preferred_room_type="1_sharing"
+        )
+
+    def test_room_type_and_capacity_sync_with_legacy_compat(self):
+        legacy_room = Room.objects.create(building=self.b2, block="F", number="901", capacity=3)
+        self.assertEqual(legacy_room.room_type, "3_sharing")
+        self.assertEqual(legacy_room.room_type_label, "3 Sharing")
+
+        single_room = Room.objects.create(building=self.b2, block="F", number="902", room_type="1_sharing")
+        self.assertEqual(single_room.capacity, 1)
+        self.assertEqual(single_room.room_type_label, "1 Sharing")
+        self.assertEqual(single_room.monthly_rent(self.cfg), Decimal("3500.00"))
+
+        single_room.room_type = "3_sharing"
+        single_room.save()
+        single_room.refresh_from_db()
+        self.assertEqual(single_room.capacity, 3)
+
+    def test_tiered_pricing_calculation_and_fee_structure_settings(self):
+        today = date.today()
+        calc_1s = calculate_student_monthly_fee(self.s_1s, today.year, today.month, config=self.cfg)
+        calc_2s = calculate_student_monthly_fee(self.s_2s, today.year, today.month, config=self.cfg)
+        calc_3s = calculate_student_monthly_fee(self.s_3s, today.year, today.month, config=self.cfg)
+        calc_un = calculate_student_monthly_fee(self.s_unalloc, today.year, today.month, config=self.cfg)
+
+        self.assertEqual(calc_1s["rent_amount"], Decimal("3500.00"))
+        self.assertEqual(calc_1s["room_type"], "1 Sharing")
+        self.assertEqual(calc_2s["rent_amount"], Decimal("2200.00"))
+        self.assertEqual(calc_3s["rent_amount"], Decimal("1600.00"))
+        self.assertEqual(calc_un["rent_amount"], Decimal("1200.00"))
+        self.assertEqual(calc_un["room_type"], "Unallocated")
+
+        c = Client()
+        c.force_login(self.admin_u)
+        resp = c.post(
+            reverse("fee_structure"),
+            {
+                "rent_1_sharing": "4000.00",
+                "rent_2_sharing": "2500.00",
+                "rent_3_sharing": "1800.00",
+                "rent_amount": "1500.00",
+                "food_rate_per_day": "120.00",
+                "mess_cut_min_days": "3",
+                "mess_cut_rate_per_day": "120.00",
+                "mess_cut_mode": "one_day_per_streak",
+                "late_fine_amount": "300.00",
+                "late_fine_interval_days": "5",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        updated = FeeConfig.get_config()
+        self.assertEqual(updated.rent_1_sharing, Decimal("4000.00"))
+        self.assertEqual(updated.rent_2_sharing, Decimal("2500.00"))
+        self.assertEqual(updated.rent_3_sharing, Decimal("1800.00"))
+
+    def test_single_unified_monthly_billing_pdf_combines_all_room_types(self):
+        c = Client()
+        c.force_login(self.head_warden)
+        today = date.today()
+        month_str = today.strftime("%Y-%m")
+        all_targets = [self.s_1s, self.s_2s, self.s_3s, self.s_unalloc]
+        post_data = {
+            "month": month_str,
+            "title": f"Unified Monthly Bill - {month_str}",
+            "due_date": (today + timedelta(days=10)).isoformat(),
+            "selected_students": [str(s.pk) for s in all_targets],
+            "save_fees": "1",
+        }
+        # Leave explicit rent fields blank for half of students so backend tiered lookup is exercised too
+        for s in all_targets:
+            c_res = calculate_student_monthly_fee(s, today.year, today.month, config=self.cfg)
+            post_data[f"food_{s.pk}"] = str(c_res["food_amount"])
+            post_data[f"mess_days_{s.pk}"] = "0"
+            post_data[f"mess_cut_{s.pk}"] = "0.00"
+            post_data[f"total_{s.pk}"] = str(c_res["total_amount"])
+
+        resp = c.post(reverse("fees_calculate_monthly"), post_data, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Fee.objects.get(student=self.s_1s, month=month_str).rent_amount, Decimal("3500.00"))
+        self.assertEqual(Fee.objects.get(student=self.s_2s, month=month_str).rent_amount, Decimal("2200.00"))
+        self.assertEqual(Fee.objects.get(student=self.s_3s, month=month_str).rent_amount, Decimal("1600.00"))
+        self.assertEqual(Fee.objects.get(student=self.s_unalloc, month=month_str).rent_amount, Decimal("1200.00"))
+
+        # Single unified monthly PDF combines 1/2/3 sharing and unallocated residents in one document
+        pdf_resp = c.get(f"{reverse('fees_export_pdf')}?month={month_str}")
+        self.assertEqual(pdf_resp.status_code, 200)
+        self.assertEqual(pdf_resp["Content-Type"], "application/pdf")
+        self.assertTrue(pdf_resp.content.startswith(b"%PDF"))
+
+        single_inv = c.get(reverse("fee_pdf", args=[Fee.objects.get(student=self.s_1s, month=month_str).pk]))
+        self.assertEqual(single_inv.status_code, 200)
+        self.assertTrue(single_inv.content.startswith(b"%PDF"))
+
+        # Fee list ledger does not contain separate per-room-type PDF export links
+        fees_page = c.get(reverse("fees"))
+        self.assertEqual(fees_page.status_code, 200)
+        self.assertContains(fees_page, "Export Filtered PDF")
+        self.assertNotContains(fees_page, "1 Sharing PDF")
+
+    def test_room_type_bulk_creation_csv_and_directory_filter(self):
+        bulk_res = bulk_create_rooms(
+            block="S", start_number="301", count=2, building=self.b2, room_type="1_sharing"
+        )
+        self.assertEqual(len(bulk_res["created"]), 2)
+        for r in bulk_res["created"]:
+            self.assertEqual(r.room_type, "1_sharing")
+            self.assertEqual(r.capacity, 1)
+
+        csv_res = import_rooms_csv(
+            [{"building": "B2", "block": "S", "number": "305", "room_type": "3 Sharing"}],
+            building=self.b2,
+        )
+        self.assertEqual(len(csv_res["created"]), 1)
+        self.assertEqual(csv_res["created"][0].room_type, "3_sharing")
+        self.assertEqual(csv_res["created"][0].capacity, 3)
+
+        c = Client()
+        c.force_login(self.head_warden)
+        resp_3s = c.get(f"{reverse('rooms')}?room_type=3_sharing")
+        self.assertContains(resp_3s, "S-305")
+        self.assertNotContains(resp_3s, "S-301")
+
+    def test_room_type_allocation_and_anti_ragging_segregation(self):
+        r_b1_new_1s = Room.objects.create(building=self.b1, block="1", number="105", room_type="1_sharing")
+        c = Client()
+        c.force_login(self.fy_warden)
+
+        # FY warden sees only B1 rooms even when filtering by 1_sharing
+        resp_rooms = c.get(f"{reverse('rooms')}?room_type=1_sharing")
+        self.assertContains(resp_rooms, "1-105")
+        self.assertNotContains(resp_rooms, "B2")
+
+        # Profile allocation modal renders sharing-type filter and student's preferred tier
+        prof_resp = c.get(reverse("student_detail", args=[self.s_unalloc.pk]))
+        self.assertEqual(prof_resp.status_code, 200)
+        self.assertContains(prof_resp, "Prefers 1 Sharing")
+        self.assertContains(prof_resp, "modalRoomTypeFilter")
+
+        # Assign unallocated student to the vacant B1 1-sharing room
+        alloc_resp = c.post(
+            reverse("student_allocate", args=[self.s_unalloc.pk]),
+            {"room_id": str(r_b1_new_1s.pk), "start_date": date.today().isoformat()},
+            follow=True,
+        )
+        self.assertEqual(alloc_resp.status_code, 200)
+        self.s_unalloc.refresh_from_db()
+        self.assertEqual(self.s_unalloc.room, r_b1_new_1s)
+
+        # Head warden dashboard & reports show room-type breakdown
+        c.force_login(self.head_warden)
+        self.assertContains(c.get(reverse("home")), "1 Sharing Rooms")
+        self.assertContains(c.get(reverse("reports")), "Room Sharing Tiers")
+
+    def test_seed_demo_command_populates_varied_room_types(self):
+        from django.core.management import call_command
+
+        call_command("seed_demo")
+        self.assertTrue(Room.objects.filter(room_type="1_sharing").exists())
+        self.assertTrue(Room.objects.filter(room_type="2_sharing").exists())
+        self.assertTrue(Room.objects.filter(room_type="3_sharing").exists())
+        self.assertTrue(Student.objects.filter(preferred_room_type="1_sharing").exists())
+        self.assertTrue(Fee.objects.filter(rent_amount=Decimal("2200.00")).exists() or Fee.objects.filter(rent_amount=Decimal("3000.00")).exists())
+        self.assertTrue(Fee.objects.filter(rent_amount=Decimal("3500.00")).exists() or Fee.objects.filter(rent_amount=Decimal("2000.00")).exists())

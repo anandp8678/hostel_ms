@@ -1867,10 +1867,10 @@ def room_bulk_add(request):
 @staff
 def room_bulk_template(request):
     r = HttpResponse(
-        "building,block,number,room_type,capacity\n"
-        "B1,G,101,1_sharing,1\n"
-        "B1,G,102,2_sharing,2\n"
-        "B2,1,201,3_sharing,3\n",
+        "building,block,number,capacity,room_type\n"
+        "B1,G,101,1,1_sharing\n"
+        "B1,G,102,2,2_sharing\n"
+        "B2,1,201,3,3_sharing\n",
         content_type="text/csv",
     )
     r["Content-Disposition"] = 'attachment; filename="rooms_template.csv"'
