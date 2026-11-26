@@ -1076,19 +1076,23 @@ def home(request):
     return show(request, "children", children=child_cards, today=today)
 
 
-def _vacant_rooms(building=None, student_year=None):
-    """Return active, non-blacklisted rooms with open beds compatible with building/year, ordered cleanly."""
+def _vacant_rooms(building=None, student_year=None, room_type=None):
+    """Return active, non-blacklisted rooms with open beds compatible with building/year/room_type."""
     qs = m.Room.objects.select_related("building").filter(is_blacklisted=False).prefetch_related(
         Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
     )
     if building:
         qs = qs.filter(building=building)
+    if room_type in m.ROOM_TYPE_CAPACITY:
+        qs = qs.filter(room_type=room_type)
+    cfg = m.FeeConfig.get_config()
     rooms = []
     for r in qs:
         if r.vacancy <= 0:
             continue
         if student_year is not None and r.building and not r.building.allows_year(student_year):
             continue
+        r.monthly_rent_display = cfg.get_rent_for_room(r)
         rooms.append(r)
     rooms.sort(key=lambda r: ((r.building.code if r.building else ""), floor_order_key(r.block), r.number))
     return rooms
@@ -1195,6 +1199,8 @@ def overview(s, user):
         notices=notices,
         badge=badge,
         available_rooms=available_rooms,
+        room_type_choices=m.ROOM_TYPE_CHOICES,
+        cfg=m.FeeConfig.get_config(),
     )
 
 
@@ -1346,6 +1352,15 @@ def _handle_student_bulk_action(request):
                 f"Skipped {len(blocked)} student(s) whose current building conflicts with that year ({', '.join(blocked[:4])}). Vacate them first.",
             )
 
+    elif action == "set_room_pref":
+        pref_val = (request.POST.get("bulk_room_pref") or "").strip()
+        if pref_val not in ("", "1_sharing", "2_sharing", "3_sharing"):
+            messages.error(request, "Please select a valid room sharing preference.")
+            return redirect(request.get_full_path())
+        m.Student.objects.filter(pk__in=[s.pk for s in students]).update(preferred_room_type=pref_val)
+        pref_lbl = dict(m.ROOM_PREF_CHOICES).get(pref_val, "Any")
+        messages.success(request, f"Updated preferred room type to {pref_lbl} for {len(students)} student(s).")
+
     elif action == "vacate":
         vacated = m.RoomAllocation.objects.filter(
             student__in=students, end_date__isnull=True
@@ -1414,6 +1429,7 @@ def student_list(request):
     status_filter = request.GET.get("status", "all").strip().lower()
     course_filter = request.GET.get("course", "all").strip()
     year_filter = request.GET.get("year", "all").strip()
+    room_type_filter = request.GET.get("room_type", "all").strip()
     view_mode = request.GET.get("view", "grid").strip().lower()
     grouped = request.GET.get("grouped", "1").strip() != "0"
 
@@ -1481,6 +1497,14 @@ def student_list(request):
     # 4b. Academic year filter
     if year_filter in ("1", "2", "3", "4"):
         filtered = [s for s in filtered if s.year_of_study == int(year_filter)]
+
+    # 4c. Room sharing type filter (active room sharing type, or preferred type if unallocated)
+    if room_type_filter in m.ROOM_TYPE_CAPACITY:
+        filtered = [
+            s for s in filtered
+            if (s.room and s.room.room_type == room_type_filter)
+            or (not s.room and s.preferred_room_type == room_type_filter)
+        ]
 
     # 5. Search query
     if q:
@@ -1584,6 +1608,7 @@ def student_list(request):
         (status_filter and status_filter != "all") or
         (course_filter and course_filter != "all") or
         (year_filter and year_filter != "all") or
+        (room_type_filter and room_type_filter != "all") or
         (active_building and not is_building_locked)
     )
 
@@ -1606,6 +1631,9 @@ def student_list(request):
         "building_filter": active_building.code if active_building else "all",
         "year_filter": year_filter,
         "year_choices": m.Student.YEAR_CHOICES,
+        "room_type_filter": room_type_filter,
+        "room_type_choices": m.ROOM_TYPE_CHOICES,
+        "room_pref_choices": m.ROOM_PREF_CHOICES,
         "available_rooms": _vacant_rooms(
             building=active_building,
             student_year=(int(year_filter) if year_filter in ("1", "2", "3", "4") else None),

@@ -223,16 +223,26 @@
       </select>
     </div>
 
+    <!-- Sharing Type Dropdown -->
+    <div class="col-6 col-md-3 col-lg-2">
+      <select name="room_type" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="all" {% if room_type_filter == 'all' %}selected{% endif %}>All Room Types</option>
+        {% for rt_val, rt_lbl in room_type_choices %}
+          <option value="{{ rt_val }}" {% if room_type_filter == rt_val %}selected{% endif %}>{{ rt_lbl }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
     <!-- Controls Row: Grouping Toggle & Reset -->
     <div class="col-12 d-flex flex-wrap justify-content-between align-items-center pt-2 border-top mt-2">
       <div class="d-flex align-items-center gap-2">
         <span class="text-secondary small">Layout:</span>
         <div class="btn-group btn-group-sm" role="group">
-          <a href="?grouped=1&view={{ view_mode }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}{% if year_filter != 'all' %}&year={{ year_filter }}{% endif %}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+          <a href="?grouped=1&view={{ view_mode }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}{% if year_filter != 'all' %}&year={{ year_filter }}{% endif %}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if room_type_filter != 'all' %}&room_type={{ room_type_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
              class="btn btn-sm {% if grouped %}btn-secondary text-white{% else %}btn-outline-secondary{% endif %}">
             Categorized by Floor
           </a>
-          <a href="?grouped=0&view={{ view_mode }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}{% if year_filter != 'all' %}&year={{ year_filter }}{% endif %}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+          <a href="?grouped=0&view={{ view_mode }}{% if building_filter != 'all' %}&building={{ building_filter }}{% endif %}{% if year_filter != 'all' %}&year={{ year_filter }}{% endif %}{% if floor_filter != 'all' %}&floor={{ floor_filter }}{% endif %}{% if allocation_filter != 'all' %}&allocation={{ allocation_filter }}{% endif %}{% if status_filter != 'all' %}&status={{ status_filter }}{% endif %}{% if course_filter != 'all' %}&course={{ course_filter }}{% endif %}{% if room_type_filter != 'all' %}&room_type={{ room_type_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
              class="btn btn-sm {% if not grouped %}btn-secondary text-white{% else %}btn-outline-secondary{% endif %}">
             Flat Grid
           </a>
@@ -271,6 +281,7 @@
           <option value="">Choose action...</option>
           <option value="notify">Send Notification to selected</option>
           <option value="allocate_room">Allocate selected to room</option>
+          <option value="set_room_pref">Set Preferred Room Type</option>
           <option value="set_year">Change Academic Year</option>
           <option value="vacate">Vacate active rooms</option>
           <option value="mark_staying">Mark as Staying</option>
@@ -292,12 +303,27 @@
           </label>
         </div>
 
-        <!-- Allocate room select -->
-        <div id="allocateActionGroup" style="display:none;" class="align-items-center gap-1">
+        <!-- Allocate room select (filterable by sharing type) -->
+        <div id="allocateActionGroup" style="display:none;" class="align-items-center gap-1 flex-wrap">
+          <select id="bulkRoomTypeFilter" class="form-select form-select-sm" style="width:auto;" onchange="filterBulkRoomsByType()">
+            <option value="">All Room Types</option>
+            {% for rt_val, rt_lbl in room_type_choices %}
+              <option value="{{ rt_val }}">{{ rt_lbl }}</option>
+            {% endfor %}
+          </select>
           <select name="target_room_id" id="targetRoomSelect" class="form-select form-select-sm" style="width:auto;">
             <option value="">Select vacant room...</option>
             {% for r in available_rooms %}
-              <option value="{{ r.pk }}">Room {{ r }} ({{ r.floor_display }}) - {{ r.vacancy }} free</option>
+              <option value="{{ r.pk }}" data-room-type="{{ r.room_type }}">Room {{ r }} ({{ r.room_type_label }}) - {{ r.vacancy }} free · ₹{{ r.monthly_rent_display|floatformat:0 }}/mo</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Bulk Preferred Room Type select -->
+        <div id="setRoomPrefActionGroup" style="display:none;" class="align-items-center gap-1">
+          <select name="bulk_room_pref" id="bulkRoomPrefSelect" class="form-select form-select-sm" style="width:auto;">
+            {% for rp_val, rp_lbl in room_pref_choices %}
+              <option value="{{ rp_val }}">{{ rp_lbl }}</option>
             {% endfor %}
           </select>
         </div>
@@ -572,14 +598,31 @@ function updateSelectedCount() {
   updateStudentApplyBtn();
 }
 
+function filterBulkRoomsByType() {
+  var rt = document.getElementById("bulkRoomTypeFilter") ? document.getElementById("bulkRoomTypeFilter").value : "";
+  var sel = document.getElementById("targetRoomSelect");
+  if (!sel) return;
+  var resetNeeded = false;
+  Array.from(sel.options).forEach(function (opt) {
+    if (!opt.value) return;
+    var match = !rt || opt.getAttribute("data-room-type") === rt;
+    opt.hidden = !match;
+    opt.disabled = !match;
+    if (!match && opt.selected) resetNeeded = true;
+  });
+  if (resetNeeded) sel.value = "";
+}
+
 function onStudentBulkActionChange() {
   var action = document.getElementById("bulkActionSelect") ? document.getElementById("bulkActionSelect").value : "";
   var notifyGroup = document.getElementById("notifyActionGroup");
   var allocateGroup = document.getElementById("allocateActionGroup");
   var suspendGroup = document.getElementById("suspendActionGroup");
+  var setPrefGroup = document.getElementById("setRoomPrefActionGroup");
 
   if (notifyGroup) notifyGroup.style.display = (action === "notify") ? "flex" : "none";
   if (allocateGroup) allocateGroup.style.display = (action === "allocate_room") ? "flex" : "none";
+  if (setPrefGroup) setPrefGroup.style.display = (action === "set_room_pref") ? "flex" : "none";
   var setYearGroup = document.getElementById("setYearActionGroup");
   if (setYearGroup) setYearGroup.style.display = (action === "set_year") ? "flex" : "none";
   if (suspendGroup) suspendGroup.style.display = (action === "suspend") ? "flex" : "none";
@@ -619,6 +662,11 @@ function confirmStudentBulkAction() {
       return false;
     }
     return confirm("Send this notification to " + count + " selected student(s)?");
+  }
+  if (action === "set_room_pref") {
+    var prefSel = document.getElementById("bulkRoomPrefSelect");
+    var prefLabel = prefSel ? prefSel.options[prefSel.selectedIndex].text : "";
+    return confirm("Set preferred room sharing type to '" + prefLabel + "' for " + count + " selected student(s)?");
   }
   if (action === "allocate_room") {
     var roomVal = document.getElementById("targetRoomSelect").value;

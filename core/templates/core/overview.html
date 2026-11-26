@@ -19,7 +19,7 @@
         </span>
       </div>
       <div class="text-secondary small">
-        Roll No: <b>{{ s.roll_no }}</b> · <span class="badge text-bg-primary">{{ s.year_label }}</span> {% if room and room.building %}· <span class="badge text-bg-dark">{{ room.building.code }} &mdash; {{ room.building.name }}</span>{% endif %} · Course: <b>{{ s.course|default:"Not specified" }}</b>
+        Roll No: <b>{{ s.roll_no }}</b> · <span class="badge text-bg-primary">{{ s.year_label }}</span> {% if room %}· <span class="badge text-bg-info-subtle text-info-emphasis border border-info-subtle">{{ room.room_type_label }}</span>{% if room.building %} · <span class="badge text-bg-dark">{{ room.building.code }} &mdash; {{ room.building.name }}</span>{% endif %}{% elif s.preferred_room_type %}· <span class="badge text-bg-info-subtle text-info-emphasis border border-info-subtle">Prefers {{ s.preferred_room_type_label }}</span>{% endif %} · Course: <b>{{ s.course|default:"Not specified" }}</b>
         {% if parent_view and all_children|length > 1 %}
           <div class="mt-2 d-flex align-items-center gap-2">
             <span class="small fw-semibold text-dark">Switch Ward:</span>
@@ -157,9 +157,9 @@
       </div>
       <div class="small text-muted mt-auto">
         {% if room %}
-          <b>{{ room.occupied }}</b> of <b>{{ room.capacity }}</b> beds occupied ({{ roommates|length }} roommate{{ roommates|length|pluralize }})
+          <b>{{ room.room_type_label }}</b> · <b>{{ room.occupied }}</b> of <b>{{ room.capacity }}</b> beds occupied ({{ roommates|length }} roommate{{ roommates|length|pluralize }})
         {% else %}
-          Awaiting room allocation by warden
+          {% if s.preferred_room_type %}Preferred: <b>{{ s.preferred_room_type_label }}</b> · {% endif %}Awaiting room allocation by warden
           {% if staff_view %}
             <div class="mt-2">
               <button type="button" class="btn btn-sm btn-outline-success w-100 fw-semibold" data-bs-toggle="modal" data-bs-target="#allocateModal">
@@ -975,17 +975,32 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
         <div class="modal-body p-4">
           <div class="alert alert-info small mb-3">
-            Select an active room with vacant beds to allocate <strong>{{ s.user.display_name }}</strong> (Roll No: {{ s.roll_no }}, <strong>{{ s.year_label }}</strong>). Only compatible building rooms are listed to enforce anti-ragging segregation.
+            Select an active room with vacant beds to allocate <strong>{{ s.user.display_name }}</strong> (Roll No: {{ s.roll_no }}, <strong>{{ s.year_label }}</strong>{% if s.preferred_room_type %}, Preferred: <strong>{{ s.preferred_room_type_label }}</strong>{% endif %}). Only compatible building rooms are listed to enforce anti-ragging segregation.
           </div>
+
+          {% if available_rooms %}
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary d-block mb-1">Filter Vacant Rooms by Sharing Type</label>
+            <div class="btn-group btn-group-sm flex-wrap" role="group" id="modalRoomTypeFilter">
+              <button type="button" class="btn btn-navy modal-rt-btn active" data-rt="" onclick="filterModalRooms('', this)">All Types</button>
+              {% for rt_val, rt_lbl in room_type_choices %}
+                <button type="button" class="btn btn-outline-secondary modal-rt-btn" data-rt="{{ rt_val }}" onclick="filterModalRooms('{{ rt_val }}', this)">{{ rt_lbl }}</button>
+              {% endfor %}
+            </div>
+            <div id="modalRoomFilterHint" class="form-text small text-warning-emphasis d-none">
+              No vacant rooms match this sharing type. Select "All Types" to view other available rooms.
+            </div>
+          </div>
+          {% endif %}
 
           <div class="mb-3">
             <label class="form-label small fw-semibold text-secondary">Select Compatible Vacant Room *</label>
             {% if available_rooms %}
-              <select name="room_id" class="form-select" required>
+              <select name="room_id" id="modalRoomSelect" class="form-select" required>
                 <option value="" disabled selected>Choose a vacant room...</option>
                 {% for r in available_rooms %}
-                  <option value="{{ r.pk }}">
-                    Room {{ r }} ({{ r.floor_display }}) — {{ r.vacancy }} vacant bed{{ r.vacancy|pluralize }} (Capacity: {{ r.capacity }})
+                  <option value="{{ r.pk }}" data-room-type="{{ r.room_type }}">
+                    Room {{ r }} ({{ r.floor_display }}) — {{ r.room_type_label }} · {{ r.vacancy }} vacant bed{{ r.vacancy|pluralize }} · ₹{{ r.monthly_rent_display|floatformat:0 }}/mo
                   </option>
                 {% endfor %}
               </select>
@@ -1014,6 +1029,44 @@ document.addEventListener("DOMContentLoaded", function () {
     </div>
   </div>
 </div>
+<script>
+function filterModalRooms(rt, btn) {
+  var sel = document.getElementById("modalRoomSelect");
+  var hint = document.getElementById("modalRoomFilterHint");
+  if (!sel) return;
+  var buttons = document.querySelectorAll(".modal-rt-btn");
+  buttons.forEach(function (b) {
+    b.classList.remove("btn-navy", "active");
+    b.classList.add("btn-outline-secondary");
+  });
+  if (btn) {
+    btn.classList.remove("btn-outline-secondary");
+    btn.classList.add("btn-navy", "active");
+  }
+  var visibleCount = 0;
+  var selectedHidden = false;
+  Array.from(sel.options).forEach(function (opt) {
+    if (!opt.value) return;
+    var match = !rt || opt.getAttribute("data-room-type") === rt;
+    opt.hidden = !match;
+    opt.disabled = !match;
+    if (match) visibleCount++;
+    if (!match && opt.selected) selectedHidden = true;
+  });
+  if (selectedHidden) sel.value = "";
+  if (hint) hint.classList.toggle("d-none", visibleCount > 0);
+}
+document.addEventListener("DOMContentLoaded", function () {
+  var pref = "{{ s.preferred_room_type|default:'' }}";
+  if (pref) {
+    var matchingOpt = document.querySelector('#modalRoomSelect option[data-room-type="' + pref + '"]');
+    var prefBtn = document.querySelector('.modal-rt-btn[data-rt="' + pref + '"]');
+    if (matchingOpt && prefBtn) {
+      filterModalRooms(pref, prefBtn);
+    }
+  }
+});
+</script>
 {% endif %}
 
 {% endblock %}

@@ -42,12 +42,17 @@
     <div class="d-flex flex-column align-items-center gap-1 w-100 mt-2">
       {% if s.room %}
         <span class="badge text-bg-light border text-secondary rounded-pill" style="font-size:0.72rem;">
-          Room {{ s.room }}
+          Room {{ s.room }} · {{ s.room.room_type_label }}
         </span>
       {% else %}
         <span class="badge text-bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill" style="font-size:0.72rem;">
           Unallocated
         </span>
+        {% if s.preferred_room_type %}
+          <span class="badge text-bg-light border text-secondary rounded-pill" style="font-size:0.68rem;">
+            Pref: {{ s.preferred_room_type_label }}
+          </span>
+        {% endif %}
       {% endif %}
 
       {% if s.is_currently_suspended %}
