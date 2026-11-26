@@ -8,6 +8,16 @@ from django.db import models
 from django.db.models import Sum
 
 
+ROOM_TYPE_CHOICES = [
+    ("1_sharing", "1 Sharing"),
+    ("2_sharing", "2 Sharing"),
+    ("3_sharing", "3 Sharing"),
+]
+ROOM_PREF_CHOICES = [("", "Any / Not Specified")] + ROOM_TYPE_CHOICES
+ROOM_TYPE_CAPACITY = {"1_sharing": 1, "2_sharing": 2, "3_sharing": 3}
+CAPACITY_TO_ROOM_TYPE = {1: "1_sharing", 2: "2_sharing", 3: "3_sharing"}
+
+
 class Building(models.Model):
     YEAR_CHOICES = [(1, "1st Year"), (2, "2nd Year"), (3, "3rd Year"), (4, "4th Year")]
     name = models.CharField(max_length=100, unique=True)
@@ -133,10 +143,15 @@ class Parent(models.Model):
 
 class Student(models.Model):
     YEAR_CHOICES = Building.YEAR_CHOICES
+    ROOM_TYPE_CHOICES = ROOM_TYPE_CHOICES
+    ROOM_PREF_CHOICES = ROOM_PREF_CHOICES
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="student")
     roll_no = models.CharField("Roll no.", max_length=30, unique=True)
     course = models.CharField(max_length=100, blank=True)
     year_of_study = models.PositiveSmallIntegerField("Academic year", choices=YEAR_CHOICES, default=1)
+    preferred_room_type = models.CharField(
+        "Preferred room type", max_length=15, choices=ROOM_PREF_CHOICES, blank=True, default=""
+    )
     parent = models.ForeignKey(Parent, null=True, blank=True, on_delete=models.SET_NULL, related_name="children")
     is_active = models.BooleanField("Currently staying", default=True)
 
@@ -164,6 +179,10 @@ class Student(models.Model):
     @property
     def year_short(self):
         return {1: "1st Yr", 2: "2nd Yr", 3: "3rd Yr", 4: "4th Yr"}.get(self.year_of_study, f"Yr {self.year_of_study}")
+
+    @property
+    def preferred_room_type_label(self):
+        return self.get_preferred_room_type_display() if self.preferred_room_type else "Any / Not Specified"
 
     @property
     def room(self):
@@ -197,9 +216,14 @@ class Student(models.Model):
 
 
 class Room(models.Model):
+    ROOM_TYPE_CHOICES = ROOM_TYPE_CHOICES
+    ROOM_TYPE_CAPACITY = ROOM_TYPE_CAPACITY
+    CAPACITY_TO_ROOM_TYPE = CAPACITY_TO_ROOM_TYPE
+
     building = models.ForeignKey(Building, null=True, blank=True, on_delete=models.CASCADE, related_name="rooms")
     block = models.CharField(max_length=20, default="A")
     number = models.CharField(max_length=20)
+    room_type = models.CharField("Room type", max_length=15, choices=ROOM_TYPE_CHOICES, default="2_sharing")
     capacity = models.PositiveSmallIntegerField(default=2)
     is_blacklisted = models.BooleanField("Blacklisted", default=False)
     blacklist_reason = models.CharField("Blacklist cause", max_length=150, blank=True)
@@ -207,6 +231,54 @@ class Room(models.Model):
     class Meta:
         unique_together = ("building", "block", "number")
         ordering = ["building__code", "block", "number"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._initial_room_type = self.room_type
+        self._initial_capacity = self.capacity
+
+    def _normalize_number_prefix(self):
+        if self.number and self.block:
+            b = str(self.block).strip()
+            num = str(self.number).strip()
+            if num.lower().startswith(f"{b.lower()}-"):
+                self.number = num[len(b)+1:].strip()
+            elif num.lower().startswith(f"{b.lower()} "):
+                self.number = num[len(b)+1:].strip()
+            elif num.lower().startswith(b.lower()) and len(num) > len(b) and num[len(b):][0].isdigit():
+                self.number = num[len(b):].strip()
+
+    def _sync_room_type_and_capacity(self):
+        if self.pk is not None:
+            if self.room_type != self._initial_room_type:
+                if self.room_type in ROOM_TYPE_CAPACITY:
+                    self.capacity = ROOM_TYPE_CAPACITY[self.room_type]
+            elif self.capacity != self._initial_capacity:
+                if self.capacity in CAPACITY_TO_ROOM_TYPE:
+                    self.room_type = CAPACITY_TO_ROOM_TYPE[self.capacity]
+        else:
+            rt_changed = self.room_type != self._initial_room_type
+            cap_changed = self.capacity != self._initial_capacity
+            if rt_changed and not cap_changed:
+                self.capacity = ROOM_TYPE_CAPACITY.get(self.room_type, self.capacity)
+            elif cap_changed and not rt_changed:
+                if self.capacity in CAPACITY_TO_ROOM_TYPE:
+                    self.room_type = CAPACITY_TO_ROOM_TYPE[self.capacity]
+            else:
+                if self.room_type != "2_sharing" and self.capacity == 2:
+                    self.capacity = ROOM_TYPE_CAPACITY.get(self.room_type, self.capacity)
+                elif self.room_type == "2_sharing" and self.capacity in CAPACITY_TO_ROOM_TYPE and self.capacity != 2:
+                    self.room_type = CAPACITY_TO_ROOM_TYPE[self.capacity]
+
+    @property
+    def room_type_label(self):
+        if self.capacity in CAPACITY_TO_ROOM_TYPE:
+            return dict(ROOM_TYPE_CHOICES)[CAPACITY_TO_ROOM_TYPE[self.capacity]]
+        return f"{self.capacity} Sharing"
+
+    def monthly_rent(self, config=None):
+        cfg = config or FeeConfig.get_config()
+        return cfg.get_rent_for_room(self)
 
     @property
     def short_code(self):
@@ -267,29 +339,17 @@ class Room(models.Model):
         return max(0, self.capacity - self.occupied)
 
     def clean(self):
-        if self.number and self.block:
-            b = str(self.block).strip()
-            num = str(self.number).strip()
-            if num.lower().startswith(f"{b.lower()}-"):
-                self.number = num[len(b)+1:].strip()
-            elif num.lower().startswith(f"{b.lower()} "):
-                self.number = num[len(b)+1:].strip()
-            elif num.lower().startswith(b.lower()) and len(num) > len(b) and num[len(b):][0].isdigit():
-                self.number = num[len(b):].strip()
+        self._normalize_number_prefix()
+        self._sync_room_type_and_capacity()
         if self.pk and self.capacity < self.occupied:
             raise ValidationError(f"{self.occupied} students already live here; capacity cannot be lower.")
 
     def save(self, *args, **kwargs):
-        if self.number and self.block:
-            b = str(self.block).strip()
-            num = str(self.number).strip()
-            if num.lower().startswith(f"{b.lower()}-"):
-                self.number = num[len(b)+1:].strip()
-            elif num.lower().startswith(f"{b.lower()} "):
-                self.number = num[len(b)+1:].strip()
-            elif num.lower().startswith(b.lower()) and len(num) > len(b) and num[len(b):][0].isdigit():
-                self.number = num[len(b):].strip()
+        self._normalize_number_prefix()
+        self._sync_room_type_and_capacity()
         super().save(*args, **kwargs)
+        self._initial_room_type = self.room_type
+        self._initial_capacity = self.capacity
 
 
 class RoomAllocation(models.Model):
@@ -379,7 +439,10 @@ class MealMenu(models.Model):
 
 class FeeConfig(models.Model):
     """Hostel fee structure configuration editable by warden and admin."""
-    rent_amount = models.DecimalField("Fixed Room Rent", max_digits=10, decimal_places=2, default=Decimal("1500.00"))
+    rent_amount = models.DecimalField("Fallback Room Rent (Unallocated)", max_digits=10, decimal_places=2, default=Decimal("1500.00"))
+    rent_1_sharing = models.DecimalField("1 Sharing Monthly Rent", max_digits=10, decimal_places=2, default=Decimal("3000.00"))
+    rent_2_sharing = models.DecimalField("2 Sharing Monthly Rent", max_digits=10, decimal_places=2, default=Decimal("2000.00"))
+    rent_3_sharing = models.DecimalField("3 Sharing Monthly Rent", max_digits=10, decimal_places=2, default=Decimal("1500.00"))
     food_rate_per_day = models.DecimalField("Food Rate per Day", max_digits=10, decimal_places=2, default=Decimal("130.00"))
     mess_cut_min_days = models.PositiveIntegerField("Min Consecutive Days for Mess Cut", default=3)
     mess_cut_rate_per_day = models.DecimalField("Mess Cut Deduction per Day", max_digits=10, decimal_places=2, default=Decimal("130.00"))
@@ -399,6 +462,9 @@ class FeeConfig(models.Model):
         if not cfg:
             cfg = cls.objects.create(
                 rent_amount=Decimal("1500.00"),
+                rent_1_sharing=Decimal("3000.00"),
+                rent_2_sharing=Decimal("2000.00"),
+                rent_3_sharing=Decimal("1500.00"),
                 food_rate_per_day=Decimal("130.00"),
                 mess_cut_min_days=3,
                 mess_cut_rate_per_day=Decimal("130.00"),
@@ -409,8 +475,28 @@ class FeeConfig(models.Model):
             )
         return cfg
 
+    def get_rent_for_type(self, room_type=""):
+        mapping = {
+            "1_sharing": self.rent_1_sharing,
+            "2_sharing": self.rent_2_sharing,
+            "3_sharing": self.rent_3_sharing,
+        }
+        val = mapping.get(room_type)
+        return Decimal(str(val if val is not None else self.rent_amount))
+
+    def get_rent_for_room(self, room=None):
+        if room is None:
+            return Decimal(str(self.rent_amount))
+        rt = getattr(room, "room_type", "")
+        if getattr(room, "capacity", None) in CAPACITY_TO_ROOM_TYPE:
+            rt = CAPACITY_TO_ROOM_TYPE[room.capacity]
+        return self.get_rent_for_type(rt)
+
     def __str__(self):
-        return f"Fee Structure (Rent: ₹{self.rent_amount}, Food/Day: ₹{self.food_rate_per_day}, Mess Cut: {self.mess_cut_min_days}+ days @ ₹{self.mess_cut_rate_per_day}, Fine: ₹{self.late_fine_amount}/{self.late_fine_interval_days}d)"
+        return (
+            f"Fee Structure (1-Sh: ₹{self.rent_1_sharing}, 2-Sh: ₹{self.rent_2_sharing}, "
+            f"3-Sh: ₹{self.rent_3_sharing}, Food/Day: ₹{self.food_rate_per_day})"
+        )
 
 
 class Fee(models.Model):
