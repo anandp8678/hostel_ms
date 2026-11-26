@@ -3,7 +3,7 @@
   <div>
     <h4 style="color:var(--navy)" class="mb-1">Calculate Monthly Fees & Mess Cut</h4>
     <p class="text-secondary small mb-0">
-      Automated calculation based on attendance: Fixed Rent ₹{{ cfg.rent_amount }} + Food ({{ calc_rows.0.calc.num_days|default:30 }} days @ ₹{{ cfg.food_rate_per_day }}/day) minus Mess Cut (absent ≥ {{ cfg.mess_cut_min_days }} consecutive days).
+      Tiered room rent (1 Sharing ₹{{ cfg.rent_1_sharing }} / 2 Sharing ₹{{ cfg.rent_2_sharing }} / 3 Sharing ₹{{ cfg.rent_3_sharing }}) + Food ({{ calc_rows.0.calc.num_days|default:30 }} days @ ₹{{ cfg.food_rate_per_day }}/day) minus Mess Cut (absent ≥ {{ cfg.mess_cut_min_days }} consecutive days).
     </p>
   </div>
   <div class="d-flex flex-wrap align-items-center gap-2">
@@ -36,7 +36,7 @@
 <!-- Policy Alert Callout -->
 <div class="alert alert-info py-2 px-3 mb-4 d-flex flex-wrap justify-content-between align-items-center gap-2">
   <div class="small">
-    <b>Active Fee Policy:</b> Fixed Rent: <b>₹{{ cfg.rent_amount }}</b> · Food Rate: <b>₹{{ cfg.food_rate_per_day }}/day</b> · Mess Cut Threshold: <b>{{ cfg.mess_cut_min_days }}+ consecutive absent days</b> (Rebate: <b>-₹{{ cfg.mess_cut_rate_per_day }}</b> per eligible day/streak).
+    <b>Active Fee Policy:</b> 1 Sharing: <b>₹{{ cfg.rent_1_sharing }}</b> · 2 Sharing: <b>₹{{ cfg.rent_2_sharing }}</b> · 3 Sharing: <b>₹{{ cfg.rent_3_sharing }}</b> · Food Rate: <b>₹{{ cfg.food_rate_per_day }}/day</b> · Mess Cut: <b>{{ cfg.mess_cut_min_days }}+ consecutive absent days</b> (<b>-₹{{ cfg.mess_cut_rate_per_day }}</b>).
   </div>
   <a href="{% url 'fee_structure' %}" class="btn btn-sm btn-info text-dark fw-semibold py-0 px-2" style="font-size:0.8rem;">Edit Policy</a>
 </div>
@@ -136,8 +136,9 @@
                 <td>
                   {% if r.room %}
                     <span class="badge text-bg-light border text-dark">{{ r.room }}</span>
+                    <div class="mt-1"><span class="badge text-bg-secondary-subtle text-secondary border" style="font-size:.68rem;">{{ r.room_type }}</span></div>
                   {% else %}
-                    <span class="text-muted small">—</span>
+                    <span class="text-muted small">Unallocated</span>
                   {% endif %}
                 </td>
                 <td>

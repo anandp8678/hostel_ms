@@ -162,14 +162,31 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
     ]))
     story.append(summary_table)
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 8))
+
+    tier_counts = {"1 Sharing": 0, "2 Sharing": 0, "3 Sharing": 0, "Unallocated": 0}
+    for f in fee_list:
+        rm = getattr(f.student, "room", None)
+        lbl = rm.room_type_label if rm else "Unallocated"
+        tier_counts[lbl] = tier_counts.get(lbl, 0) + 1
+
+    tier_summary_text = (
+        f"<b>Unified Billing Breakdown (All Room Types Combined):</b> "
+        f"1 Sharing: <b>{tier_counts.get('1 Sharing', 0)}</b> · "
+        f"2 Sharing: <b>{tier_counts.get('2 Sharing', 0)}</b> · "
+        f"3 Sharing: <b>{tier_counts.get('3 Sharing', 0)}</b> · "
+        f"Unallocated: <b>{tier_counts.get('Unallocated', 0)}</b> · "
+        f"Total Rent Billed: <b>₹{total_rent:,.2f}</b>"
+    )
+    story.append(Paragraph(tier_summary_text, styles["ReportSubtitle"]))
+    story.append(Spacer(1, 8))
 
     # Master Table Header
     headers = [
         Paragraph("Roll No", styles["TableHeader"]),
         Paragraph("Resident Name", styles["TableHeader"]),
         Paragraph("Year", styles["TableHeader"]),
-        Paragraph("Room / Bldg", styles["TableHeader"]),
+        Paragraph("Room / Type", styles["TableHeader"]),
         Paragraph("Fee Description", styles["TableHeader"]),
         Paragraph("Rent (₹)", styles["TableHeader"]),
         Paragraph("Food (₹)", styles["TableHeader"]),
@@ -191,7 +208,12 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
         elif f.status in ("Overdue", "Overdue (Fine added)"):
             st_badge = styles["BadgeOverdue"]
 
-        room_str = str(f.student.room) if f.student.room else "—"
+        room_obj = f.student.room
+        room_str = (
+            f"{room_obj}<br/><font size='6.5' color='#475569'>{room_obj.room_type_label}</font>"
+            if room_obj
+            else "Unallocated"
+        )
         year_str = getattr(f.student, "year_short", "") or "—"
         rent_str = f"{f.rent_amount:,.2f}" if f.rent_amount else "—"
         food_str = f"{f.food_amount:,.2f}" if f.food_amount else "—"
@@ -235,7 +257,7 @@ def generate_fees_report_pdf(fees_qs, title="Hostel Master Fees & Billing Statem
         Paragraph("", styles["TableCell"]),
     ])
 
-    widths = [50, 96, 36, 54, 98, 46, 46, 48, 44, 56, 48, 54, 52, 42]
+    widths = [50, 96, 36, 62, 90, 46, 46, 48, 44, 56, 48, 54, 52, 42]
     t = Table(table_data, colWidths=widths, repeatRows=1)
     
     t_style = [
@@ -322,7 +344,11 @@ def generate_fee_invoice_pdf(fee, current_user=None):
             Paragraph(f"<b>Billing Month:</b> {fee.month or '—'}", styles["TableCell"]),
         ],
         [
-            Paragraph(f"<b>Room Assigned:</b> {room_name}{floor_str}", styles["TableCell"]),
+            Paragraph(
+                f"<b>Room Assigned:</b> {room_name}{floor_str}"
+                + (f" [{s.room.room_type_label}]" if s.room else ""),
+                styles["TableCell"],
+            ),
             Paragraph(f"<b>Due Date:</b> {fee.due_date.strftime('%d %b %Y') if fee.due_date else '—'}", styles["TableCell"]),
         ],
         [
@@ -358,10 +384,11 @@ def generate_fee_invoice_pdf(fee, current_user=None):
     items_data = [item_header]
 
     if fee.rent_amount > 0:
+        sharing_label = s.room.room_type_label if s.room else "Standard / Unallocated"
         items_data.append([
-            Paragraph("<b>Fixed Hostel Room Rent</b>", styles["TableCellBold"]),
-            Paragraph("Monthly Flat Rate", styles["TableCell"]),
-            Paragraph("Fixed Monthly Accommodation", styles["TableCell"]),
+            Paragraph(f"<b>Hostel Room Rent ({sharing_label})</b>", styles["TableCellBold"]),
+            Paragraph("Monthly Sharing Tier", styles["TableCell"]),
+            Paragraph(f"{sharing_label} Rate", styles["TableCell"]),
             Paragraph(f"₹{fee.rent_amount:,.2f}", styles["TableCellRight"]),
         ])
     if fee.food_amount > 0:

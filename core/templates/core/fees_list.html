@@ -15,7 +15,7 @@
         {% endif %}
       </div>
       <div class="text-secondary small">
-        Filter student fees by Building, Academic Year, Month, or Status and generate dedicated PDF billing reports.
+        Filter student fees by Building, Academic Year, Month, or Status and export one unified PDF covering all room sharing types.
       </div>
     </div>
 
@@ -156,7 +156,7 @@
           <th>Roll No.</th>
           <th>Student</th>
           <th>Year</th>
-          <th>Room / Bldg</th>
+          <th>Room / Sharing</th>
           <th>Fee Title</th>
           <th class="text-end">Rent</th>
           <th class="text-end">Food</th>
@@ -183,6 +183,7 @@
             <td>
               {% if fee.student.room %}
                 <span class="badge text-bg-light border text-dark">{{ fee.student.room }}</span>
+                <div class="mt-1"><span class="badge text-bg-info-subtle text-info-emphasis border border-info-subtle" style="font-size:0.68rem;">{{ fee.student.room.room_type_label }}</span></div>
               {% else %}
                 <span class="text-muted">Unallocated</span>
               {% endif %}

@@ -662,7 +662,7 @@ def fees_calculate_monthly(request):
                     continue
 
                 raw_rent = (request.POST.get(f"rent_{sid}") or "").strip()
-                rent_val = Decimal(raw_rent) if raw_rent else cfg.rent_amount
+                rent_val = Decimal(raw_rent) if raw_rent else cfg.get_rent_for_room(student.room)
 
                 raw_food = (request.POST.get(f"food_{sid}") or "").strip()
                 food_val = Decimal(raw_food) if raw_food else Decimal("0.00")
@@ -739,6 +739,7 @@ def fees_calculate_monthly(request):
         row = {
             "student": s,
             "room": s.room,
+            "room_type": s.room.room_type_label if s.room else "Unallocated",
             "calc": calc,
             "existing_fee": ex,
             "rent": ex.rent_amount if ex and ex.rent_amount else calc["rent_amount"],
@@ -837,7 +838,7 @@ def fees_export_pdf(request):
         sub_parts.append("Status: Paid Invoices Only")
 
     title = " · ".join(title_parts)
-    subtitle = " | ".join(sub_parts) if sub_parts else "Itemized resident billing, mess cuts, and balance ledger"
+    subtitle = " | ".join(sub_parts) if sub_parts else "Unified resident billing across all room sharing types, mess cuts, and balances"
 
     pdf_bytes = generate_fees_report_pdf(fee_list, title=title, subtitle=subtitle, staff_user=request.user)
     slug_parts = ["hostel_fees"]
