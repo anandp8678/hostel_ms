@@ -123,6 +123,29 @@
   </div>
 {% endif %}
 
+{% if room_type_summary %}
+<!-- Room Sharing Tiers Summary -->
+<div class="row g-3 mb-4">
+  {% for rt in room_type_summary %}
+    <div class="col-12 col-md-4">
+      <a href="{% url 'rooms' %}?room_type={{ rt.room_type }}{% if active_building %}&building={{ active_building.code }}{% endif %}" class="card p-3 h-100 bg-white border-0 shadow-sm text-decoration-none card-hover">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <span class="fw-bold text-dark">{{ rt.label }} Rooms</span>
+          <span class="badge text-bg-info-subtle text-info-emphasis border border-info-subtle">₹{{ rt.rate|floatformat:0 }}/mo</span>
+        </div>
+        <div class="d-flex justify-content-between small text-secondary mb-1">
+          <span>{{ rt.rooms }} room{{ rt.rooms|pluralize }} · <b>{{ rt.occupied }}</b>/{{ rt.beds }} beds</span>
+          <span class="text-success fw-semibold">{{ rt.free }} free</span>
+        </div>
+        <div class="progress" style="height: 5px;">
+          <div class="progress-bar bg-info" role="progressbar" style="width: {{ rt.pct }}%;"></div>
+        </div>
+      </a>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 <!-- 4 Key Metric Summary Cards -->
 <div class="row g-3 mb-4">
   <!-- 1. Room Occupancy Card -->

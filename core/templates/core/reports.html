@@ -73,6 +73,47 @@
 </div>
 {% endif %}
 
+<!-- Room Sharing Type Breakdown -->
+{% if room_type_summary %}
+<div class="card mb-4 border-0 shadow-sm bg-white">
+  <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center py-3 gap-2">
+    <div>
+      <h6 class="mb-0 fw-bold" style="color:var(--navy);">Room Sharing Tiers & Pricing Overview</h6>
+      <span class="text-muted small">Separate monthly rent tiers (1/2/3 Sharing) — combined into one unified fee PDF</span>
+    </div>
+    <a href="{% url 'fees_export_pdf' %}{% if building_filter %}?building={{ building_filter }}{% endif %}" class="btn btn-sm btn-outline-danger fw-semibold">Export Unified Fees PDF</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr>
+          <th>Sharing Type</th>
+          <th class="text-end">Monthly Rent</th>
+          <th class="text-center">Rooms</th>
+          <th class="text-center">Total Beds</th>
+          <th class="text-center">Occupied</th>
+          <th class="text-center">Free Beds</th>
+          <th class="text-end">Occupancy</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rt in room_type_summary %}
+          <tr>
+            <td class="fw-bold text-dark">{{ rt.label }}</td>
+            <td class="text-end fw-semibold">₹{{ rt.rate|floatformat:2 }}</td>
+            <td class="text-center">{{ rt.rooms }}</td>
+            <td class="text-center">{{ rt.beds }}</td>
+            <td class="text-center">{{ rt.occupied }}</td>
+            <td class="text-center text-success fw-semibold">{{ rt.free }}</td>
+            <td class="text-end">{{ rt.pct }}%</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <!-- Year-wise Fee Summary & Direct PDF Downloads -->
 <div class="card mb-4 border-0 shadow-sm bg-white">
   <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">

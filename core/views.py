@@ -890,6 +890,29 @@ def allocation_vacate(request, pk):
 
 
 # ---------- auth / home ----------
+def _build_room_type_summary(rooms, cfg=None):
+    """Aggregate room count, capacity, occupied, free beds, and monthly rent for 1/2/3 sharing tiers."""
+    cfg = cfg or m.FeeConfig.get_config()
+    rows = []
+    for rt_val, rt_lbl in m.ROOM_TYPE_CHOICES:
+        tier_rooms = [r for r in rooms if r.room_type == rt_val]
+        beds = sum(r.capacity for r in tier_rooms)
+        occ = sum(r.occupied for r in tier_rooms)
+        blk = sum(r.capacity for r in tier_rooms if r.is_blacklisted)
+        eff = max(0, beds - blk)
+        rows.append({
+            "room_type": rt_val,
+            "label": rt_lbl,
+            "rooms": len(tier_rooms),
+            "beds": beds,
+            "occupied": occ,
+            "free": max(0, eff - occ),
+            "rate": cfg.get_rent_for_type(rt_val),
+            "pct": round(100 * occ / eff) if eff > 0 else 0,
+        })
+    return rows
+
+
 @login_required
 def home(request):
     u = request.user
@@ -945,6 +968,7 @@ def home(request):
         block_capacities = [floor_dict[k]["capacity"] for k in block_labels]
         block_occupied = [floor_dict[k]["occupied"] for k in block_labels]
         block_free = [floor_dict[k]["free"] for k in block_labels]
+        room_type_summary = _build_room_type_summary(all_rooms)
 
         # Attendance metrics for today
         today_att = m.Attendance.objects.filter(date=today, student_id__in=scoped_student_ids)
@@ -1023,6 +1047,7 @@ def home(request):
             active_building=active_building,
             is_building_locked=is_building_locked,
             building_summaries=building_summaries,
+            room_type_summary=room_type_summary,
             active_student_count=active_student_count,
             inactive_student_count=inactive_student_count,
             allocated_count=allocated_count,
@@ -3034,7 +3059,8 @@ def reports(request):
     )
     if active_building:
         room_qs = room_qs.filter(building=active_building)
-    for r in room_qs:
+    scoped_rooms = list(room_qs)
+    for r in scoped_rooms:
         key = (r.building.code if r.building else "", r.block)
         label = f"{r.building.code} · {r.floor_display}" if (r.building and not active_building) else r.floor_display
         b = floors.setdefault(key, [label, 0, 0])
@@ -3042,6 +3068,7 @@ def reports(request):
         b[2] += r.occupied
     sorted_keys = sorted(floors.keys(), key=lambda k: (k[0], floor_order_key(k[1])))
     occupancy = [(floors[k][0], floors[k][1], floors[k][2], max(0, floors[k][1] - floors[k][2])) for k in sorted_keys]
+    room_type_summary = _build_room_type_summary(scoped_rooms)
 
     low = sorted([r for r in att_rows if r[3] != ""], key=lambda r: r[3])[:10]
     return show(
@@ -3058,6 +3085,7 @@ def reports(request):
         year_filter=year_filter,
         year_choices=m.Student.YEAR_CHOICES,
         building_summaries=building_summaries,
+        room_type_summary=room_type_summary,
         year_fee_summaries=year_fee_summaries,
     )
 
