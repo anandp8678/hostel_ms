@@ -7,7 +7,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from .models import Building, Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
+from .models import CAPACITY_TO_ROOM_TYPE, ROOM_TYPE_CAPACITY, Building, Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
 
 
 def _split(name):
@@ -45,7 +45,25 @@ def _normalize_key(k):
         return "parent_name"
     if clean in ("parentphone", "parentmobile", "parentcontact", "fatherphone", "guardianphone", "parentcell"):
         return "parent_phone"
+    if clean in ("roomtype", "sharing", "sharingtype", "roomsharing", "type"):
+        return "room_type"
+    if clean in ("preferredroomtype", "roompreference", "preferredsharing", "prefroomtype", "preference"):
+        return "preferred_room_type"
     return clean
+
+
+def parse_room_type(val, default=""):
+    """Parse room sharing strings such as '1', '1 Sharing', 'single', '2_sharing', '3' into canonical keys."""
+    if val is None or str(val).strip() == "":
+        return default
+    s = re.sub(r"[^a-z0-9]", "", str(val).strip().lower())
+    if s in ("1", "1sharing", "1bed", "1beds", "single", "one", "onesharing"):
+        return "1_sharing"
+    if s in ("2", "2sharing", "2bed", "2beds", "double", "two", "twosharing", "dual"):
+        return "2_sharing"
+    if s in ("3", "3sharing", "3bed", "3beds", "triple", "three", "threesharing", "triplesharing"):
+        return "3_sharing"
+    return default
 
 
 def parse_year(val, default=1):
@@ -305,7 +323,7 @@ class ImportResult(dict):
 
 
 @transaction.atomic
-def onboard_student(name, roll_no, course="", phone="", parent_name="", parent_phone="", room=None, start_date=None, year_of_study=1):
+def onboard_student(name, roll_no, course="", phone="", parent_name="", parent_phone="", room=None, start_date=None, year_of_study=1, preferred_room_type=""):
     """Create the student login, the parent login (shared between siblings) and optionally a room."""
     roll_no = (roll_no or "").strip()
     name = (name or "").strip()
@@ -314,10 +332,11 @@ def onboard_student(name, roll_no, course="", phone="", parent_name="", parent_p
     if User.objects.filter(username=roll_no).exists():
         raise ValueError(f"Roll number {roll_no} already exists.")
     yr = parse_year(year_of_study, default=1)
+    pref_rt = parse_room_type(preferred_room_type, default="")
     first, last = _split(name)
     user = User.objects.create_user(username=roll_no, password=settings.DEFAULT_PASSWORD, first_name=first,
                                     last_name=last, role="student", phone=phone, must_change_password=True)
-    student = Student.objects.create(user=user, roll_no=roll_no, course=course, year_of_study=yr)
+    student = Student.objects.create(user=user, roll_no=roll_no, course=course, year_of_study=yr, preferred_room_type=pref_rt)
     if parent_phone or parent_name:
         link_or_create_parent(student, parent_name, parent_phone)
     if room:
@@ -351,6 +370,7 @@ def import_rows(rows):
         building_str = r.get("building", "")
         course = r.get("course", "")
         year_raw = r.get("year_of_study", "")
+        pref_raw = r.get("preferred_room_type", "")
         phone = r.get("phone", "")
         parent_name = r.get("parent_name", "")
         parent_phone = r.get("parent_phone", "")
@@ -363,6 +383,7 @@ def import_rows(rows):
         try:
             with transaction.atomic():
                 year_val = parse_year(year_raw, default=1) if year_raw else None
+                pref_rt = parse_room_type(pref_raw, default="") if pref_raw else ""
                 student = find_student(roll_no=roll_no, name=name)
                 if student:
                     # Update existing student
@@ -376,6 +397,8 @@ def import_rows(rows):
                         student.course = course
                     if year_val is not None:
                         student.year_of_study = year_val
+                    if pref_raw and pref_rt:
+                        student.preferred_room_type = pref_rt
                     if not student.is_active:
                         student.is_active = True
                     student.save()
@@ -400,6 +423,7 @@ def import_rows(rows):
                         parent_phone=parent_phone,
                         room=None,
                         year_of_study=year_val if year_val is not None else 1,
+                        preferred_room_type=pref_rt,
                     )
                     created_count += 1
 
@@ -435,7 +459,18 @@ def import_allocations(rows):
     return import_rows(rows)
 
 
-def _create_room_if_absent(building, block, number, capacity, created, skipped, errors, row_prefix=""):
+def _resolve_bulk_capacity(capacity, room_type=None):
+    """Normalize optional room_type and capacity for bulk room creators."""
+    resolved_rt = parse_room_type(room_type, default="") if room_type else ""
+    if resolved_rt:
+        return ROOM_TYPE_CAPACITY[resolved_rt], resolved_rt
+    cap = int(capacity or 2)
+    if cap <= 0:
+        raise ValueError("Room capacity must be greater than 0.")
+    return cap, CAPACITY_TO_ROOM_TYPE.get(cap, "2_sharing")
+
+
+def _create_room_if_absent(building, block, number, capacity, created, skipped, errors, row_prefix="", room_type=None):
     """Create a Room scoped to (building, block, number) or append to skipped/errors."""
     b_obj = find_building(building)
     exists_qs = Room.objects.filter(building=b_obj, block__iexact=block, number__iexact=number)
@@ -444,7 +479,14 @@ def _create_room_if_absent(building, block, number, capacity, created, skipped, 
         skipped.append(label)
         return
     try:
-        r = Room(building=b_obj, block=block, number=number, capacity=capacity)
+        resolved_rt = parse_room_type(room_type, default="") if room_type else ""
+        kwargs = {"building": b_obj, "block": block, "number": number}
+        if resolved_rt:
+            kwargs["room_type"] = resolved_rt
+            kwargs["capacity"] = capacity or ROOM_TYPE_CAPACITY[resolved_rt]
+        else:
+            kwargs["capacity"] = capacity
+        r = Room(**kwargs)
         r.full_clean()
         r.save()
         created.append(r)
@@ -453,7 +495,7 @@ def _create_room_if_absent(building, block, number, capacity, created, skipped, 
         errors.append(f"{prefix}: {getattr(e, 'messages', [str(e)])[0]}")
 
 
-def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None, capacity=2, prefix="", suffix="", building=None):
+def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None, capacity=2, prefix="", suffix="", building=None, room_type=None):
     """
     Creates a particular amount (count) or range of rooms for a given block and building.
     Block serves as the floor prefix (e.g. G and room 101 displays like B1 · G-101).
@@ -505,20 +547,18 @@ def bulk_create_rooms(block="A", start_number="101", count=None, end_number=None
     else:
         raise ValueError("Please provide either the amount of rooms to add (count) or the ending room number.")
 
-    capacity = int(capacity or 2)
-    if capacity <= 0:
-        raise ValueError("Room capacity must be greater than 0.")
+    capacity, resolved_rt = _resolve_bulk_capacity(capacity, room_type)
 
     created, skipped, errors = [], [], []
     for num in range(start_int, end_int + 1):
         num_str = f"{num:0{pad}d}" if pad > 0 else str(num)
         full_number = f"{prefix}{num_str}{suffix}"
-        _create_room_if_absent(b_obj, block, full_number, capacity, created, skipped, errors)
+        _create_room_if_absent(b_obj, block, full_number, capacity, created, skipped, errors, room_type=resolved_rt)
 
     return {"created": created, "skipped": skipped, "errors": errors}
 
 
-def bulk_create_rooms_floors(block="A", start_floor=1, end_floor=3, rooms_per_floor=10, capacity=2, floor_padding=2, building=None):
+def bulk_create_rooms_floors(block="A", start_floor=1, end_floor=3, rooms_per_floor=10, capacity=2, floor_padding=2, building=None, room_type=None):
     """
     Creates rooms floor-by-floor inside a given building.
     Example: floors 1 to 3 with 10 rooms each creates 101..110, 201..210, 301..310.
@@ -533,9 +573,7 @@ def bulk_create_rooms_floors(block="A", start_floor=1, end_floor=3, rooms_per_fl
     if r_per_fl <= 0:
         raise ValueError("Rooms per floor must be greater than 0.")
 
-    capacity = int(capacity or 2)
-    if capacity <= 0:
-        raise ValueError("Room capacity must be greater than 0.")
+    capacity, resolved_rt = _resolve_bulk_capacity(capacity, room_type)
 
     b_obj = find_building(building)
     created, skipped, errors = [], [], []
@@ -543,20 +581,18 @@ def bulk_create_rooms_floors(block="A", start_floor=1, end_floor=3, rooms_per_fl
     for fl in range(start_fl, end_fl + 1):
         for rm in range(1, r_per_fl + 1):
             num_str = f"{fl}{rm:0{floor_padding}d}"
-            _create_room_if_absent(b_obj, block, num_str, capacity, created, skipped, errors)
+            _create_room_if_absent(b_obj, block, num_str, capacity, created, skipped, errors, room_type=resolved_rt)
 
     return {"created": created, "skipped": skipped, "errors": errors}
 
 
-def bulk_create_rooms_from_list(block="A", text="", default_capacity=2, building=None):
+def bulk_create_rooms_from_list(block="A", text="", default_capacity=2, building=None, room_type=None):
     """
     Creates rooms from a comma, semicolon, or newline separated list.
     Supports numbers like '101, 102, 103' or block-included like 'A-101, B-102'.
     """
     block = (block or "A").strip()
-    capacity = int(default_capacity or 2)
-    if capacity <= 0:
-        raise ValueError("Room capacity must be greater than 0.")
+    capacity, resolved_rt = _resolve_bulk_capacity(default_capacity, room_type)
 
     b_obj = find_building(building)
     tokens = re.split(r"[,;\n\r\t]+", text or "")
@@ -572,7 +608,7 @@ def bulk_create_rooms_from_list(block="A", text="", default_capacity=2, building
             b_part, _, n_part = token.partition("-")
             b = b_part.strip() or block
             num = n_part.strip()
-        _create_room_if_absent(b_obj, b, num, capacity, created, skipped, errors)
+        _create_room_if_absent(b_obj, b, num, capacity, created, skipped, errors, room_type=resolved_rt)
 
     return {"created": created, "skipped": skipped, "errors": errors}
 
@@ -580,7 +616,7 @@ def bulk_create_rooms_from_list(block="A", text="", default_capacity=2, building
 def import_rooms_csv(rows, building=None):
     """
     Imports rooms from CSV rows dict.
-    Headers supported: building (optional), block, number (or room), capacity.
+    Headers supported: building (optional), block, number (or room), room_type (optional), capacity.
     """
     default_b = find_building(building)
     created, skipped, errors = [], [], []
@@ -589,7 +625,8 @@ def import_rooms_csv(rows, building=None):
         r = {_normalize_key(k): (v or "").strip() for k, v in raw_r.items() if k}
         block = r.get("block", "")
         number = r.get("number", "") or r.get("room", "")
-        cap_val = r.get("capacity", "") or "2"
+        rt_raw = r.get("room_type", "")
+        cap_val = r.get("capacity", "")
         row_b = find_building(r.get("building", "")) if r.get("building") else default_b
 
         if "-" in number and not block:
@@ -603,15 +640,30 @@ def import_rooms_csv(rows, building=None):
             errors.append(f"Row {i}: Missing room number.")
             continue
 
-        try:
-            capacity = int(cap_val)
-            if capacity <= 0:
-                raise ValueError("Capacity must be positive.")
-        except ValueError:
-            errors.append(f"Row {i}: Invalid capacity '{cap_val}'.")
-            continue
+        resolved_rt = None
+        if rt_raw:
+            resolved_rt = parse_room_type(rt_raw, default=None)
+            if not resolved_rt:
+                errors.append(f"Row {i}: Invalid room type '{rt_raw}' (use 1 Sharing, 2 Sharing, or 3 Sharing).")
+                continue
 
-        _create_room_if_absent(row_b, block, number, capacity, created, skipped, errors, row_prefix=f"Row {i}")
+        if cap_val:
+            try:
+                capacity = int(cap_val)
+                if capacity <= 0:
+                    raise ValueError("Capacity must be positive.")
+            except ValueError:
+                errors.append(f"Row {i}: Invalid capacity '{cap_val}'.")
+                continue
+        elif resolved_rt:
+            capacity = ROOM_TYPE_CAPACITY[resolved_rt]
+        else:
+            capacity = 2
+
+        _create_room_if_absent(
+            row_b, block, number, capacity, created, skipped, errors,
+            row_prefix=f"Row {i}", room_type=resolved_rt,
+        )
 
     return {"created": created, "skipped": skipped, "errors": errors}
 
@@ -620,7 +672,7 @@ def import_rooms_csv(rows, building=None):
 def calculate_student_monthly_fee(student, year, month, config=None):
     """
     Calculates monthly hostel and mess fee for a student.
-    - Fixed rent: default ₹1500 (from config)
+    - Room rent: tiered by sharing type (1/2/3 Sharing from config, or fallback rent if unallocated)
     - Food charge: days_in_month * food_rate_per_day (default ₹130/day)
     - Mess cut: checks consecutive absent days.
       If absent for >= mess_cut_min_days (default 3 consecutive days),
@@ -670,7 +722,9 @@ def calculate_student_monthly_fee(student, year, month, config=None):
         # Full cut for every day in a qualifying consecutive streak
         mess_cut_days = sum(len(s) for s in qualifying_streaks)
 
-    rent_amount = Decimal(str(config.rent_amount))
+    room_obj = student.room
+    rent_amount = Decimal(str(config.get_rent_for_room(room_obj)))
+    room_type_label = room_obj.room_type_label if room_obj else "Unallocated"
     food_rate = Decimal(str(config.food_rate_per_day))
     food_amount = Decimal(str(round(Decimal(num_days) * food_rate, 2)))
     mess_cut_rate = Decimal(str(config.mess_cut_rate_per_day))
@@ -697,6 +751,7 @@ def calculate_student_monthly_fee(student, year, month, config=None):
         "month_str": f"{year:04d}-{month:02d}",
         "month_label": date(year, month, 1).strftime("%B %Y"),
         "num_days": num_days,
+        "room_type": room_type_label,
         "rent_amount": rent_amount,
         "food_rate": food_rate,
         "food_amount": food_amount,
