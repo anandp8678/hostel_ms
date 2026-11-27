@@ -1041,6 +1041,22 @@ def home(request):
         fee_paid_pct = round(100 * total_paid_amount / total_fee_amount) if total_fee_amount > 0 else 100
         overdue_fees_count = sum(1 for x in all_fees if x.due_date and x.due_date < today and x.balance > 0)
 
+        # Gate passes & visitor monitoring
+        sync_overdue_gate_passes()
+        gate_base = (
+            m.GatePass.objects.filter(student_id__in=scoped_student_ids)
+            .select_related("student__user")
+            .prefetch_related(
+                Prefetch("student__allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+            )
+        )
+        late_gate_passes_qs = gate_base.filter(status="Late", actual_return_at__isnull=True).order_by("expected_return_at")
+        late_gate_passes = list(late_gate_passes_qs[:6])
+        late_gate_passes_count = late_gate_passes_qs.count()
+        currently_out_count = gate_base.filter(status__in=["Checked Out", "Late"], actual_return_at__isnull=True).count()
+        pending_gate_passes_count = gate_base.filter(status="Pending").count()
+        active_visitors_count = m.VisitorLog.objects.filter(student_id__in=scoped_student_ids, checked_out_at__isnull=True).count()
+
         # Today's menu
         today_menu = list(m.MealMenu.objects.filter(day=today.weekday()))
 
@@ -1096,6 +1112,11 @@ def home(request):
             pending_leaves_count=pending_leaves_count,
             open_complaints=open_complaints,
             open_complaints_count=open_complaints_count,
+            late_gate_passes=late_gate_passes,
+            late_gate_passes_count=late_gate_passes_count,
+            currently_out_count=currently_out_count,
+            pending_gate_passes_count=pending_gate_passes_count,
+            active_visitors_count=active_visitors_count,
             total_fee_amount=total_fee_amount,
             total_paid_amount=total_paid_amount,
             total_balance_amount=total_balance_amount,
