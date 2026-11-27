@@ -2775,7 +2775,7 @@ class RoomTypePricingTests(TestCase):
                 "food_rate_per_day": "120.00",
                 "mess_cut_min_days": "3",
                 "mess_cut_rate_per_day": "120.00",
-                "mess_cut_mode": "one_day_per_streak",
+                "mess_cut_mode": "per_streak",
                 "late_fine_amount": "300.00",
                 "late_fine_interval_days": "5",
             },
@@ -2861,7 +2861,7 @@ class RoomTypePricingTests(TestCase):
 
         # FY warden sees only B1 rooms even when filtering by 1_sharing
         resp_rooms = c.get(f"{reverse('rooms')}?room_type=1_sharing")
-        self.assertContains(resp_rooms, "1-105")
+        self.assertContains(resp_rooms, str(r_b1_new_1s))
         self.assertNotContains(resp_rooms, "B2")
 
         # Profile allocation modal renders sharing-type filter and student's preferred tier
