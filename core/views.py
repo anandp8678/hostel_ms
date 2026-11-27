@@ -1000,7 +1000,6 @@ def home(request):
         block_capacities = [floor_dict[k]["capacity"] for k in block_labels]
         block_occupied = [floor_dict[k]["occupied"] for k in block_labels]
         block_free = [floor_dict[k]["free"] for k in block_labels]
-        room_type_summary = _build_room_type_summary(all_rooms)
 
         # Attendance metrics for today
         today_att = m.Attendance.objects.filter(date=today, student_id__in=scoped_student_ids)
@@ -1065,7 +1064,6 @@ def home(request):
             active_building=active_building,
             is_building_locked=is_building_locked,
             building_summaries=building_summaries,
-            room_type_summary=room_type_summary,
             active_student_count=active_student_count,
             inactive_student_count=inactive_student_count,
             allocated_count=allocated_count,
@@ -3034,7 +3032,7 @@ def reports(request):
             w.writerows(att_rows)
         return resp
 
-    # Scoped rooms shared across building summaries, tier breakdown, and floor table
+    # Scoped rooms shared across building summaries and floor table
     target_buildings = [active_building] if active_building else buildings
     room_qs = m.Room.objects.select_related("building").prefetch_related(
         Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
@@ -3070,7 +3068,6 @@ def reports(request):
         b[2] += r.occupied
     sorted_keys = sorted(floors.keys(), key=lambda k: (k[0], floor_order_key(k[1])))
     occupancy = [(floors[k][0], floors[k][1], floors[k][2], max(0, floors[k][1] - floors[k][2])) for k in sorted_keys]
-    room_type_summary = _build_room_type_summary(scoped_rooms)
 
     low = sorted([r for r in att_rows if r[3] != ""], key=lambda r: r[3])[:10]
     return show(
@@ -3087,7 +3084,6 @@ def reports(request):
         year_filter=year_filter,
         year_choices=m.Student.YEAR_CHOICES,
         building_summaries=building_summaries,
-        room_type_summary=room_type_summary,
         year_fee_summaries=year_fee_summaries,
     )
 

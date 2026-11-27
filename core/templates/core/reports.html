@@ -34,6 +34,10 @@
           {% endfor %}
         </select>
       </form>
+      <a href="{% url 'fees_export_pdf' %}{% if building_filter %}?building={{ building_filter }}{% endif %}{% if year_filter %}{% if building_filter %}&{% else %}?{% endif %}year={{ year_filter }}{% endif %}"
+         class="btn btn-sm btn-outline-danger fw-semibold">
+        Export Unified Fees PDF
+      </a>
       <a href="{% url 'fees_export_pdf' %}?{% if building_filter %}building={{ building_filter }}&{% endif %}{% if year_filter %}year={{ year_filter }}&{% endif %}status=pending"
          class="btn btn-sm btn-danger fw-semibold">
         Pending Fees PDF
@@ -63,6 +67,7 @@
         <div class="progress" style="height:8px;">
           <div class="progress-bar bg-primary" style="width:{{ bs.occupancy_pct }}%;"></div>
         </div>
+        {% include "core/_building_room_types.html" with tiers=bs.room_type_summary building=bs.building %}
         <div class="mt-2 d-flex justify-content-between small">
           <span class="text-muted">{{ bs.free_beds }} bed{{ bs.free_beds|pluralize }} free</span>
           <a href="{% url 'fees_export_pdf' %}?building={{ bs.building.code }}" class="text-decoration-none text-danger fw-semibold">Export {{ bs.building.code }} Fees PDF &rarr;</a>
@@ -70,47 +75,6 @@
       </div>
     </div>
   {% endfor %}
-</div>
-{% endif %}
-
-<!-- Room Sharing Type Breakdown -->
-{% if room_type_summary %}
-<div class="card mb-4 border-0 shadow-sm bg-white">
-  <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center py-3 gap-2">
-    <div>
-      <h6 class="mb-0 fw-bold" style="color:var(--navy);">Room Sharing Tiers & Pricing Overview</h6>
-      <span class="text-muted small">Separate monthly rent tiers (1/2/3 Sharing) — combined into one unified fee PDF</span>
-    </div>
-    <a href="{% url 'fees_export_pdf' %}{% if building_filter %}?building={{ building_filter }}{% endif %}" class="btn btn-sm btn-outline-danger fw-semibold">Export Unified Fees PDF</a>
-  </div>
-  <div class="table-responsive">
-    <table class="table table-hover align-middle mb-0 small">
-      <thead class="table-light">
-        <tr>
-          <th>Sharing Type</th>
-          <th class="text-end">Monthly Rent</th>
-          <th class="text-center">Rooms</th>
-          <th class="text-center">Total Beds</th>
-          <th class="text-center">Occupied</th>
-          <th class="text-center">Free Beds</th>
-          <th class="text-end">Occupancy</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for rt in room_type_summary %}
-          <tr>
-            <td class="fw-bold text-dark">{{ rt.label }}</td>
-            <td class="text-end fw-semibold">₹{{ rt.rate|floatformat:2 }}</td>
-            <td class="text-center">{{ rt.rooms }}</td>
-            <td class="text-center">{{ rt.beds }}</td>
-            <td class="text-center">{{ rt.occupied }}</td>
-            <td class="text-center text-success fw-semibold">{{ rt.free }}</td>
-            <td class="text-end">{{ rt.pct }}%</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
 </div>
 {% endif %}
 
