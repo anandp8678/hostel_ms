@@ -85,14 +85,29 @@
 
           <div class="small text-muted mb-3">
             Course: <b>{{ c.student.course|default:"Not specified" }}</b>
+            {% if c.active_gate_pass %}
+              <div class="mt-2">
+                <span class="badge {% if c.active_gate_pass.is_curfew_overdue %}text-bg-danger{% else %}text-bg-primary{% endif %} rounded-pill">
+                  {{ c.active_gate_pass.pass_code }} &middot; {{ c.active_gate_pass.effective_status }} (Due {{ c.active_gate_pass.expected_return_at|date:"d M, h:i A" }})
+                </span>
+              </div>
+            {% endif %}
+            {% if c.pending_gate_ack > 0 %}
+              <div class="mt-1">
+                <span class="badge text-bg-warning text-dark rounded-pill">{{ c.pending_gate_ack }} Gate Pass awaiting Parent Ack</span>
+              </div>
+            {% endif %}
           </div>
 
-          <div class="d-flex gap-2">
+          <div class="d-flex flex-wrap gap-2">
             <a href="{% url 'child' c.student.pk %}" class="btn btn-navy flex-grow-1 fw-semibold">
               Dashboard &rarr;
             </a>
+            <a href="{% url 'my_gate_passes' %}?child={{ c.student.pk }}" class="btn btn-outline-secondary fw-semibold">
+              Gate Passes
+            </a>
             <a href="{% url 'my_fees' %}?child={{ c.student.pk }}" class="btn btn-outline-primary fw-semibold">
-              Fee Details
+              Fees
             </a>
           </div>
         </div>

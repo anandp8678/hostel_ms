@@ -4,16 +4,16 @@ def nav(request):
         return {}
     if u.role in ("admin", "warden"):
         items = [("home", "Dashboard"), ("students", "Students"), ("rooms", "Rooms"), ("allocations", "Allocations"),
-                 ("attendance", "Attendance"), ("leaves", "Leave requests"), ("complaints", "Complaints"),
-                 ("menu_manage", "Meal menu"), ("fees", "Fees"), ("announcements", "Announcements"), ("reports", "Reports")]
+                 ("attendance", "Attendance"), ("leaves", "Leave requests"), ("gate_passes", "Gate passes"), ("visitors", "Visitors"),
+                 ("complaints", "Complaints"), ("menu_manage", "Meal menu"), ("fees", "Fees"), ("announcements", "Announcements"), ("reports", "Reports")]
         if u.role == "admin":
             items.insert(3, ("buildings", "Buildings"))
             items.append(("wardens", "Wardens"))
     elif u.role == "student":
         items = [("home", "Dashboard"), ("my_announcements", "Announcements"), ("student_rooms", "Room directory"), ("my_attendance", "Attendance"),
-                 ("my_leaves", "Leave"), ("my_complaints", "Complaints"), ("my_fees", "Fees"), ("menu", "Meal menu")]
+                 ("my_leaves", "Leave"), ("my_gate_passes", "Gate pass"), ("my_complaints", "Complaints"), ("my_fees", "Fees"), ("menu", "Meal menu")]
     else:
-        items = [("home", "My children"), ("my_fees", "Fees"), ("my_announcements", "Announcements"), ("student_rooms", "Room directory"), ("menu", "Meal menu")]
+        items = [("home", "My children"), ("my_gate_passes", "Gate passes"), ("my_fees", "Fees"), ("my_announcements", "Announcements"), ("student_rooms", "Room directory"), ("menu", "Meal menu")]
 
     # Real-time notifications for the topbar bell icon
     notif_qs = u.notifications.all()

@@ -1,0 +1,190 @@
+{% extends "core/base.html" %}{% block content %}
+<!-- Header -->
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">
+          {% if parent_view %}Ward Gate Passes &amp; Curfew Monitor{% else %}My Gate Passes &amp; Visitor Log{% endif %}
+        </h4>
+        <span class="badge text-bg-primary rounded-pill">
+          {% if parent_view %}Parent Portal{% else %}Resident Portal{% endif %}
+        </span>
+      </div>
+      <div class="text-secondary small">
+        {% if parent_view %}
+          Track your ward's hostel outings, home leaves, curfew check-ins, and optionally confirm gate pass requests.
+        {% else %}
+          Submit Day Outing or Home Leave gate pass requests, download approved pass slips, and review visitor logs.
+        {% endif %}
+      </div>
+    </div>
+    <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary fw-semibold">&larr; Back to Dashboard</a>
+  </div>
+
+  {% if parent_view and all_children|length > 1 %}
+    <div class="d-flex flex-wrap align-items-center gap-1 mt-3 pt-3 border-top">
+      <span class="text-secondary small fw-semibold me-1">Select Ward:</span>
+      <a href="{% url 'my_gate_passes' %}"
+         class="badge {% if not selected_child %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+        All Wards
+      </a>
+      {% for ch in all_children %}
+        <a href="{% url 'my_gate_passes' %}?child={{ ch.pk }}"
+           class="badge {% if selected_child and selected_child.pk == ch.pk %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          {{ ch.user.display_name }} ({{ ch.roll_no }})
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+
+<div class="row g-4 mb-4">
+  {% if not parent_view %}
+    <!-- Student Request Form -->
+    <div class="col-12 col-lg-4">
+      <div class="card p-4 bg-white border-0 shadow-sm h-100">
+        <h5 class="fw-bold mb-3" style="color:var(--navy);">Request Gate Pass</h5>
+        {% if student.is_currently_suspended %}
+          <div class="alert alert-danger small mb-0">
+            <strong>Resident Access Suspended:</strong> New gate pass requests are disabled during suspension.
+          </div>
+        {% else %}
+          <form method="post">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+            {% for fld in form %}
+              <div class="mb-3">
+                <label class="form-label small fw-semibold text-secondary mb-1">{{ fld.label }}</label>
+                {{ fld }}
+                {% if fld.errors %}<div class="text-danger small">{{ fld.errors|join:", " }}</div>{% endif %}
+              </div>
+            {% endfor %}
+            <button type="submit" class="btn btn-navy w-100 fw-semibold">Submit Gate Pass Request</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+
+  <!-- Gate Passes Table -->
+  <div class="col-12 {% if not parent_view %}col-lg-8{% endif %}">
+    <div class="card border-0 shadow-sm bg-white h-100">
+      <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+        <span class="fw-bold" style="color:var(--navy);">Gate Pass History ({{ passes|length }})</span>
+        <span class="text-muted small">Curfew tracking &amp; printable slips</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 small">
+          <thead class="table-light">
+            <tr>
+              <th>Pass{% if parent_view %} / Ward{% endif %}</th>
+              <th>Type</th>
+              <th>Schedule</th>
+              <th>Reason</th>
+              <th>Parent Ack</th>
+              <th>Status</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for gp in passes %}
+              <tr {% if gp.is_curfew_overdue %}class="table-danger"{% endif %}>
+                <td>
+                  <div class="fw-bold text-dark">{{ gp.pass_code }}</div>
+                  {% if parent_view %}
+                    <div class="text-muted" style="font-size:0.74rem;">{{ gp.student.user.display_name }}</div>
+                  {% endif %}
+                </td>
+                <td><span class="badge text-bg-light border text-dark">{{ gp.get_pass_type_display }}</span></td>
+                <td>
+                  <div><b>Out:</b> {{ gp.out_at|date:"d M, h:i A" }}</div>
+                  <div><b>Due:</b> {{ gp.expected_return_at|date:"d M, h:i A" }}</div>
+                  {% if gp.actual_return_at %}
+                    <div class="text-muted"><b>In:</b> {{ gp.actual_return_at|date:"d M, h:i A" }}</div>
+                  {% endif %}
+                </td>
+                <td>{{ gp.reason|truncatechars:40 }}</td>
+                <td>
+                  <span class="badge {% if gp.parent_ack == 'Confirmed' %}text-bg-success{% else %}text-bg-secondary-subtle text-secondary border{% endif %}">
+                    {{ gp.parent_ack }}
+                  </span>
+                </td>
+                <td>
+                  {{ gp.status_badge }}
+                  {% if gp.overdue_display %}
+                    <div class="text-danger fw-bold mt-1" style="font-size:0.72rem;">{{ gp.overdue_display }}</div>
+                  {% endif %}
+                </td>
+                <td class="text-end text-nowrap">
+                  {% if parent_view and gp.parent_ack == "Pending" %}
+                    {% if gp.status == "Pending" or gp.status == "Approved" %}
+                      <form method="post" action="{% url 'gate_pass_parent_ack' gp.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-success py-0 px-2 fw-semibold">Confirm Outing</button>
+                      </form>
+                    {% endif %}
+                  {% endif %}
+                  {% if gp.status == "Approved" or gp.status == "Checked Out" or gp.status == "Returned" or gp.status == "Late" %}
+                    <a href="{% url 'gate_pass_pdf' gp.pk %}" class="btn btn-sm btn-outline-danger py-0 px-2">PDF Slip</a>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="7" class="text-center text-secondary py-5">No gate passes submitted yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Visitor Log Section -->
+<div class="card border-0 shadow-sm bg-white">
+  <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+    <span class="fw-bold" style="color:var(--navy);">Recent Visitor Log ({{ visitors|length }})</span>
+    <span class="text-muted small">Recorded at hostel security gate</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr>
+          <th>Visitor</th>
+          {% if parent_view %}<th>Ward</th>{% endif %}
+          <th>Relation</th>
+          <th>Purpose</th>
+          <th>Checked In</th>
+          <th>Checked Out</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in visitors %}
+          <tr>
+            <td class="fw-semibold text-dark">{{ v.visitor_name }}</td>
+            {% if parent_view %}<td>{{ v.student.user.display_name }}</td>{% endif %}
+            <td><span class="badge text-bg-light border text-secondary">{{ v.relation }}</span></td>
+            <td>{{ v.purpose }}</td>
+            <td>{{ v.checked_in_at|date:"d M Y, h:i A" }}</td>
+            <td>
+              {% if v.checked_out_at %}
+                {{ v.checked_out_at|date:"d M Y, h:i A" }}
+              {% else %}
+                <span class="badge text-bg-primary">Currently Visiting</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="{% if parent_view %}6{% else %}5{% endif %}" class="text-center text-secondary py-4">
+              No visitors logged yet.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

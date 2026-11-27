@@ -1111,6 +1111,7 @@ def home(request):
     children = list(u.parent.children.select_related("user") if hasattr(u, "parent") else [])
     if len(children) == 1:
         return redirect("child", children[0].pk)
+    sync_overdue_gate_passes(m.GatePass.objects.filter(student__in=children))
     child_cards = []
     for c in children:
         today_att = c.attendance.filter(date=today).first()
@@ -1120,6 +1121,8 @@ def home(request):
             "pct": c.attendance_percent(),
             "balance": c.fee_balance,
             "today_status": today_att.status if today_att else None,
+            "active_gate_pass": c.gate_passes.filter(status__in=["Checked Out", "Late"], actual_return_at__isnull=True).first(),
+            "pending_gate_ack": c.gate_passes.filter(parent_ack="Pending", status__in=["Pending", "Approved"]).count(),
         })
     return show(request, "children", children=child_cards, today=today)
 
@@ -1221,6 +1224,14 @@ def overview(s, user):
     notices_qs = _student_notices_qs(s, aud)
     notices = list(notices_qs.select_related("room", "building", "created_by").order_by("-created_at")[:10])
 
+    # Recent gate passes & visitor logs
+    sync_overdue_gate_passes(s.gate_passes.all())
+    recent_gate_passes = list(s.gate_passes.select_related("approved_by")[:4])
+    for gp in recent_gate_passes:
+        gp.status_badge = badge(gp.effective_status)
+    active_gate_pass = s.gate_passes.filter(status__in=["Checked Out", "Late"], actual_return_at__isnull=True).first()
+    recent_visitors = list(s.visitors.all()[:3])
+
     return dict(
         s=s,
         room=room,
@@ -1242,6 +1253,9 @@ def overview(s, user):
         my_complaints=my_complaints_list,
         recent=att_qs[:10],
         recent_leaves=recent_leaves,
+        recent_gate_passes=recent_gate_passes,
+        active_gate_pass=active_gate_pass,
+        recent_visitors=recent_visitors,
         fees=fees,
         wardens=wardens,
         notices=notices,
@@ -3533,6 +3547,108 @@ def my_leaves(request):
     rows = [(date_s(x.from_date), date_s(x.to_date), x.reason, badge(x.status)) for x in s.leaves.all()]
     return show(request, "plain", title="Leave requests", headers=["From", "To", "Reason", "Status"], rows=rows,
                 form=form, form_title="Request leave", button="Send request")
+
+
+@role_required("student", "parent")
+def my_gate_passes(request):
+    """Student self-service gate pass requests & Parent optional confirmation + curfew monitoring."""
+    sync_overdue_gate_passes()
+    u = request.user
+    if u.role == "parent":
+        p = getattr(u, "parent", None)
+        children = list(p.children.select_related("user").all()) if p else []
+        child_id = (request.GET.get("child") or "").strip()
+        selected_child = None
+        if child_id.isdigit():
+            selected_child = next((ch for ch in children if ch.pk == int(child_id)), None)
+        target_students = [selected_child] if selected_child else children
+        passes = list(
+            m.GatePass.objects.filter(student__in=target_students).select_related("student__user", "approved_by")
+        )
+        for gp in passes:
+            gp.status_badge = badge(gp.effective_status)
+        visitors = list(m.VisitorLog.objects.filter(student__in=target_students).select_related("student__user")[:20])
+        return show(
+            request,
+            "my_gate_passes",
+            parent_view=True,
+            all_children=children,
+            selected_child=selected_child,
+            passes=passes,
+            visitors=visitors,
+        )
+
+    s = _mine(request)
+    form = f.GatePassRequestForm(request.POST or None)
+    if request.method == "POST":
+        if s.is_currently_suspended:
+            messages.error(request, "Resident access is currently suspended. Gate pass requests are disabled.")
+            return redirect("my_gate_passes")
+        if form.is_valid():
+            gp = form.save(commit=False)
+            gp.student = s
+            gp.save()
+            staff_recipients = scoped_staff_for_student(s)
+            out_lbl = timezone.localtime(gp.out_at).strftime("%d %b, %I:%M %p")
+            exp_lbl = timezone.localtime(gp.expected_return_at).strftime("%d %b, %I:%M %p")
+            notify_users(
+                recipients=staff_recipients,
+                title=f"New Gate Pass Request: {gp.pass_code}",
+                message=f"{s.user.display_name} ({s.roll_no}) requested {gp.get_pass_type_display()} ({out_lbl} to {exp_lbl}). Reason: {gp.reason}",
+                category="gate",
+                link=reverse("gate_passes"),
+                actor=u,
+            )
+            if s.parent and s.parent.user:
+                notify_user(
+                    recipient=s.parent.user,
+                    title=f"Gate Pass Submitted by {s.user.display_name}",
+                    message=f"{gp.pass_code} ({gp.get_pass_type_display()}) for {out_lbl} -> {exp_lbl}. Optional confirmation available in Parent Portal.",
+                    category="gate",
+                    link=reverse("my_gate_passes"),
+                    actor=u,
+                )
+            messages.success(request, f"Gate pass {gp.pass_code} submitted for warden approval.")
+            return redirect("my_gate_passes")
+
+    passes = list(s.gate_passes.select_related("approved_by").all())
+    for gp in passes:
+        gp.status_badge = badge(gp.effective_status)
+    visitors = list(s.visitors.all()[:15])
+    return show(
+        request,
+        "my_gate_passes",
+        parent_view=False,
+        student=s,
+        form=form,
+        passes=passes,
+        visitors=visitors,
+    )
+
+
+@role_required("parent")
+@require_POST
+def gate_pass_parent_ack(request, pk):
+    gp = get_object_or_404(
+        m.GatePass.objects.select_related("student__user", "student__parent__user"),
+        pk=pk,
+        student__parent__user=request.user,
+    )
+    if gp.parent_ack != "Confirmed":
+        gp.parent_ack = "Confirmed"
+        gp.parent_ack_at = timezone.now()
+        gp.save(update_fields=["parent_ack", "parent_ack_at"])
+        recipients = scoped_staff_for_student(gp.student) + [gp.student.user]
+        notify_users(
+            recipients=recipients,
+            title=f"Parent Confirmed Gate Pass: {gp.pass_code}",
+            message=f"{request.user.display_name} confirmed {gp.student.user.display_name}'s {gp.get_pass_type_display()} ({gp.pass_code}).",
+            category="gate",
+            link=reverse("gate_passes"),
+            actor=request.user,
+        )
+        messages.success(request, f"Confirmed {gp.pass_code} for {gp.student.user.display_name}.")
+    return redirect(request.POST.get("next") or "my_gate_passes")
 
 
 @role_required("student", "parent")

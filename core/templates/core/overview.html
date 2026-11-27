@@ -55,6 +55,9 @@
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'complaints' %}?q={{ s.roll_no }}">
           Complaints
         </a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'gate_passes' %}?q={{ s.roll_no }}">
+          Gate Passes
+        </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'students_edit' s.pk %}">
           Edit Student
         </a>
@@ -82,6 +85,9 @@
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'my_fees' %}?child={{ s.pk }}">
           Fee Details
         </a>
+        <a class="btn btn-sm btn-outline-secondary fw-semibold" href="{% url 'my_gate_passes' %}?child={{ s.pk }}">
+          Gate Passes
+        </a>
         {% if wardens %}
           <a class="btn btn-sm btn-outline-secondary fw-semibold" href="#wardenContacts">
             Warden Contacts
@@ -93,6 +99,9 @@
         </a>
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'my_leaves' %}">
           Request Leave
+        </a>
+        <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'my_gate_passes' %}">
+          Gate Pass
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_complaints' %}">
           Complaints
@@ -647,6 +656,83 @@
           {% endif %}
         </div>
       </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Gate Passes & Curfew Monitor Strip -->
+<div class="card mb-4 bg-white border-0 shadow-sm">
+  <div class="card-header bg-light d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
+    <div>
+      <span class="fw-bold small" style="color:var(--navy);">Gate Passes &amp; Curfew Monitor</span>
+      {% if active_gate_pass %}
+        <span class="badge {% if active_gate_pass.is_curfew_overdue %}text-bg-danger{% else %}text-bg-primary{% endif %} ms-2">
+          {{ active_gate_pass.pass_code }} &middot; {{ active_gate_pass.effective_status }}
+        </span>
+      {% endif %}
+    </div>
+    <div>
+      {% if staff_view %}
+        <a href="{% url 'gate_passes' %}?q={{ s.roll_no }}" class="btn btn-sm btn-outline-primary py-0 px-2 fw-semibold">Manage Gate Passes &rarr;</a>
+      {% elif parent_view %}
+        <a href="{% url 'my_gate_passes' %}?child={{ s.pk }}" class="btn btn-sm btn-outline-primary py-0 px-2 fw-semibold">All Passes &amp; Confirmation &rarr;</a>
+      {% else %}
+        <a href="{% url 'my_gate_passes' %}" class="btn btn-sm btn-outline-primary py-0 px-2 fw-semibold">Request / View Gate Pass &rarr;</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="p-3">
+    {% if active_gate_pass and active_gate_pass.is_curfew_overdue %}
+      <div class="alert alert-danger py-2 px-3 small mb-3">
+        <strong>Late Curfew Alert:</strong> {{ active_gate_pass.pass_code }} was expected back on {{ active_gate_pass.expected_return_at|date:"d M Y, h:i A" }} ({{ active_gate_pass.overdue_display }}).
+      </div>
+    {% endif %}
+    {% if recent_gate_passes %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0 small">
+          <thead class="table-light">
+            <tr>
+              <th>Pass</th>
+              <th>Type</th>
+              <th>Schedule</th>
+              <th>Parent Ack</th>
+              <th>Status</th>
+              <th class="text-end">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for gp in recent_gate_passes %}
+              <tr {% if gp.is_curfew_overdue %}class="table-danger"{% endif %}>
+                <td class="fw-semibold">{{ gp.pass_code }}</td>
+                <td>{{ gp.get_pass_type_display }}</td>
+                <td>{{ gp.out_at|date:"d M, h:i A" }} &rarr; {{ gp.expected_return_at|date:"d M, h:i A" }}</td>
+                <td>
+                  <span class="badge {% if gp.parent_ack == 'Confirmed' %}text-bg-success{% else %}text-bg-light border text-secondary{% endif %}">
+                    {{ gp.parent_ack }}
+                  </span>
+                </td>
+                <td>{{ gp.status_badge }}</td>
+                <td class="text-end text-nowrap">
+                  {% if parent_view and gp.parent_ack == "Pending" %}
+                    {% if gp.status == "Pending" or gp.status == "Approved" %}
+                      <form method="post" action="{% url 'gate_pass_parent_ack' gp.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <button type="submit" class="btn btn-sm btn-success py-0 px-2">Confirm Outing</button>
+                      </form>
+                    {% endif %}
+                  {% endif %}
+                  {% if gp.status == "Approved" or gp.status == "Checked Out" or gp.status == "Returned" or gp.status == "Late" %}
+                    <a href="{% url 'gate_pass_pdf' gp.pk %}" class="btn btn-sm btn-outline-danger py-0 px-2">PDF</a>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted small text-center py-2">No recent gate passes recorded.</div>
     {% endif %}
   </div>
 </div>
