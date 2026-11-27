@@ -3121,6 +3121,93 @@ def gate_pass_pdf(request, pk):
 
 
 @staff
+def visitors_list(request):
+    """Building-scoped visitor register with check-in logging and 1-click check-out."""
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+    form = f.VisitorLogForm(request.POST or None, building=active_building)
+    if request.method == "POST" and form.is_valid():
+        d = form.cleaned_data
+        _assert_building_access(request, student=d["student"])
+        try:
+            v = log_visitor_checkin(
+                student=d["student"],
+                visitor_name=d["visitor_name"],
+                relation=d["relation"],
+                phone=d["phone"],
+                purpose=d["purpose"],
+                id_proof_last4=d.get("id_proof_last4", ""),
+                actor=request.user,
+            )
+            messages.success(request, f"Logged visitor '{v.visitor_name}' for {v.student.user.display_name}.")
+            dest = reverse("visitors")
+            if active_building and not is_building_locked:
+                dest += f"?building={active_building.code}"
+            return redirect(dest)
+        except ValidationError as e:
+            form.add_error(None, getattr(e, "messages", [str(e)])[0])
+
+    status_filter = (request.GET.get("status") or "").strip()
+    q = (request.GET.get("q") or "").strip()
+
+    all_visitors = list(
+        m.VisitorLog.objects.select_related("student__user", "recorded_by")
+        .prefetch_related(
+            Prefetch("student__allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+        )
+    )
+    if active_building:
+        all_visitors = [v for v in all_visitors if _student_matches_building(v.student, active_building)]
+
+    total_count = len(all_visitors)
+    active_visitors_count = sum(1 for v in all_visitors if v.is_active_visit)
+
+    visitors = all_visitors
+    if status_filter == "active":
+        visitors = [v for v in visitors if v.is_active_visit]
+    elif status_filter == "checked_out":
+        visitors = [v for v in visitors if not v.is_active_visit]
+
+    if q:
+        ql = q.lower()
+        visitors = [
+            v for v in visitors
+            if ql in v.visitor_name.lower()
+            or ql in v.relation.lower()
+            or ql in v.phone.lower()
+            or ql in v.purpose.lower()
+            or ql in v.student.user.display_name.lower()
+            or ql in v.student.roll_no.lower()
+        ]
+
+    return show(
+        request,
+        "visitors_list",
+        form=form,
+        visitors=visitors,
+        total_count=total_count,
+        active_visitors_count=active_visitors_count,
+        filter_status=status_filter,
+        filter_q=q,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
+    )
+
+
+@staff
+@require_POST
+def visitor_checkout(request, pk):
+    v = get_object_or_404(m.VisitorLog.objects.select_related("student__user"), pk=pk)
+    _assert_building_access(request, student=v.student)
+    try:
+        perform_visitor_checkout(v, actor=request.user)
+        messages.success(request, f"Checked out visitor '{v.visitor_name}'.")
+    except ValidationError as e:
+        messages.error(request, getattr(e, "messages", [str(e)])[0])
+    return redirect(request.POST.get("next") or "visitors")
+
+
+@staff
 def reports(request):
     buildings, active_building, is_building_locked = _get_building_scope(request)
     year_filter = (request.GET.get("year") or "").strip()
