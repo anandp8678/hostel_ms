@@ -2880,10 +2880,14 @@ class RoomTypePricingTests(TestCase):
         self.s_unalloc.refresh_from_db()
         self.assertEqual(self.s_unalloc.room, r_b1_new_1s)
 
-        # Head warden dashboard & reports show room-type breakdown
+        # Head warden dashboard & reports show room-type breakdown nested inside each building card
         c.force_login(self.head_warden)
-        self.assertContains(c.get(reverse("home")), "1 Sharing Rooms")
-        self.assertContains(c.get(reverse("reports")), "Room Sharing Tiers")
+        dash_resp = c.get(reverse("home"))
+        self.assertContains(dash_resp, "building=B1&room_type=1_sharing")
+        self.assertNotContains(dash_resp, "1 Sharing Rooms")
+        rep_resp = c.get(reverse("reports"))
+        self.assertContains(rep_resp, "building=B2&room_type=3_sharing")
+        self.assertNotContains(rep_resp, "Room Sharing Tiers")
 
     def test_seed_demo_command_populates_varied_room_types(self):
         from django.core.management import call_command
@@ -2895,3 +2899,91 @@ class RoomTypePricingTests(TestCase):
         self.assertTrue(Student.objects.filter(preferred_room_type="1_sharing").exists())
         self.assertTrue(Fee.objects.filter(rent_amount=Decimal("2200.00")).exists() or Fee.objects.filter(rent_amount=Decimal("3000.00")).exists())
         self.assertTrue(Fee.objects.filter(rent_amount=Decimal("3500.00")).exists() or Fee.objects.filter(rent_amount=Decimal("2000.00")).exists())
+
+
+class BuildingRoomTypePlacementTests(TestCase):
+    """Verify 1/2/3 sharing tiers are nested inside every building card on Dashboard, Buildings, and Reports."""
+
+    def setUp(self):
+        self.b1, _ = Building.objects.get_or_create(
+            code="B1",
+            defaults={"name": "First Year Block", "allowed_years": "1", "is_first_year_only": True},
+        )
+        self.b2, _ = Building.objects.get_or_create(
+            code="B2",
+            defaults={"name": "Senior Block", "allowed_years": "2,3,4", "is_first_year_only": False},
+        )
+        self.admin_u = User.objects.create_superuser(
+            username="brt_admin", password="Pass@1234", role="admin", first_name="Super", last_name="Admin"
+        )
+        self.head_warden = User.objects.create_user(
+            username="brt_headwarden", password="Pass@1234", role="warden", is_staff=True, first_name="Head", last_name="Warden"
+        )
+        self.fy_warden = User.objects.create_user(
+            username="brt_fywarden", password="Pass@1234", role="warden", is_staff=True, assigned_building=self.b1, first_name="FY", last_name="Warden"
+        )
+        self.cfg = FeeConfig.get_config()
+        self.cfg.rent_1_sharing = Decimal("3500.00")
+        self.cfg.rent_2_sharing = Decimal("2200.00")
+        self.cfg.rent_3_sharing = Decimal("1600.00")
+        self.cfg.save()
+
+        self.r_b1_1s = Room.objects.create(building=self.b1, block="G", number="701", room_type="1_sharing")
+        self.r_b1_2s = Room.objects.create(building=self.b1, block="G", number="702", room_type="2_sharing")
+        self.r_b2_3s = Room.objects.create(building=self.b2, block="1", number="703", room_type="3_sharing")
+
+        onboard_student("FY Single", "BRT101", "CSE", "9800001101", room=self.r_b1_1s, year_of_study=1)
+        onboard_student("SR Triple", "BRT201", "ECE", "9800002101", room=self.r_b2_3s, year_of_study=3)
+
+    def test_dashboard_shows_room_types_inside_building_cards(self):
+        c = Client()
+        c.force_login(self.admin_u)
+
+        resp_all = c.get(reverse("home"))
+        self.assertEqual(resp_all.status_code, 200)
+        self.assertContains(resp_all, "building=B1&room_type=1_sharing")
+        self.assertContains(resp_all, "building=B2&room_type=3_sharing")
+        self.assertNotContains(resp_all, "1 Sharing Rooms")
+
+        # Filtering to a single building keeps its card + nested 1/2/3 sharing tiers visible
+        resp_b1 = c.get(f"{reverse('home')}?building=B1")
+        self.assertEqual(resp_b1.status_code, 200)
+        self.assertContains(resp_b1, "building=B1&room_type=1_sharing")
+        self.assertContains(resp_b1, "building=B1&room_type=2_sharing")
+        self.assertNotContains(resp_b1, "building=B2&room_type=3_sharing")
+
+        # Building-locked First-Year Warden sees B1 card with nested sharing tiers and zero B2 leakage
+        c.force_login(self.fy_warden)
+        resp_fy = c.get(reverse("home"))
+        self.assertEqual(resp_fy.status_code, 200)
+        self.assertContains(resp_fy, "building=B1&room_type=1_sharing")
+        self.assertNotContains(resp_fy, "building=B2&room_type=3_sharing")
+
+    def test_buildings_page_and_reports_nest_room_types_per_building(self):
+        c = Client()
+        c.force_login(self.admin_u)
+
+        bld_resp = c.get(reverse("buildings"))
+        self.assertEqual(bld_resp.status_code, 200)
+        self.assertContains(bld_resp, "Room Types &amp; Pricing Inside B1:")
+        self.assertContains(bld_resp, "Room Types &amp; Pricing Inside B2:")
+        self.assertContains(bld_resp, "building=B1&room_type=1_sharing")
+        self.assertContains(bld_resp, "building=B2&room_type=3_sharing")
+
+        # Bulk-add link from building card works cleanly with ?building=B1
+        bulk_resp = c.get(f"{reverse('rooms_bulk_add')}?building=B1")
+        self.assertEqual(bulk_resp.status_code, 200)
+
+        rep_resp = c.get(reverse("reports"))
+        self.assertEqual(rep_resp.status_code, 200)
+        self.assertContains(rep_resp, "building=B1&room_type=1_sharing")
+        self.assertContains(rep_resp, "building=B2&room_type=3_sharing")
+        self.assertContains(rep_resp, "Export Unified Fees PDF")
+        self.assertNotContains(rep_resp, "Room Sharing Tiers")
+
+        # FY Warden reports view shows only B1 nested room types
+        c.force_login(self.fy_warden)
+        fy_rep = c.get(reverse("reports"))
+        self.assertEqual(fy_rep.status_code, 200)
+        self.assertContains(fy_rep, "building=B1&room_type=1_sharing")
+        self.assertNotContains(fy_rep, "building=B2&room_type=3_sharing")
