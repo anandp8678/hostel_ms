@@ -1,6 +1,8 @@
+from datetime import timedelta
 import re
 
 from django import forms
+from django.utils import timezone
 
 from . import models as m
 from .services import onboard_student
@@ -19,7 +21,10 @@ class BS:
                 w.attrs["class"] = "form-select"
             else:
                 w.attrs["class"] = "form-control"
-            if isinstance(w, forms.DateInput):
+            if isinstance(w, forms.DateTimeInput):
+                w.input_type = "datetime-local"
+                w.format = "%Y-%m-%dT%H:%M"
+            elif isinstance(w, forms.DateInput):
                 w.input_type = "date"
                 w.format = "%Y-%m-%d"
 
@@ -28,7 +33,10 @@ class DateMixin:
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
         for f in self.fields.values():
-            if isinstance(f, forms.DateField):
+            if isinstance(f, forms.DateTimeField):
+                f.widget = forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"})
+                f.input_formats = ["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"]
+            elif isinstance(f, forms.DateField):
                 f.widget = forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"})
 
 
@@ -492,3 +500,63 @@ class WardenEditForm(MF):
             self.fields["assigned_building"].queryset = m.Building.objects.filter(is_active=True)
             self.fields["assigned_building"].required = False
             self.fields["assigned_building"].empty_label = "Head Warden (Full Access - All Buildings)"
+
+
+class GatePassRequestForm(MF):
+    class Meta:
+        model = m.GatePass
+        fields = ["pass_type", "out_at", "expected_return_at", "reason"]
+        labels = {
+            "pass_type": "Pass Type",
+            "out_at": "Planned Departure (Date & Time)",
+            "expected_return_at": "Expected Return / Curfew (Date & Time)",
+            "reason": "Reason / Destination",
+        }
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        if not self.is_bound and not (self.instance and self.instance.pk):
+            now = timezone.localtime(timezone.now()).replace(second=0, microsecond=0)
+            self.fields["out_at"].initial = (now + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M")
+            self.fields["expected_return_at"].initial = (now + timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M")
+
+    def clean(self):
+        cd = super().clean()
+        out_at = cd.get("out_at")
+        exp = cd.get("expected_return_at")
+        if out_at and exp and exp <= out_at:
+            self.add_error("expected_return_at", "Expected return date & time must be after departure time.")
+        return cd
+
+
+class VisitorLogForm(MF):
+    class Meta:
+        model = m.VisitorLog
+        fields = ["student", "visitor_name", "relation", "phone", "purpose", "id_proof_last4"]
+        labels = {
+            "student": "Resident Being Visited",
+            "visitor_name": "Visitor Full Name",
+            "relation": "Relation to Resident",
+            "phone": "Visitor Mobile / Phone",
+            "purpose": "Purpose of Visit",
+            "id_proof_last4": "ID Proof Reference (Last 4 Digits)",
+        }
+
+    def __init__(self, *a, **k):
+        scoped_building = k.pop("building", None)
+        super().__init__(*a, **k)
+        qs = m.Student.objects.filter(is_active=True, is_suspended=False).select_related("user")
+        if scoped_building is not None:
+            allowed = scoped_building.allowed_years_list
+            scoped_ids = [
+                s.pk for s in qs
+                if (s.room and s.room.building_id == scoped_building.pk)
+                or (not s.room and (s.year_of_study == 1 if scoped_building.is_first_year_only else s.year_of_study in allowed))
+            ]
+            qs = qs.filter(pk__in=scoped_ids)
+        self.fields["student"].queryset = qs
+        self.fields["visitor_name"].widget.attrs["placeholder"] = "e.g. Rajesh Kumar"
+        self.fields["relation"].widget.attrs["placeholder"] = "e.g. Father, Uncle, Friend"
+        self.fields["phone"].widget.attrs["placeholder"] = "10-digit mobile number"
+        self.fields["purpose"].widget.attrs["placeholder"] = "e.g. Family visit / Dropping luggage"
+        self.fields["id_proof_last4"].widget.attrs["placeholder"] = "Last 4 digits of Aadhaar / PAN / DL"
