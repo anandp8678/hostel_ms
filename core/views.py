@@ -290,23 +290,8 @@ V["buildings"] = crud("buildings", m.Building, f.BuildingForm, "Buildings", [
 
 @role_required("admin")
 def buildings_list(request):
-    buildings = list(m.Building.objects.prefetch_related("rooms", "wardens").order_by("code", "name"))
-    building_cards = []
-    for b in buildings:
-        rooms = list(b.rooms.all())
-        cap = sum(r.capacity for r in rooms)
-        occ = m.RoomAllocation.objects.filter(room__building=b, end_date__isnull=True).count()
-        vac = sum(r.vacancy for r in rooms)
-        pct = round(100 * occ / cap) if cap > 0 else 0
-        building_cards.append({
-            "building": b,
-            "rooms_count": len(rooms),
-            "capacity": cap,
-            "occupied": occ,
-            "vacant": vac,
-            "occupancy_pct": pct,
-            "wardens": [w for w in b.wardens.filter(role="warden", is_active=True)],
-        })
+    buildings = list(m.Building.objects.prefetch_related("wardens").order_by("code", "name"))
+    building_cards = _build_building_summaries(buildings, include_wardens=True)
     return show(request, "buildings_list", buildings=buildings, building_cards=building_cards)
 
 
@@ -913,6 +898,53 @@ def _build_room_type_summary(rooms, cfg=None):
     return rows
 
 
+def _build_building_summaries(target_buildings, rooms=None, students=None, cfg=None, include_wardens=False):
+    """Build per-building occupancy totals and embedded 1/2/3 sharing tier breakdowns."""
+    cfg = cfg or m.FeeConfig.get_config()
+    if rooms is None:
+        rooms = list(
+            m.Room.objects.select_related("building").prefetch_related(
+                Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
+            )
+        )
+    rooms_by_bld = {}
+    for r in rooms:
+        if r.building_id:
+            rooms_by_bld.setdefault(r.building_id, []).append(r)
+
+    summaries = []
+    for b in target_buildings:
+        b_rooms = rooms_by_bld.get(b.pk, [])
+        b_beds = sum(r.capacity for r in b_rooms)
+        b_occ = sum(r.occupied for r in b_rooms)
+        b_blk = sum(r.capacity for r in b_rooms if r.is_blacklisted)
+        b_eff = max(0, b_beds - b_blk)
+        b_vac = max(0, b_eff - b_occ)
+        b_pct = round(100 * b_occ / b_eff) if b_eff > 0 else 0
+        b_students = (
+            sum(1 for s in students if s.is_active and _student_matches_building(s, b))
+            if students is not None
+            else 0
+        )
+        summaries.append({
+            "building": b,
+            "rooms": len(b_rooms),
+            "rooms_count": len(b_rooms),
+            "capacity": b_beds,
+            "total_beds": b_beds,
+            "occupied": b_occ,
+            "occupied_beds": b_occ,
+            "vacant": b_vac,
+            "free_beds": b_vac,
+            "pct": b_pct,
+            "occupancy_pct": b_pct,
+            "students": b_students,
+            "wardens": [w for w in b.wardens.filter(role="warden", is_active=True)] if include_wardens else [],
+            "room_type_summary": _build_room_type_summary(b_rooms, cfg=cfg),
+        })
+    return summaries
+
+
 @login_required
 def home(request):
     u = request.user
@@ -1006,27 +1038,13 @@ def home(request):
         # Today's menu
         today_menu = list(m.MealMenu.objects.filter(day=today.weekday()))
 
-        # Per-building overview strip when viewing all buildings
-        building_summaries = []
-        if active_building is None and len(buildings) > 1:
-            all_db_rooms = list(m.Room.objects.select_related("building").prefetch_related(
-                Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
-            ))
-            for b in buildings:
-                b_rooms = [r for r in all_db_rooms if r.building_id == b.pk]
-                b_cap = sum(r.capacity for r in b_rooms)
-                b_occ = sum(r.occupied for r in b_rooms)
-                b_vac = sum(r.vacancy for r in b_rooms)
-                b_students = sum(1 for s in all_students if s.is_active and _student_matches_building(s, b))
-                building_summaries.append({
-                    "building": b,
-                    "rooms": len(b_rooms),
-                    "capacity": b_cap,
-                    "occupied": b_occ,
-                    "vacant": b_vac,
-                    "students": b_students,
-                    "pct": round(100 * b_occ / b_cap) if b_cap > 0 else 0,
-                })
+        # Per-building summary cards (with nested 1/2/3 sharing breakdown inside each building)
+        target_buildings = [active_building] if active_building is not None else buildings
+        building_summaries = _build_building_summaries(
+            target_buildings,
+            rooms=all_rooms,
+            students=all_students,
+        )
 
         # Backward compatibility for any template referencing stats
         stats = [
@@ -3016,25 +3034,15 @@ def reports(request):
             w.writerows(att_rows)
         return resp
 
-    # Building summaries
+    # Scoped rooms shared across building summaries, tier breakdown, and floor table
     target_buildings = [active_building] if active_building else buildings
-    building_summaries = []
-    for bld in target_buildings:
-        b_rooms = list(m.Room.objects.filter(building=bld).prefetch_related(
-            Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
-        ))
-        b_beds = sum(r.capacity for r in b_rooms)
-        b_occ = sum(r.occupied for r in b_rooms)
-        b_blk = sum(r.capacity for r in b_rooms if r.is_blacklisted)
-        b_eff = max(0, b_beds - b_blk)
-        building_summaries.append({
-            "building": bld,
-            "total_rooms": len(b_rooms),
-            "total_beds": b_beds,
-            "occupied_beds": b_occ,
-            "free_beds": max(0, b_eff - b_occ),
-            "occupancy_pct": round(100 * b_occ / b_eff) if b_eff > 0 else 0,
-        })
+    room_qs = m.Room.objects.select_related("building").prefetch_related(
+        Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
+    )
+    if active_building:
+        room_qs = room_qs.filter(building=active_building)
+    scoped_rooms = list(room_qs)
+    building_summaries = _build_building_summaries(target_buildings, rooms=scoped_rooms)
 
     # Year-wise fee breakdown
     year_fee_summaries = []
@@ -3054,12 +3062,6 @@ def reports(request):
         })
 
     floors = {}
-    room_qs = m.Room.objects.select_related("building").prefetch_related(
-        Prefetch("allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True))
-    )
-    if active_building:
-        room_qs = room_qs.filter(building=active_building)
-    scoped_rooms = list(room_qs)
     for r in scoped_rooms:
         key = (r.building.code if r.building else "", r.block)
         label = f"{r.building.code} · {r.floor_display}" if (r.building and not active_building) else r.floor_display
