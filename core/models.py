@@ -6,6 +6,7 @@ from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Sum
+from django.utils import timezone
 
 
 ROOM_TYPE_CHOICES = [
@@ -659,6 +660,7 @@ class Notification(models.Model):
         ("fee", "Fee"),
         ("complaint", "Complaint"),
         ("leave", "Leave"),
+        ("gate", "Gate & Visitors"),
         ("general", "General"),
     ]
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
@@ -679,3 +681,109 @@ class Notification(models.Model):
     @property
     def icon(self):
         return ""
+
+
+class GatePass(models.Model):
+    """Resident gate pass for Day Outing or Home Leave with curfew tracking and optional parent confirmation."""
+
+    PASS_TYPES = [("day_outing", "Day Outing"), ("home_leave", "Home Leave")]
+    PARENT_ACK = [("Pending", "Pending"), ("Confirmed", "Confirmed")]
+    STATUS_CHOICES = [
+        ("Pending", "Pending"),
+        ("Approved", "Approved"),
+        ("Checked Out", "Checked Out"),
+        ("Returned", "Returned"),
+        ("Late", "Late"),
+        ("Rejected", "Rejected"),
+    ]
+
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="gate_passes")
+    pass_type = models.CharField(max_length=15, choices=PASS_TYPES, default="day_outing")
+    out_at = models.DateTimeField("Out date & time")
+    expected_return_at = models.DateTimeField("Expected return date & time")
+    actual_return_at = models.DateTimeField("Actual return date & time", null=True, blank=True)
+    reason = models.CharField(max_length=255)
+    parent_ack = models.CharField(max_length=15, choices=PARENT_ACK, default="Pending")
+    parent_ack_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="Pending")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.pass_code} · {self.student} ({self.get_pass_type_display()})"
+
+    @property
+    def pass_code(self):
+        return f"GP-{self.pk:04d}" if self.pk else "GP-NEW"
+
+    @property
+    def is_curfew_overdue(self):
+        return bool(
+            self.actual_return_at is None
+            and self.status in ("Checked Out", "Late")
+            and self.expected_return_at
+            and timezone.now() > self.expected_return_at
+        )
+
+    @property
+    def effective_status(self):
+        return "Late" if self.is_curfew_overdue else self.status
+
+    @property
+    def minutes_overdue(self):
+        if not self.expected_return_at:
+            return 0
+        if self.actual_return_at:
+            ref = self.actual_return_at
+        elif self.status in ("Checked Out", "Late"):
+            ref = timezone.now()
+        else:
+            return 0
+        if ref <= self.expected_return_at:
+            return 0
+        return max(1, int((ref - self.expected_return_at).total_seconds() // 60))
+
+    @property
+    def overdue_display(self):
+        mins = self.minutes_overdue
+        if mins <= 0:
+            return ""
+        hrs, rem = divmod(mins, 60)
+        if hrs > 0:
+            return f"{hrs}h {rem}m overdue"
+        return f"{rem}m overdue"
+
+    def clean(self):
+        if self.out_at and self.expected_return_at and self.expected_return_at <= self.out_at:
+            raise ValidationError("Expected return date & time must be after out date & time.")
+
+
+class VisitorLog(models.Model):
+    """Hostel visitor register tracking campus/hostel check-ins and check-outs."""
+
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="visitors")
+    visitor_name = models.CharField(max_length=120)
+    relation = models.CharField(max_length=60)
+    phone = models.CharField(max_length=20)
+    purpose = models.CharField(max_length=255)
+    id_proof_last4 = models.CharField("ID proof (last 4 chars)", max_length=20, blank=True)
+    checked_in_at = models.DateTimeField(default=timezone.now)
+    checked_out_at = models.DateTimeField(null=True, blank=True)
+    recorded_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        ordering = ["-checked_in_at"]
+
+    def __str__(self):
+        return f"{self.visitor_name} visiting {self.student}"
+
+    @property
+    def is_active_visit(self):
+        return self.checked_out_at is None
+
+    def clean(self):
+        if self.checked_in_at and self.checked_out_at and self.checked_out_at < self.checked_in_at:
+            raise ValidationError("Visitor check-out time cannot be earlier than check-in time.")
