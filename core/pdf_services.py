@@ -1,6 +1,9 @@
 import io
 from datetime import date, datetime
 from decimal import Decimal
+from xml.sax.saxutils import escape
+
+from django.utils import timezone
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -523,4 +526,97 @@ def generate_fee_invoice_pdf(fee, current_user=None):
     story.append(KeepTogether(auth_table))
 
     doc.build(story, canvasmaker=NumberedCanvas)
+    return buf.getvalue()
+
+
+def generate_gate_pass_pdf(gate_pass):
+    """Generate a single-page Official Hostel Gate Pass Slip (Day Outing / Home Leave)."""
+    s = gate_pass.student
+    room_obj = s.room
+    room_str = str(room_obj) if room_obj else "Unallocated"
+    bld_str = room_obj.building.name if (room_obj and room_obj.building) else "Unassigned"
+    parent_user = getattr(getattr(s, "parent", None), "user", None)
+    parent_str = parent_user.display_name if parent_user else "Not registered"
+    parent_phone = parent_user.phone if (parent_user and parent_user.phone) else "—"
+
+    out_local = timezone.localtime(gate_pass.out_at).strftime("%d %b %Y, %I:%M %p")
+    exp_local = timezone.localtime(gate_pass.expected_return_at).strftime("%d %b %Y, %I:%M %p")
+    actual_local = (
+        timezone.localtime(gate_pass.actual_return_at).strftime("%d %b %Y, %I:%M %p")
+        if gate_pass.actual_return_at
+        else "Pending Check-In"
+    )
+    eff_status = gate_pass.effective_status
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=36, bottomMargin=36)
+    styles = get_styles()
+    story = []
+
+    hdr_data = [
+        [
+            Paragraph("<b>HOSTEL MANAGEMENT SYSTEM</b>", ParagraphStyle("GPTitle", fontName="Helvetica-Bold", fontSize=15, textColor=colors.HexColor("#0b2545"))),
+            Paragraph(f"<b>OFFICIAL GATE PASS</b><br/><font size=8 color='#64748b'>Pass No: {gate_pass.pass_code}</font>", styles["TableCellRightBold"]),
+        ],
+        [
+            Paragraph(f"{escape(gate_pass.get_pass_type_display())} &amp; Curfew Verification Slip", ParagraphStyle("GPSub", fontName="Helvetica", fontSize=9, textColor=colors.HexColor("#64748b"))),
+            Paragraph(f"Issued: <b>{timezone.localtime(timezone.now()).strftime('%d %b %Y, %I:%M %p')}</b>", styles["TableCellRight"]),
+        ],
+    ]
+    hdr_table = Table(hdr_data, colWidths=[330, 185])
+    hdr_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+    story.append(hdr_table)
+    story.append(Spacer(1, 6))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#0b2545")))
+    story.append(Spacer(1, 12))
+
+    info_data = [
+        [Paragraph("<b>RESIDENT DETAILS</b>", styles["TableCellBold"]), Paragraph("<b>PASS &amp; CURFEW SCHEDULE</b>", styles["TableCellBold"])],
+        [Paragraph(f"<b>Name:</b> {escape(s.user.display_name)}", styles["TableCell"]), Paragraph(f"<b>Pass Type:</b> {escape(gate_pass.get_pass_type_display())}", styles["TableCell"])],
+        [Paragraph(f"<b>Roll No / Year:</b> {escape(s.roll_no)} ({escape(getattr(s, 'year_short', ''))})", styles["TableCell"]), Paragraph(f"<b>Status:</b> <b>{escape(eff_status)}</b>", styles["TableCellBold"])],
+        [Paragraph(f"<b>Room / Building:</b> {escape(room_str)} · {escape(bld_str)}", styles["TableCell"]), Paragraph(f"<b>Out Time:</b> {out_local}", styles["TableCell"])],
+        [Paragraph(f"<b>Parent / Contact:</b> {escape(parent_str)} ({escape(parent_phone)})", styles["TableCell"]), Paragraph(f"<b>Curfew / Return By:</b> {exp_local}", styles["TableCell"])],
+        [Paragraph(f"<b>Parent Confirmation:</b> {escape(gate_pass.parent_ack)}", styles["TableCell"]), Paragraph(f"<b>Actual Return:</b> {actual_local}", styles["TableCell"])],
+    ]
+    info_table = Table(info_data, colWidths=[255, 260])
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8f1fb")),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
+        ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#cbd5e1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 14))
+
+    approver_name = gate_pass.approved_by.display_name if gate_pass.approved_by else "Pending Staff Approval"
+    overdue_line = f"<br/><b>Curfew Alert:</b> {escape(gate_pass.overdue_display)}" if gate_pass.overdue_display else ""
+    detail_data = [
+        [Paragraph("<b>Stated Reason / Destination</b>", styles["TableHeader"]), Paragraph("<b>Authorized By &amp; Gate Verification</b>", styles["TableHeader"])],
+        [
+            Paragraph(f"{escape(gate_pass.reason)}{overdue_line}", styles["TableCell"]),
+            Paragraph(
+                f"<b>Approving Officer:</b> {escape(approver_name)}<br/><br/>"
+                "Gate Security Check-Out / Check-In Sign:<br/><br/>____________________________",
+                styles["TableCell"],
+            ),
+        ],
+    ]
+    detail_table = Table(detail_data, colWidths=[280, 235])
+    detail_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0b2545")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#cbd5e1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ("VALIGN", (0, 1), (-1, 1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(detail_table)
+    doc.build(story)
     return buf.getvalue()
