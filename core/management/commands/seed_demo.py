@@ -103,8 +103,8 @@ class Command(BaseCommand):
         now = timezone.now()
         warden_user = m.User.objects.filter(username="warden").first()
         fy_warden_user = m.User.objects.filter(username="fywarden").first()
-        b1_students = [s for s in students if s.building_id == b1.id] or students[:2]
-        b2_students = [s for s in students if s.building_id != b1.id] or students[2:4]
+        b1_students = [s for s in students if s.building and s.building.pk == b1.pk] or students[:2]
+        b2_students = [s for s in students if s.building and s.building.pk != b1.pk] or students[2:4]
         s_fy_1 = b1_students[0]
         s_fy_2 = b1_students[1] if len(b1_students) > 1 else b1_students[0]
         s_sr_1 = b2_students[0]

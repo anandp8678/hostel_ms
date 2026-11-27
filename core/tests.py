@@ -6,10 +6,29 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from core.models import Announcement, Attendance, Building, Complaint, Fee, FeeConfig, LeaveRequest, MealMenu, Notification, Parent, Room, RoomAllocation, Student, User
+from core.models import (
+    Announcement,
+    Attendance,
+    Building,
+    Complaint,
+    Fee,
+    FeeConfig,
+    GatePass,
+    LeaveRequest,
+    MealMenu,
+    Notification,
+    Parent,
+    Room,
+    RoomAllocation,
+    Student,
+    User,
+    VisitorLog,
+)
 from core.services import (
     allocate_student_to_room,
     bulk_create_rooms,
@@ -2987,3 +3006,421 @@ class BuildingRoomTypePlacementTests(TestCase):
         self.assertEqual(fy_rep.status_code, 200)
         self.assertContains(fy_rep, "building=B1&room_type=1_sharing")
         self.assertNotContains(fy_rep, "building=B2&room_type=3_sharing")
+
+
+class GatePassAndVisitorTests(TestCase):
+    def setUp(self):
+        self.b1, _ = Building.objects.get_or_create(
+            code="B1",
+            defaults={
+                "name": "First Year Block",
+                "description": "Dedicated residential block for 1st-year students",
+                "is_first_year_only": True,
+            },
+        )
+        self.b2, _ = Building.objects.get_or_create(
+            code="B2",
+            defaults={
+                "name": "Senior Block",
+                "description": "Residential block for 2nd, 3rd, and 4th-year students",
+                "is_first_year_only": False,
+            },
+        )
+        self.admin_u = User.objects.create_superuser(
+            username="gate_admin", password="Pass@1234", role="admin", first_name="Gate", last_name="Admin"
+        )
+        self.head_warden = User.objects.create_user(
+            username="gate_warden", password="Pass@1234", role="warden", is_staff=True, first_name="Head", last_name="Warden"
+        )
+        self.fy_warden = User.objects.create_user(
+            username="gate_fywarden",
+            password="Pass@1234",
+            role="warden",
+            is_staff=True,
+            assigned_building=self.b1,
+            first_name="First",
+            last_name="Warden",
+        )
+        self.r_b1 = Room.objects.create(building=self.b1, block="G", number="801", room_type="2_sharing")
+        self.r_b2 = Room.objects.create(building=self.b2, block="1", number="802", room_type="3_sharing")
+
+        self.parent1_u = User.objects.create_user(
+            username="gp_parent_1", password="Pass@1234", role="parent", phone="9811112222", first_name="Ramesh", last_name="Sharma"
+        )
+        self.parent1 = Parent.objects.create(user=self.parent1_u)
+        self.s1_u = User.objects.create_user(
+            username="gp_student_1", password="Pass@1234", role="student", phone="9800001001", first_name="Aarav", last_name="Sharma"
+        )
+        self.s1 = Student.objects.create(
+            user=self.s1_u,
+            roll_no="GP101",
+            course="B.Tech CSE",
+            year_of_study=1,
+            parent=self.parent1,
+        )
+        allocate_student_to_room(self.s1, self.r_b1)
+
+        self.parent2_u = User.objects.create_user(
+            username="gp_parent_2", password="Pass@1234", role="parent", phone="9822223333", first_name="Sunita", last_name="Verma"
+        )
+        self.parent2 = Parent.objects.create(user=self.parent2_u)
+        self.s2_u = User.objects.create_user(
+            username="gp_student_2", password="Pass@1234", role="student", phone="9800002001", first_name="Karan", last_name="Verma"
+        )
+        self.s2 = Student.objects.create(
+            user=self.s2_u,
+            roll_no="GP201",
+            course="B.Tech ECE",
+            year_of_study=3,
+            parent=self.parent2,
+        )
+        allocate_student_to_room(self.s2, self.r_b2)
+
+    def test_gate_pass_and_visitor_model_validation(self):
+        now = timezone.now()
+        invalid_gp = GatePass(
+            student=self.s1,
+            pass_type="day_outing",
+            out_at=now + timedelta(hours=3),
+            expected_return_at=now + timedelta(hours=1),
+            reason="Return before out",
+        )
+        with self.assertRaises(ValidationError):
+            invalid_gp.full_clean()
+
+        valid_gp = GatePass.objects.create(
+            student=self.s1,
+            pass_type="day_outing",
+            out_at=now + timedelta(hours=1),
+            expected_return_at=now + timedelta(hours=5),
+            reason="Bookstore visit",
+        )
+        self.assertEqual(valid_gp.pass_code, f"GP-{valid_gp.pk:04d}")
+
+        from core.forms import GatePassRequestForm, VisitorLogForm
+        local_now = timezone.localtime(now)
+        bad_gp_form = GatePassRequestForm(
+            data={
+                "pass_type": "day_outing",
+                "out_at": (local_now + timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M"),
+                "expected_return_at": (local_now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
+                "reason": "Invalid interval",
+            }
+        )
+        self.assertFalse(bad_gp_form.is_valid())
+
+        bad_visitor_form = VisitorLogForm(
+            data={
+                "student": str(self.s1.pk),
+                "visitor_name": "",
+                "relation": "Uncle",
+                "phone": "",
+                "purpose": "Package dropoff",
+                "id_proof_last4": "4821",
+            }
+        )
+        self.assertFalse(bad_visitor_form.is_valid())
+        self.assertIn("visitor_name", bad_visitor_form.errors)
+        self.assertIn("phone", bad_visitor_form.errors)
+
+    def test_full_gate_pass_lifecycle_optional_parent_ack_and_notifications(self):
+        c_student = Client()
+        c_student.force_login(self.s1_u)
+        c_parent = Client()
+        c_parent.force_login(self.parent1_u)
+        c_warden = Client()
+        c_warden.force_login(self.fy_warden)
+
+        now = timezone.localtime(timezone.now())
+        out_dt = now - timedelta(minutes=10)
+        exp_dt = now + timedelta(hours=4)
+
+        resp_sub = c_student.post(
+            reverse("my_gate_passes"),
+            {
+                "pass_type": "day_outing",
+                "out_at": out_dt.strftime("%Y-%m-%dT%H:%M"),
+                "expected_return_at": exp_dt.strftime("%Y-%m-%dT%H:%M"),
+                "reason": "City hackathon event",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_sub.status_code, 200)
+        gp = GatePass.objects.get(student=self.s1, reason="City hackathon event")
+        self.assertEqual(gp.status, "Pending")
+        self.assertEqual(gp.parent_ack, "Pending")
+        self.assertTrue(
+            Notification.objects.filter(recipient=self.fy_warden, category="gate", title__contains=gp.pass_code).exists()
+        )
+        self.assertTrue(Notification.objects.filter(recipient=self.parent1_u, category="gate").exists())
+
+        # Parent Portal optional confirmation button
+        parent_portal = c_parent.get(reverse("my_gate_passes"))
+        self.assertEqual(parent_portal.status_code, 200)
+        self.assertContains(parent_portal, gp.pass_code)
+        ack_resp = c_parent.post(reverse("gate_pass_parent_ack", args=[gp.pk]), follow=True)
+        self.assertEqual(ack_resp.status_code, 200)
+        gp.refresh_from_db()
+        self.assertEqual(gp.parent_ack, "Confirmed")
+        self.assertIsNotNone(gp.parent_ack_at)
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.fy_warden, category="gate", title=f"Parent Confirmed Gate Pass: {gp.pass_code}"
+            ).exists()
+        )
+
+        # Warden approves pass 1
+        dec_resp = c_warden.post(reverse("gate_pass_decide", args=[gp.pk, "approve"]), follow=True)
+        self.assertEqual(dec_resp.status_code, 200)
+        gp.refresh_from_db()
+        self.assertEqual(gp.status, "Approved")
+        self.assertEqual(gp.approved_by, self.fy_warden)
+
+        # Optional: pass 2 stays Pending parent_ack and Warden can still approve & reject
+        gp_no_ack = GatePass.objects.create(
+            student=self.s1,
+            pass_type="home_leave",
+            out_at=now + timedelta(hours=2),
+            expected_return_at=now + timedelta(days=1),
+            reason="Urgent family travel",
+        )
+        dec2 = c_warden.post(reverse("gate_pass_decide", args=[gp_no_ack.pk, "approve"]), follow=True)
+        self.assertEqual(dec2.status_code, 200)
+        gp_no_ack.refresh_from_db()
+        self.assertEqual(gp_no_ack.parent_ack, "Pending")
+        self.assertEqual(gp_no_ack.status, "Approved")
+
+        gp_rej = GatePass.objects.create(
+            student=self.s1,
+            pass_type="day_outing",
+            out_at=now + timedelta(hours=3),
+            expected_return_at=now + timedelta(hours=7),
+            reason="Late night movie",
+        )
+        c_warden.post(reverse("gate_pass_decide", args=[gp_rej.pk, "reject"]), follow=True)
+        gp_rej.refresh_from_db()
+        self.assertEqual(gp_rej.status, "Rejected")
+
+        # Parent receives instant notifications on Check Out and Check In
+        parent_notif_before = Notification.objects.filter(recipient=self.parent1_u, category="gate").count()
+        out_resp = c_warden.post(reverse("gate_pass_checkout", args=[gp.pk]), follow=True)
+        self.assertEqual(out_resp.status_code, 200)
+        gp.refresh_from_db()
+        self.assertEqual(gp.status, "Checked Out")
+        parent_notif_after_out = Notification.objects.filter(recipient=self.parent1_u, category="gate").count()
+        self.assertEqual(parent_notif_after_out, parent_notif_before + 1)
+
+        in_resp = c_warden.post(reverse("gate_pass_checkin", args=[gp.pk]), follow=True)
+        self.assertEqual(in_resp.status_code, 200)
+        gp.refresh_from_db()
+        self.assertEqual(gp.status, "Returned")
+        self.assertIsNotNone(gp.actual_return_at)
+        parent_notif_after_in = Notification.objects.filter(recipient=self.parent1_u, category="gate").count()
+        self.assertEqual(parent_notif_after_in, parent_notif_after_out + 1)
+
+    def test_curfew_overdue_sync_and_dashboard_late_returns_banner(self):
+        now = timezone.now()
+        late_b1 = GatePass.objects.create(
+            student=self.s1,
+            pass_type="day_outing",
+            out_at=now - timedelta(hours=5),
+            expected_return_at=now - timedelta(minutes=75),
+            reason="Stationery errand",
+            approved_by=self.fy_warden,
+            status="Checked Out",
+        )
+        late_b2 = GatePass.objects.create(
+            student=self.s2,
+            pass_type="day_outing",
+            out_at=now - timedelta(hours=4),
+            expected_return_at=now - timedelta(minutes=45),
+            reason="Lab component pickup",
+            approved_by=self.head_warden,
+            status="Checked Out",
+        )
+
+        # Head Warden sees red Late Returns banner and both passes sync to Late
+        c_head = Client()
+        c_head.force_login(self.head_warden)
+        dash_head = c_head.get(reverse("home"))
+        self.assertEqual(dash_head.status_code, 200)
+        late_b1.refresh_from_db()
+        late_b2.refresh_from_db()
+        self.assertEqual(late_b1.status, "Late")
+        self.assertEqual(late_b2.status, "Late")
+        self.assertContains(dash_head, "lateReturnsBanner")
+        self.assertContains(dash_head, "LATE RETURNS")
+        self.assertContains(dash_head, self.s1.roll_no)
+        self.assertContains(dash_head, self.s2.roll_no)
+
+        # FY Warden sees only B1 late pass in dashboard alert
+        c_fy = Client()
+        c_fy.force_login(self.fy_warden)
+        dash_fy = c_fy.get(reverse("home"))
+        self.assertEqual(dash_fy.status_code, 200)
+        self.assertContains(dash_fy, "lateReturnsBanner")
+        self.assertContains(dash_fy, self.s1.roll_no)
+        self.assertNotContains(dash_fy, self.s2.roll_no)
+
+        # Check In records actual_return_at while preserving Late status & removes from banner
+        notif_before = Notification.objects.filter(recipient=self.parent1_u, category="gate").count()
+        c_fy.post(reverse("gate_pass_checkin", args=[late_b1.pk]), {"next": reverse("home")}, follow=True)
+        late_b1.refresh_from_db()
+        self.assertEqual(late_b1.status, "Late")
+        self.assertIsNotNone(late_b1.actual_return_at)
+        self.assertEqual(Notification.objects.filter(recipient=self.parent1_u, category="gate").count(), notif_before + 1)
+
+        dash_fy_after = c_fy.get(reverse("home"))
+        self.assertNotContains(dash_fy_after, "lateReturnsBanner")
+
+    def test_suspension_blocks_gate_pass_request_and_approval(self):
+        now = timezone.localtime(timezone.now())
+        existing_gp = GatePass.objects.create(
+            student=self.s1,
+            pass_type="day_outing",
+            out_at=now + timedelta(hours=1),
+            expected_return_at=now + timedelta(hours=4),
+            reason="Before suspension",
+            status="Pending",
+        )
+        self.s1.is_suspended = True
+        self.s1.suspension_reason = "Rule violation"
+        self.s1.save()
+
+        c_student = Client()
+        c_student.force_login(self.s1_u)
+        c_student.post(
+            reverse("my_gate_passes"),
+            {
+                "pass_type": "day_outing",
+                "out_at": (now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M"),
+                "expected_return_at": (now + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M"),
+                "reason": "Blocked outing",
+            },
+            follow=True,
+        )
+        self.assertFalse(GatePass.objects.filter(student=self.s1, reason="Blocked outing").exists())
+
+        c_warden = Client()
+        c_warden.force_login(self.fy_warden)
+        c_warden.post(reverse("gate_pass_decide", args=[existing_gp.pk, "approve"]), follow=True)
+        existing_gp.refresh_from_db()
+        self.assertEqual(existing_gp.status, "Pending")
+
+    def test_gate_pass_pdf_and_building_parent_isolation(self):
+        now = timezone.now()
+        gp_b1 = GatePass.objects.create(
+            student=self.s1,
+            pass_type="day_outing",
+            out_at=now + timedelta(hours=1),
+            expected_return_at=now + timedelta(hours=5),
+            reason="Exam center visit",
+            approved_by=self.fy_warden,
+            status="Approved",
+        )
+        gp_b2 = GatePass.objects.create(
+            student=self.s2,
+            pass_type="home_leave",
+            out_at=now + timedelta(hours=2),
+            expected_return_at=now + timedelta(days=1),
+            reason="Senior family trip",
+            approved_by=self.head_warden,
+            status="Pending",
+        )
+
+        # PDF authorized for B1 FY Warden, Head Warden, student 1, parent 1
+        for user in (self.fy_warden, self.head_warden, self.s1_u, self.parent1_u):
+            c = Client()
+            c.force_login(user)
+            resp = c.get(reverse("gate_pass_pdf", args=[gp_b1.pk]))
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp["Content-Type"], "application/pdf")
+            self.assertTrue(resp.content.startswith(b"%PDF"))
+
+        # Unrelated student 2 and parent 2 cannot access gp_b1 PDF or parent ack
+        for other_u in (self.s2_u, self.parent2_u):
+            c = Client()
+            c.force_login(other_u)
+            self.assertEqual(c.get(reverse("gate_pass_pdf", args=[gp_b1.pk])).status_code, 403)
+
+        c_p2 = Client()
+        c_p2.force_login(self.parent2_u)
+        self.assertEqual(c_p2.post(reverse("gate_pass_parent_ack", args=[gp_b1.pk])).status_code, 404)
+
+        # FY Warden (B1 locked) cannot view or act on B2 student's passes
+        c_fy = Client()
+        c_fy.force_login(self.fy_warden)
+        gate_list = c_fy.get(reverse("gate_passes"))
+        self.assertEqual(gate_list.status_code, 200)
+        self.assertContains(gate_list, self.s1.roll_no)
+        self.assertNotContains(gate_list, self.s2.roll_no)
+
+        self.assertEqual(c_fy.get(reverse("gate_pass_pdf", args=[gp_b2.pk])).status_code, 403)
+        self.assertEqual(c_fy.post(reverse("gate_pass_decide", args=[gp_b2.pk, "approve"])).status_code, 403)
+        self.assertEqual(c_fy.post(reverse("gate_pass_checkout", args=[gp_b2.pk])).status_code, 403)
+        self.assertEqual(c_fy.post(reverse("gate_pass_checkin", args=[gp_b2.pk])).status_code, 403)
+
+    def test_visitor_register_checkin_filtering_checkout_and_isolation(self):
+        c_fy = Client()
+        c_fy.force_login(self.fy_warden)
+
+        resp = c_fy.post(
+            reverse("visitors"),
+            {
+                "student": str(self.s1.pk),
+                "visitor_name": "Mahesh Sharma",
+                "relation": "Father",
+                "phone": "9876543210",
+                "purpose": "Dropping textbooks",
+                "id_proof_last4": "4821",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        visit = VisitorLog.objects.get(student=self.s1, visitor_name="Mahesh Sharma")
+        self.assertTrue(visit.is_active_visit)
+        self.assertEqual(visit.recorded_by, self.fy_warden)
+        self.assertTrue(Notification.objects.filter(recipient=self.s1_u, category="gate").exists())
+
+        # Active filter vs Checked-out filter
+        active_resp = c_fy.get(reverse("visitors") + "?status=active")
+        self.assertEqual(active_resp.status_code, 200)
+        self.assertContains(active_resp, "Mahesh Sharma")
+        done_resp = c_fy.get(reverse("visitors") + "?status=checked_out")
+        self.assertNotContains(done_resp, "Mahesh Sharma")
+
+        # Cross-building isolation on Visitor Register
+        b2_visit = VisitorLog.objects.create(
+            student=self.s2,
+            visitor_name="Senior Guest",
+            relation="Uncle",
+            phone="9800009999",
+            purpose="Project courier",
+            id_proof_last4="9999",
+            recorded_by=self.head_warden,
+        )
+        self.assertNotContains(c_fy.get(reverse("visitors")), "Senior Guest")
+        self.assertEqual(c_fy.post(reverse("visitor_checkout", args=[b2_visit.pk])).status_code, 403)
+
+        # 1-click check-out for B1 visitor
+        out_resp = c_fy.post(reverse("visitor_checkout", args=[visit.pk]), follow=True)
+        self.assertEqual(out_resp.status_code, 200)
+        visit.refresh_from_db()
+        self.assertFalse(visit.is_active_visit)
+        self.assertIsNotNone(visit.checked_out_at)
+        self.assertContains(c_fy.get(reverse("visitors") + "?status=checked_out"), "Mahesh Sharma")
+
+    def test_seed_demo_populates_gate_passes_and_visitors(self):
+        call_command("seed_demo")
+        self.assertTrue(GatePass.objects.filter(status="Late").exists())
+        self.assertTrue(GatePass.objects.filter(status="Checked Out").exists())
+        self.assertTrue(GatePass.objects.filter(status="Pending").exists())
+        self.assertTrue(VisitorLog.objects.filter(checked_out_at__isnull=True).exists())
+
+        warden = User.objects.get(username="warden")
+        c = Client()
+        c.force_login(warden)
+        dash = c.get(reverse("home"))
+        self.assertEqual(dash.status_code, 200)
+        self.assertContains(dash, "lateReturnsBanner")
+        self.assertContains(dash, "LATE RETURNS")
