@@ -18,11 +18,12 @@ from django.views.decorators.http import require_POST
 
 from . import forms as f
 from . import models as m
-from .pdf_services import generate_fee_invoice_pdf, generate_fees_report_pdf
+from .pdf_services import generate_fee_invoice_pdf, generate_fees_report_pdf, generate_gate_pass_pdf
 from .services import (
     bulk_create_rooms,
     bulk_create_rooms_floors,
     find_building,
+    log_visitor_checkin,
     parse_year,
     bulk_create_rooms_from_list,
     calculate_student_monthly_fee,
@@ -32,6 +33,11 @@ from .services import (
     notify_user,
     notify_users,
     parse_date,
+    perform_gate_checkin,
+    perform_gate_checkout,
+    perform_visitor_checkout,
+    scoped_staff_for_student,
+    sync_overdue_gate_passes,
 )
 
 
@@ -53,7 +59,8 @@ STAFF = ("admin", "warden")
 BADGE = {"Paid": "success", "Resolved": "success", "Approved": "success", "Present": "success", "Unpaid": "secondary",
          "Submitted": "secondary", "Pending": "warning", "Under Review": "info", "In Progress": "primary",
          "Partly paid": "info", "Overdue": "danger", "Rejected": "danger", "Absent": "danger", "On leave": "info",
-         "Suspended": "danger", "Staying": "success", "Left": "secondary", "Active": "success"}
+         "Suspended": "danger", "Staying": "success", "Left": "secondary", "Active": "success",
+         "Checked Out": "primary", "Returned": "success", "Late": "danger", "Confirmed": "success"}
 
 
 def badge(t):
@@ -2959,6 +2966,158 @@ def leave_decide(request, pk, decision):
     )
     messages.success(request, f"Leave {lv.status.lower()}.")
     return redirect("leaves")
+
+
+@staff
+def gate_pass_list(request):
+    """Building-scoped gate pass approval, check-out/in, and curfew overdue tracker."""
+    sync_overdue_gate_passes()
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+    status_filter = (request.GET.get("status") or "").strip()
+    type_filter = (request.GET.get("pass_type") or "").strip()
+    q = (request.GET.get("q") or "").strip()
+
+    all_passes = list(
+        m.GatePass.objects.select_related("student__user", "approved_by")
+        .prefetch_related(
+            Prefetch("student__allocations", queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"))
+        )
+    )
+    if active_building:
+        all_passes = [gp for gp in all_passes if _student_matches_building(gp.student, active_building)]
+
+    pending_count = sum(1 for gp in all_passes if gp.status == "Pending")
+    approved_count = sum(1 for gp in all_passes if gp.status == "Approved")
+    out_count = sum(1 for gp in all_passes if gp.status in ("Checked Out", "Late") and gp.actual_return_at is None)
+    late_active_count = sum(1 for gp in all_passes if gp.is_curfew_overdue)
+
+    passes = all_passes
+    if status_filter == "Late":
+        passes = [gp for gp in passes if gp.effective_status == "Late"]
+    elif status_filter:
+        passes = [gp for gp in passes if gp.effective_status == status_filter]
+    if type_filter:
+        passes = [gp for gp in passes if gp.pass_type == type_filter]
+    if q:
+        ql = q.lower()
+        passes = [
+            gp for gp in passes
+            if ql in gp.student.roll_no.lower()
+            or ql in gp.student.user.display_name.lower()
+            or ql in gp.reason.lower()
+            or ql in gp.pass_code.lower()
+            or (gp.student.room and ql in str(gp.student.room).lower())
+        ]
+
+    for gp in passes:
+        gp.status_badge = badge(gp.effective_status)
+
+    return show(
+        request,
+        "gate_passes",
+        passes=passes,
+        pending_count=pending_count,
+        approved_count=approved_count,
+        out_count=out_count,
+        late_active_count=late_active_count,
+        filter_status=status_filter,
+        filter_type=type_filter,
+        filter_q=q,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
+    )
+
+
+@staff
+@require_POST
+def gate_pass_decide(request, pk, decision):
+    gp = get_object_or_404(m.GatePass.objects.select_related("student__user", "student__parent__user"), pk=pk)
+    _assert_building_access(request, student=gp.student)
+    if gp.status != "Pending":
+        messages.warning(request, f"{gp.pass_code} is already {gp.status}.")
+        return redirect(request.POST.get("next") or "gate_passes")
+    if decision == "approve":
+        if gp.student.is_currently_suspended:
+            messages.error(request, f"{gp.student.user.display_name} is suspended and cannot receive a gate pass.")
+            return redirect(request.POST.get("next") or "gate_passes")
+        gp.status = "Approved"
+    elif decision == "reject":
+        gp.status = "Rejected"
+    else:
+        messages.error(request, "Invalid gate pass decision.")
+        return redirect(request.POST.get("next") or "gate_passes")
+    gp.approved_by = request.user
+    gp.save(update_fields=["status", "approved_by"])
+
+    targets = [gp.student.user]
+    if gp.student.parent and gp.student.parent.user:
+        targets.append(gp.student.parent.user)
+    notify_users(
+        recipients=targets,
+        title=f"Gate Pass {gp.status}: {gp.pass_code}",
+        message=(
+            f"{gp.get_pass_type_display()} pass for {gp.student.user.display_name} "
+            f"(Curfew: {timezone.localtime(gp.expected_return_at).strftime('%d %b, %I:%M %p')}) was {gp.status.lower()}."
+        ),
+        category="gate",
+        link=reverse("my_gate_passes"),
+        actor=request.user,
+    )
+    messages.success(request, f"{gp.pass_code} marked as {gp.status}.")
+    return redirect(request.POST.get("next") or "gate_passes")
+
+
+@staff
+@require_POST
+def gate_pass_checkout(request, pk):
+    gp = get_object_or_404(m.GatePass.objects.select_related("student__user", "student__parent__user"), pk=pk)
+    _assert_building_access(request, student=gp.student)
+    try:
+        perform_gate_checkout(gp, actor=request.user)
+        messages.success(request, f"{gp.pass_code} checked out for {gp.student.user.display_name}. Parent notified.")
+    except ValidationError as e:
+        messages.error(request, getattr(e, "messages", [str(e)])[0])
+    return redirect(request.POST.get("next") or "gate_passes")
+
+
+@staff
+@require_POST
+def gate_pass_checkin(request, pk):
+    gp = get_object_or_404(m.GatePass.objects.select_related("student__user", "student__parent__user"), pk=pk)
+    _assert_building_access(request, student=gp.student)
+    try:
+        perform_gate_checkin(gp, actor=request.user)
+        if gp.status == "Late":
+            messages.warning(request, f"{gp.pass_code} checked in LATE ({gp.overdue_display}). Parent notified.")
+        else:
+            messages.success(request, f"{gp.pass_code} checked in on time. Parent notified.")
+    except ValidationError as e:
+        messages.error(request, getattr(e, "messages", [str(e)])[0])
+    return redirect(request.POST.get("next") or "gate_passes")
+
+
+@login_required
+def gate_pass_pdf(request, pk):
+    gp = get_object_or_404(
+        m.GatePass.objects.select_related("student__user", "student__parent__user", "approved_by"),
+        pk=pk,
+    )
+    u = request.user
+    if u.role in STAFF:
+        _assert_building_access(request, student=gp.student)
+    elif u.role == "student":
+        if gp.student.user_id != u.pk:
+            raise PermissionDenied
+    elif u.role == "parent":
+        if not (gp.student.parent and gp.student.parent.user_id == u.pk):
+            raise PermissionDenied
+    else:
+        raise PermissionDenied
+    pdf_bytes = generate_gate_pass_pdf(gp)
+    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="gate_pass_{gp.pass_code}.pdf"'
+    return resp
 
 
 @staff

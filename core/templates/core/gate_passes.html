@@ -1,0 +1,203 @@
+{% extends "core/base.html" %}{% block content %}
+<!-- Gate Passes & Curfew Control Header -->
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Gate Passes &amp; Curfew Control</h4>
+        {% if active_building %}
+          <span class="badge text-bg-primary rounded-pill">{{ active_building.code }} &mdash; {{ active_building.name }}</span>
+        {% endif %}
+        {% if late_active_count > 0 %}
+          <span class="badge text-bg-danger rounded-pill">{{ late_active_count }} Late Curfew Alert{{ late_active_count|pluralize }}</span>
+        {% endif %}
+      </div>
+      <div class="text-secondary small">
+        Approve resident outings/home leaves, verify optional parent confirmations, and record gate check-out &amp; check-in times.
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{% url 'leaves' %}{% if active_building %}?building={{ active_building.code }}{% endif %}" class="btn btn-sm btn-outline-secondary">
+        Multi-Day Leaves
+      </a>
+    </div>
+  </div>
+
+  {% if buildings %}
+    <div class="d-flex flex-wrap align-items-center gap-1 mt-3 pt-3 border-top">
+      <span class="text-secondary small fw-semibold me-1">Building:</span>
+      {% if not is_building_locked %}
+        <a href="{% url 'gate_passes' %}?status={{ filter_status }}&pass_type={{ filter_type }}&q={{ filter_q }}"
+           class="badge {% if not active_building %}text-bg-dark{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+          All Buildings
+        </a>
+      {% endif %}
+      {% for bld in buildings %}
+        {% if not is_building_locked or active_building.pk == bld.pk %}
+          <a href="{% url 'gate_passes' %}?building={{ bld.code }}&status={{ filter_status }}&pass_type={{ filter_type }}&q={{ filter_q }}"
+             class="badge {% if active_building and active_building.pk == bld.pk %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-2 px-3">
+            {{ bld.code }} &mdash; {{ bld.name }}
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+
+<!-- Curfew & Gate KPI Summary -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Pending Approval</div>
+      <div class="fs-3 fw-bold text-warning text-dark mt-1">{{ pending_count }}</div>
+      <div class="text-muted small">Awaiting warden decision</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Ready at Gate</div>
+      <div class="fs-3 fw-bold text-primary mt-1">{{ approved_count }}</div>
+      <div class="text-muted small">Approved for check-out</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Currently Outside</div>
+      <div class="fs-3 fw-bold text-dark mt-1">{{ out_count }}</div>
+      <div class="text-muted small">Checked out &amp; active</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white shadow-sm {% if late_active_count > 0 %}border border-danger{% else %}border-0{% endif %}">
+      <div class="{% if late_active_count > 0 %}text-danger{% else %}text-secondary{% endif %} small fw-semibold text-uppercase">Late / Overdue Curfew</div>
+      <div class="fs-3 fw-bold {% if late_active_count > 0 %}text-danger{% else %}text-success{% endif %} mt-1">{{ late_active_count }}</div>
+      <div class="text-muted small">Unreturned past curfew</div>
+    </div>
+  </div>
+</div>
+
+<!-- Filters Toolbar -->
+<div class="card p-3 mb-4 bg-white border-0 shadow-sm">
+  <form method="get" class="row g-2 align-items-end">
+    {% if active_building %}<input type="hidden" name="building" value="{{ active_building.code }}">{% endif %}
+    <div class="col-12 col-md-4">
+      <label class="form-label small fw-semibold text-secondary mb-1">Search Resident / Pass / Reason</label>
+      <input type="text" name="q" class="form-control form-control-sm" value="{{ filter_q }}" placeholder="Name, roll no, room, reason...">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label small fw-semibold text-secondary mb-1">Status</label>
+      <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Statuses</option>
+        <option value="Pending" {% if filter_status == 'Pending' %}selected{% endif %}>Pending Approval</option>
+        <option value="Approved" {% if filter_status == 'Approved' %}selected{% endif %}>Approved (Ready for Gate)</option>
+        <option value="Checked Out" {% if filter_status == 'Checked Out' %}selected{% endif %}>Checked Out</option>
+        <option value="Late" {% if filter_status == 'Late' %}selected{% endif %}>Late Returns / Overdue</option>
+        <option value="Returned" {% if filter_status == 'Returned' %}selected{% endif %}>Returned On Time</option>
+        <option value="Rejected" {% if filter_status == 'Rejected' %}selected{% endif %}>Rejected</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label small fw-semibold text-secondary mb-1">Pass Type</label>
+      <select name="pass_type" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Pass Types</option>
+        <option value="day_outing" {% if filter_type == 'day_outing' %}selected{% endif %}>Day Outing</option>
+        <option value="home_leave" {% if filter_type == 'home_leave' %}selected{% endif %}>Home Leave</option>
+      </select>
+    </div>
+    <div class="col-12 col-md-2 d-flex gap-1">
+      <button type="submit" class="btn btn-sm btn-navy flex-grow-1">Filter</button>
+      <a href="{% url 'gate_passes' %}{% if active_building %}?building={{ active_building.code }}{% endif %}" class="btn btn-sm btn-outline-secondary" title="Reset">&times;</a>
+    </div>
+  </form>
+</div>
+
+<!-- Gate Passes Ledger -->
+<div class="card border-0 shadow-sm bg-white">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr>
+          <th>Pass &amp; Resident</th>
+          <th>Room / Year</th>
+          <th>Pass Type</th>
+          <th>Out &rarr; Curfew Schedule</th>
+          <th>Parent Ack</th>
+          <th>Reason</th>
+          <th>Status</th>
+          <th class="text-end">Gate Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for gp in passes %}
+          <tr {% if gp.is_curfew_overdue %}class="table-danger"{% endif %}>
+            <td>
+              <div class="fw-bold text-dark">{{ gp.pass_code }} &middot; <a href="{% url 'student_detail' gp.student.pk %}" class="text-decoration-none text-dark">{{ gp.student.user.display_name }}</a></div>
+              <div class="text-muted" style="font-size:0.74rem;">Roll: {{ gp.student.roll_no }}</div>
+            </td>
+            <td>
+              {% if gp.student.room %}
+                <span class="badge text-bg-light border text-dark">{{ gp.student.room }}</span>
+              {% else %}
+                <span class="badge text-bg-warning text-dark">Unallocated</span>
+              {% endif %}
+              <span class="badge text-bg-secondary">{{ gp.student.year_short }}</span>
+            </td>
+            <td><span class="badge text-bg-light border text-dark">{{ gp.get_pass_type_display }}</span></td>
+            <td>
+              <div><b>Out:</b> {{ gp.out_at|date:"d M, h:i A" }}</div>
+              <div><b>Due:</b> {{ gp.expected_return_at|date:"d M, h:i A" }}</div>
+              {% if gp.actual_return_at %}
+                <div class="text-muted"><b>In:</b> {{ gp.actual_return_at|date:"d M, h:i A" }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge {% if gp.parent_ack == 'Confirmed' %}text-bg-success{% else %}text-bg-secondary-subtle text-secondary border{% endif %}">
+                {{ gp.parent_ack }}
+              </span>
+            </td>
+            <td>{{ gp.reason|truncatechars:45 }}</td>
+            <td>
+              {{ gp.status_badge }}
+              {% if gp.overdue_display %}
+                <div class="text-danger fw-bold mt-1" style="font-size:0.72rem;">{{ gp.overdue_display }}</div>
+              {% endif %}
+            </td>
+            <td class="text-end text-nowrap">
+              {% if gp.status == "Pending" %}
+                <form method="post" action="{% url 'gate_pass_decide' gp.pk 'approve' %}" class="d-inline">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-sm btn-success py-0 px-2">Approve</button>
+                </form>
+                <form method="post" action="{% url 'gate_pass_decide' gp.pk 'reject' %}" class="d-inline" onsubmit="return confirm('Reject gate pass {{ gp.pass_code }}?');">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2">Reject</button>
+                </form>
+              {% elif gp.status == "Approved" %}
+                <form method="post" action="{% url 'gate_pass_checkout' gp.pk %}" class="d-inline">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-sm btn-primary py-0 px-2 fw-semibold">Check Out</button>
+                </form>
+                <a href="{% url 'gate_pass_pdf' gp.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">PDF</a>
+              {% elif gp.status == "Checked Out" or gp.status == "Late" and not gp.actual_return_at %}
+                <form method="post" action="{% url 'gate_pass_checkin' gp.pk %}" class="d-inline">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-sm {% if gp.is_curfew_overdue %}btn-danger{% else %}btn-success{% endif %} py-0 px-2 fw-semibold">Check In</button>
+                </form>
+                <a href="{% url 'gate_pass_pdf' gp.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">PDF</a>
+              {% elif gp.status == "Returned" or gp.status == "Late" %}
+                <a href="{% url 'gate_pass_pdf' gp.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">PDF</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="8" class="text-center text-secondary py-5">
+              No gate passes match the selected filters.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
