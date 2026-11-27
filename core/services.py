@@ -6,8 +6,23 @@ import re
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
 
-from .models import CAPACITY_TO_ROOM_TYPE, ROOM_TYPE_CAPACITY, Building, Fee, FeeConfig, Parent, Room, RoomAllocation, Student, User
+from .models import (
+    CAPACITY_TO_ROOM_TYPE,
+    ROOM_TYPE_CAPACITY,
+    Building,
+    Fee,
+    FeeConfig,
+    GatePass,
+    Parent,
+    Room,
+    RoomAllocation,
+    Student,
+    User,
+    VisitorLog,
+)
 
 
 def _split(name):
@@ -800,4 +815,132 @@ def notify_users(recipients, title, message, category="general", link="", actor=
     if objs:
         return Notification.objects.bulk_create(objs)
     return []
+
+
+def scoped_staff_for_student(student):
+    """Return Admins, Head Wardens, and only the building warden assigned to this resident's building."""
+    bld = student.building
+    if bld is not None:
+        return list(
+            User.objects.filter(
+                Q(role="admin") | Q(role="warden", assigned_building__isnull=True) | Q(role="warden", assigned_building=bld),
+                is_active=True,
+            )
+        )
+    compat_bld_ids = [b.pk for b in Building.objects.all() if b.allows_year(student.year_of_study)]
+    return list(
+        User.objects.filter(
+            Q(role="admin") | Q(role="warden", assigned_building__isnull=True) | Q(role="warden", assigned_building_id__in=compat_bld_ids),
+            is_active=True,
+        )
+    )
+
+
+def _gate_stakeholders(student):
+    targets = [student.user]
+    if student.parent and student.parent.user:
+        targets.append(student.parent.user)
+    return targets
+
+
+def sync_overdue_gate_passes(qs=None):
+    """Automatically promote Checked Out passes past expected_return_at to Late status."""
+    base = qs if qs is not None else GatePass.objects.all()
+    return base.filter(
+        status="Checked Out",
+        actual_return_at__isnull=True,
+        expected_return_at__lt=timezone.now(),
+    ).update(status="Late")
+
+
+@transaction.atomic
+def perform_gate_checkout(gate_pass, actor=None):
+    """Mark an Approved GatePass Checked Out and notify student and parent immediately."""
+    if gate_pass.student.is_currently_suspended:
+        raise ValidationError("Resident access is currently suspended; gate check-out is blocked.")
+    if gate_pass.status != "Approved":
+        raise ValidationError("Only Approved gate passes can be checked out at the gate.")
+    now = timezone.now()
+    gate_pass.out_at = now
+    gate_pass.status = "Checked Out"
+    gate_pass.save(update_fields=["out_at", "status"])
+    exp_local = timezone.localtime(gate_pass.expected_return_at).strftime("%d %b %Y, %I:%M %p")
+    out_local = timezone.localtime(now).strftime("%d %b %Y, %I:%M %p")
+    notify_users(
+        recipients=_gate_stakeholders(gate_pass.student),
+        title=f"Gate Pass Checked Out: {gate_pass.student.user.display_name}",
+        message=(
+            f"{gate_pass.pass_code} ({gate_pass.get_pass_type_display()}) checked out at {out_local}. "
+            f"Expected return: {exp_local}."
+        ),
+        category="gate",
+        link="/me/gate-pass/",
+        actor=actor,
+    )
+    return gate_pass
+
+
+@transaction.atomic
+def perform_gate_checkin(gate_pass, actor=None):
+    """Record resident check-in, detect curfew lateness, and notify student and parent."""
+    if gate_pass.status not in ("Checked Out", "Late") or gate_pass.actual_return_at is not None:
+        raise ValidationError("Only active Checked Out or Late passes can be checked in.")
+    now = timezone.now()
+    gate_pass.actual_return_at = now
+    is_late = bool(gate_pass.expected_return_at and now > gate_pass.expected_return_at)
+    gate_pass.status = "Late" if is_late else "Returned"
+    gate_pass.save(update_fields=["actual_return_at", "status"])
+
+    in_local = timezone.localtime(now).strftime("%d %b %Y, %I:%M %p")
+    if is_late:
+        title = f"Late Curfew Return: {gate_pass.student.user.display_name}"
+        msg = f"{gate_pass.pass_code} returned at {in_local} ({gate_pass.overdue_display})."
+    else:
+        title = f"Returned to Hostel: {gate_pass.student.user.display_name}"
+        msg = f"{gate_pass.pass_code} checked back in on time at {in_local}."
+    notify_users(
+        recipients=_gate_stakeholders(gate_pass.student),
+        title=title,
+        message=msg,
+        category="gate",
+        link="/me/gate-pass/",
+        actor=actor,
+    )
+    return gate_pass
+
+
+@transaction.atomic
+def log_visitor_checkin(student, visitor_name, relation, phone, purpose, id_proof_last4="", actor=None):
+    """Log a new visitor entry for a student and notify the resident."""
+    v = VisitorLog(
+        student=student,
+        visitor_name=(visitor_name or "").strip(),
+        relation=(relation or "").strip(),
+        phone=(phone or "").strip(),
+        purpose=(purpose or "").strip(),
+        id_proof_last4=(id_proof_last4 or "").strip(),
+        checked_in_at=timezone.now(),
+        recorded_by=actor,
+    )
+    v.full_clean()
+    v.save()
+    notify_user(
+        recipient=student.user,
+        title=f"Visitor Checked In: {v.visitor_name}",
+        message=f"{v.visitor_name} ({v.relation}) checked in at hostel gate. Purpose: {v.purpose}.",
+        category="gate",
+        link="/me/gate-pass/",
+        actor=actor,
+    )
+    return v
+
+
+@transaction.atomic
+def perform_visitor_checkout(visitor, actor=None):
+    """Record check-out timestamp for an active VisitorLog entry."""
+    if visitor.checked_out_at is not None:
+        raise ValidationError("This visitor has already checked out.")
+    visitor.checked_out_at = timezone.now()
+    visitor.save(update_fields=["checked_out_at"])
+    return visitor
 
