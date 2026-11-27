@@ -1,5 +1,6 @@
 import random
 from datetime import date, timedelta
+from django.utils import timezone
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
@@ -98,4 +99,90 @@ class Command(BaseCommand):
         m.LeaveRequest.objects.create(student=students[1], from_date=date.today() + timedelta(days=2), to_date=date.today() + timedelta(days=4), reason="Family function")
         m.Announcement.objects.create(title="Welcome", body="Mess timings: breakfast 7:30, lunch 12:30, dinner 7:30.")
         m.Announcement.objects.create(building=b1, title="First Year Orientation", body="Mandatory anti-ragging orientation in First Year Block courtyard at 5 PM.")
+
+        now = timezone.now()
+        warden_user = m.User.objects.filter(username="warden").first()
+        fy_warden_user = m.User.objects.filter(username="fywarden").first()
+        b1_students = [s for s in students if s.building_id == b1.id] or students[:2]
+        b2_students = [s for s in students if s.building_id != b1.id] or students[2:4]
+        s_fy_1 = b1_students[0]
+        s_fy_2 = b1_students[1] if len(b1_students) > 1 else b1_students[0]
+        s_sr_1 = b2_students[0]
+        s_sr_2 = b2_students[1] if len(b2_students) > 1 else b2_students[0]
+
+        m.GatePass.objects.create(
+            student=s_fy_1,
+            pass_type="day_outing",
+            out_at=now - timedelta(hours=6),
+            expected_return_at=now - timedelta(minutes=90),
+            reason="Library book purchase and stationery",
+            parent_ack="Confirmed",
+            parent_ack_at=now - timedelta(hours=7),
+            approved_by=fy_warden_user or warden_user,
+            status="Late",
+        )
+        m.GatePass.objects.create(
+            student=s_sr_1,
+            pass_type="day_outing",
+            out_at=now - timedelta(hours=2),
+            expected_return_at=now + timedelta(hours=3),
+            reason="Department project printouts",
+            parent_ack="Pending",
+            approved_by=warden_user,
+            status="Checked Out",
+        )
+        m.GatePass.objects.create(
+            student=s_fy_2,
+            pass_type="home_leave",
+            out_at=now + timedelta(hours=5),
+            expected_return_at=now + timedelta(days=2),
+            reason="Sister graduation ceremony at home",
+            parent_ack="Confirmed",
+            parent_ack_at=now - timedelta(minutes=30),
+            status="Pending",
+        )
+        m.GatePass.objects.create(
+            student=s_sr_2,
+            pass_type="day_outing",
+            out_at=now + timedelta(hours=1),
+            expected_return_at=now + timedelta(hours=6),
+            reason="Dental appointment in city clinic",
+            parent_ack="Pending",
+            approved_by=warden_user,
+            status="Approved",
+        )
+        m.GatePass.objects.create(
+            student=students[0],
+            pass_type="day_outing",
+            out_at=now - timedelta(days=2, hours=5),
+            expected_return_at=now - timedelta(days=2, hours=1),
+            actual_return_at=now - timedelta(days=2, hours=1, minutes=15),
+            reason="Optician visit",
+            parent_ack="Confirmed",
+            parent_ack_at=now - timedelta(days=2, hours=6),
+            approved_by=warden_user,
+            status="Returned",
+        )
+        m.VisitorLog.objects.create(
+            student=s_fy_1,
+            visitor_name="Ramesh Sharma",
+            relation="Father",
+            phone="9876543210",
+            purpose="Delivering winter clothes and medicines",
+            id_proof_last4="4821",
+            checked_in_at=now - timedelta(minutes=35),
+            recorded_by=fy_warden_user or warden_user,
+        )
+        m.VisitorLog.objects.create(
+            student=s_sr_1,
+            visitor_name="Anita Verma",
+            relation="Mother",
+            phone="9822334455",
+            purpose="Weekend family visit",
+            id_proof_last4="7390",
+            checked_in_at=now - timedelta(days=1, hours=3),
+            checked_out_at=now - timedelta(days=1, hours=1),
+            recorded_by=warden_user,
+        )
+
         self.stdout.write(self.style.SUCCESS("Demo data ready."))
