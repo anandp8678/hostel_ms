@@ -1,0 +1,20 @@
+<div class="row g-2 mt-2 pt-2 border-top">
+  {% for rt in tiers %}
+    <div class="col-4">
+      <a href="{% url 'rooms' %}?building={{ building.code }}&room_type={{ rt.room_type }}"
+         class="d-block p-2 rounded border bg-light-subtle text-decoration-none card-hover h-100"
+         title="View {{ rt.label }} rooms in {{ building.name }}">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <span class="fw-semibold text-dark" style="font-size:0.75rem;">{{ rt.label }}</span>
+          <span class="text-primary fw-semibold" style="font-size:0.7rem;">₹{{ rt.rate|floatformat:0 }}</span>
+        </div>
+        <div class="text-secondary" style="font-size:0.7rem;">
+          {{ rt.rooms }} rm &middot; <b>{{ rt.occupied }}</b>/{{ rt.beds }}
+        </div>
+        <div class="small {% if rt.free > 0 %}text-success fw-semibold{% else %}text-muted{% endif %}" style="font-size:0.68rem;">
+          {{ rt.free }} free
+        </div>
+      </a>
+    </div>
+  {% endfor %}
+</div>
