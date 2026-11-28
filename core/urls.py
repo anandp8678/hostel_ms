@@ -11,6 +11,7 @@ urlpatterns = [
     path("children/<int:pk>/", v.child, name="child"),
     path("students/", v.student_list, name="students"),
     path("students/new/", v.student_new, name="students_new"),
+    path("students/promote/", v.student_promote, name="students_promote"),
     path("students/import/", v.student_import, name="students_import"),
     path("students/import/template/", v.import_template, name="import_template"),
     path("allocations/import/", v.allocation_import, name="allocations_import"),

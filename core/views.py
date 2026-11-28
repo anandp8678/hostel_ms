@@ -22,6 +22,7 @@ from .pdf_services import generate_fee_invoice_pdf, generate_fees_report_pdf, ge
 from .services import (
     bulk_create_rooms,
     bulk_create_rooms_floors,
+    execute_academic_promotion,
     find_building,
     log_visitor_checkin,
     parse_year,
@@ -36,6 +37,7 @@ from .services import (
     perform_gate_checkin,
     perform_gate_checkout,
     perform_visitor_checkout,
+    preview_academic_promotion,
     scoped_staff_for_student,
     sync_overdue_gate_passes,
     transfer_student_room,
@@ -1746,6 +1748,91 @@ def student_list(request):
         "add_label": "Add student",
     }
     return render(request, "core/students_list.html", context)
+
+
+@role_required("admin")
+def student_promote(request):
+    """Two-step Academic Year Promotion Wizard: preview incompatible allocations and execute B1 -> B2 promotion."""
+    default_b1 = m.Building.objects.filter(code="B1", is_active=True).first()
+
+    if request.method == "POST":
+        raw_fy = (request.POST.get("from_year") or "1").strip()
+        from_year = int(raw_fy) if raw_fy in ("1", "2", "3") else 1
+        raw_bld = (request.POST.get("building") or "").strip()
+        eff_date = parse_date((request.POST.get("effective_date") or "").strip()) or date.today()
+        auto_assign = (request.POST.get("auto_assign") or "") in ("1", "on", "true")
+        allow_fallback = (request.POST.get("allow_fallback") or "") in ("1", "on", "true")
+        student_ids = request.POST.getlist("student_ids")
+
+        try:
+            exec_result = execute_academic_promotion(
+                student_ids=student_ids,
+                from_year=from_year,
+                to_year=from_year + 1,
+                auto_assign=auto_assign,
+                allow_fallback=allow_fallback,
+                effective_date=eff_date,
+                actor=request.user,
+            )
+            request.session["last_promotion_result"] = exec_result
+            messages.success(
+                request,
+                f"Promoted {exec_result['promoted_count']} student(s) to {exec_result['to_label']} "
+                f"({exec_result['vacated_count']} vacated, {exec_result['assigned_count']} assigned).",
+            )
+        except ValidationError as e:
+            messages.error(request, getattr(e, "messages", [str(e)])[0])
+
+        qs_parts = [
+            f"from_year={from_year}",
+            f"building={raw_bld}",
+            f"effective_date={eff_date.isoformat()}",
+            f"auto_assign={'1' if auto_assign else '0'}",
+            f"allow_fallback={'1' if allow_fallback else '0'}",
+        ]
+        return redirect(f"{reverse('students_promote')}?{'&'.join(qs_parts)}")
+
+    if "from_year" in request.GET:
+        raw_fy = (request.GET.get("from_year") or "1").strip()
+        from_year = int(raw_fy) if raw_fy in ("1", "2", "3") else 1
+        raw_bld = (request.GET.get("building") or "").strip()
+        building_obj = find_building(raw_bld) if raw_bld else None
+        eff_date = parse_date((request.GET.get("effective_date") or "").strip()) or date.today()
+        auto_assign = (request.GET.get("auto_assign") or "") in ("1", "on", "true")
+        allow_fallback = (request.GET.get("allow_fallback") or "") in ("1", "on", "true")
+    else:
+        from_year = 1
+        building_obj = default_b1
+        eff_date = date.today()
+        auto_assign = True
+        allow_fallback = False
+
+    exec_result = request.session.pop("last_promotion_result", None)
+    preview = preview_academic_promotion(
+        from_year=from_year,
+        to_year=from_year + 1,
+        building=building_obj,
+        auto_assign=auto_assign,
+        allow_fallback=allow_fallback,
+        effective_date=eff_date,
+    )
+    form = f.AcademicPromotionForm(
+        initial={
+            "from_year": from_year,
+            "building": building_obj,
+            "effective_date": eff_date,
+            "auto_assign": auto_assign,
+            "allow_fallback": allow_fallback,
+        }
+    )
+    return show(
+        request,
+        "student_promote",
+        title="Academic Year Promotion Wizard",
+        form=form,
+        preview=preview,
+        exec_result=exec_result,
+    )
 
 
 @staff

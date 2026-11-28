@@ -1,0 +1,230 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="mb-2">
+        <a href="{% url 'students' %}" class="btn btn-sm btn-outline-secondary fw-semibold">
+          &larr; Back to Students
+        </a>
+      </div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Academic Year Promotion Wizard</h4>
+        <span class="badge text-bg-dark rounded-pill">Admin Only</span>
+        <span class="badge text-bg-primary rounded-pill">{{ preview.from_label }} &rarr; {{ preview.to_label }}</span>
+      </div>
+      <div class="text-secondary small">
+        Review incompatible block allocations (such as First-Year Block B1), cleanly close them on the effective date, increment academic year, and optionally auto-assign compatible senior rooms matching each student's preferred sharing tier.
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{% url 'rooms' %}" class="btn btn-sm btn-outline-primary fw-semibold">Check Vacant Rooms</a>
+      <a href="{% url 'allocations' %}" class="btn btn-sm btn-outline-secondary fw-semibold">Allocations Log</a>
+    </div>
+  </div>
+</div>
+
+{% if exec_result %}
+<div class="alert alert-success border-success shadow-sm mb-4" id="promotionResultBanner">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+    <h6 class="fw-bold mb-0 text-success">Promotion Completed: {{ exec_result.promoted_count }} Student{{ exec_result.promoted_count|pluralize }} Advanced to {{ exec_result.to_label }}</h6>
+    <a href="{% url 'students' %}?year={{ exec_result.to_year }}" class="btn btn-sm btn-success fw-semibold py-0 px-2">
+      View {{ exec_result.to_label }} Students &rarr;
+    </a>
+  </div>
+  <div class="small text-dark">
+    <b>{{ exec_result.vacated_count }}</b> incompatible room{{ exec_result.vacated_count|pluralize }} vacated &middot;
+    <b>{{ exec_result.assigned_count }}</b> compatible room{{ exec_result.assigned_count|pluralize }} auto-assigned &middot;
+    <b>{{ exec_result.kept_count }}</b> compatible room{{ exec_result.kept_count|pluralize }} retained &middot;
+    <b>{{ exec_result.unassigned_count }}</b> awaiting manual room assignment.
+  </div>
+  {% if exec_result.unassigned_names %}
+    <div class="small text-warning-emphasis mt-2">
+      <b>Awaiting manual room assignment:</b> {{ exec_result.unassigned_names|join:", " }}
+      <a href="{% url 'students' %}?year={{ exec_result.to_year }}&allocation=unallocated" class="ms-2 fw-semibold">Allocate Unassigned &rarr;</a>
+    </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Step 1: Configuration & Live Dry-Run Filter -->
+<div class="card p-3 mb-4 bg-white border-0 shadow-sm">
+  <h6 class="fw-bold mb-3" style="color:var(--navy);">Step 1: Select Graduating Cohort & Promotion Rules</h6>
+  <form method="get" action="{% url 'students_promote' %}" class="row g-3 align-items-end">
+    <div class="col-12 col-md-3">
+      <label class="form-label small fw-semibold text-secondary">{{ form.from_year.label }}</label>
+      {{ form.from_year }}
+    </div>
+    <div class="col-12 col-md-3">
+      <label class="form-label small fw-semibold text-secondary">{{ form.building.label }}</label>
+      {{ form.building }}
+    </div>
+    <div class="col-12 col-md-3">
+      <label class="form-label small fw-semibold text-secondary">{{ form.effective_date.label }}</label>
+      {{ form.effective_date }}
+    </div>
+    <div class="col-12 col-md-3 d-grid">
+      <button type="submit" class="btn btn-navy fw-semibold">Refresh Preview</button>
+    </div>
+    <div class="col-12 d-flex flex-wrap gap-4 pt-2 border-top">
+      <label class="form-check mb-0 small">
+        {{ form.auto_assign }}
+        <span class="form-check-label fw-semibold">{{ form.auto_assign.label }}</span>
+      </label>
+      <label class="form-check mb-0 small">
+        {{ form.allow_fallback }}
+        <span class="form-check-label text-secondary">{{ form.allow_fallback.label }}</span>
+      </label>
+    </div>
+  </form>
+</div>
+
+<!-- Preview KPI Strip -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Eligible {{ preview.from_label }}</div>
+      <div class="stat text-dark mt-1">{{ preview.total_students }}</div>
+      <div class="small text-muted">Active students in scope</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Incompatible Rooms</div>
+      <div class="stat {% if preview.incompatible_count > 0 %}text-danger{% else %}text-success{% endif %} mt-1">{{ preview.incompatible_count }}</div>
+      <div class="small text-muted">Will vacate cleanly on promotion</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">Auto-Assigned B2</div>
+      <div class="stat text-primary mt-1">{{ preview.auto_assigned_count }}</div>
+      <div class="small text-muted">{{ preview.keep_count }} compatible kept as-is</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 h-100 bg-white border-0 shadow-sm">
+      <div class="text-secondary small fw-semibold text-uppercase">{{ preview.to_label }} Free Beds</div>
+      <div class="stat {% if preview.capacity_shortfall > 0 %}text-warning{% else %}text-success{% endif %} mt-1">{{ preview.total_compatible_free_beds }}</div>
+      <div class="small text-muted">Compatible beds across tiers</div>
+    </div>
+  </div>
+</div>
+
+{% if preview.capacity_shortfall > 0 and preview.auto_assign %}
+<div class="alert alert-warning border-warning mb-4 small shadow-sm">
+  <strong>Capacity Notice:</strong> {{ preview.needing_beds }} student{{ preview.needing_beds|pluralize }} need a compatible room for {{ preview.to_label }}, while {{ preview.total_compatible_free_beds }} compatible bed{{ preview.total_compatible_free_beds|pluralize }} are vacant ({{ preview.capacity_shortfall }} bed shortfall). Matched students will be assigned first; remaining students will be promoted as Unallocated.
+</div>
+{% endif %}
+
+<!-- Step 2: Dry-Run Preview & Confirmation -->
+<div class="card bg-white border-0 shadow-sm">
+  <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2 border-bottom">
+    <div>
+      <h6 class="mb-0 fw-bold" style="color:var(--navy);">Step 2: Preview & Execute Promotion ({{ preview.from_label }} &rarr; {{ preview.to_label }})</h6>
+      <span class="small text-secondary">Uncheck any student who should remain in {{ preview.from_label }} for this cycle.</span>
+    </div>
+    {% if preview.rows %}
+      <button type="button" class="btn btn-sm btn-outline-primary fw-semibold" onclick="toggleAllPromoteBoxes()">
+        Toggle Select All
+      </button>
+    {% endif %}
+  </div>
+
+  {% if preview.rows %}
+  <form method="post" action="{% url 'students_promote' %}" onsubmit="return confirm('Promote selected students from {{ preview.from_label }} to {{ preview.to_label }} effective {{ preview.effective_date|date:'Y-m-d' }}?');">
+    {% csrf_token %}
+    <input type="hidden" name="from_year" value="{{ preview.from_year }}">
+    <input type="hidden" name="building" value="{% if preview.building %}{{ preview.building.pk }}{% endif %}">
+    <input type="hidden" name="effective_date" value="{{ preview.effective_date|date:'Y-m-d' }}">
+    <input type="hidden" name="auto_assign" value="{% if preview.auto_assign %}1{% else %}0{% endif %}">
+    <input type="hidden" name="allow_fallback" value="{% if preview.allow_fallback %}1{% else %}0{% endif %}">
+
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0 small">
+        <thead class="table-light">
+          <tr>
+            <th style="width:42px;" class="text-center">Sel</th>
+            <th>Student</th>
+            <th>Current Year / Room</th>
+            <th>Allocation Action</th>
+            <th>Preferred Tier</th>
+            <th>Projected Outcome ({{ preview.to_label }})</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview.rows %}
+          {% with s=row.student %}
+          <tr class="{% if row.incompatible %}table-danger-subtle{% endif %}">
+            <td class="text-center">
+              <input type="checkbox" name="student_ids" value="{{ s.pk }}" class="form-check-input promote-cb" checked>
+            </td>
+            <td>
+              <div class="fw-bold text-dark">
+                <a href="{% url 'student_detail' s.pk %}" class="text-decoration-none" style="color:var(--navy);">{{ s.user.display_name }}</a>
+              </div>
+              <div class="text-muted">{{ s.roll_no }} &middot; {{ s.course|default:"Not specified" }}</div>
+            </td>
+            <td>
+              <span class="badge text-bg-light border text-dark">{{ s.year_label }}</span>
+              {% if row.current_room %}
+                <span class="fw-semibold ms-1">Room {{ row.current_room }}</span>
+                <span class="text-muted">({{ row.current_room.room_type_label }})</span>
+              {% else %}
+                <span class="text-muted ms-1">Unallocated</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.incompatible %}
+                <span class="badge text-bg-danger">Incompatible Block &mdash; Vacate {{ row.current_room.building.code }}</span>
+              {% elif row.action_kind == "keep_compatible" %}
+                <span class="badge text-bg-success">Compatible &mdash; Keep Room</span>
+              {% else %}
+                <span class="badge text-bg-secondary">Unallocated</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge text-bg-info-subtle text-info-emphasis border border-info-subtle">{{ s.preferred_room_type_label }}</span>
+            </td>
+            <td>
+              {% if row.action_kind == "keep_compatible" %}
+                <span class="text-success fw-semibold">Retains Room {{ row.projected_room }}</span>
+              {% elif row.projected_room %}
+                <span class="fw-semibold text-primary">Room {{ row.projected_room }}</span>
+                <span class="text-muted">({{ row.projected_room.room_type_label }} &middot; ₹{{ row.projected_rent|floatformat:0 }}/mo)</span>
+                {% if row.match_status == "fallback" %}
+                  <span class="badge text-bg-warning text-dark ms-1">Fallback Tier</span>
+                {% endif %}
+              {% else %}
+                <span class="text-warning-emphasis fw-semibold">Unallocated (Manual Assignment)</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer bg-light d-flex flex-wrap justify-content-between align-items-center gap-2 py-3">
+      <div class="small text-secondary">
+        Incompatible allocations close with <b>end_date = {{ preview.effective_date|date:"Y-m-d" }}</b> before updating <code>year_of_study</code>.
+      </div>
+      <button type="submit" class="btn btn-navy fw-semibold px-4" id="executePromotionBtn">
+        Confirm &amp; Execute Promotion
+      </button>
+    </div>
+  </form>
+  {% else %}
+  <div class="p-5 text-center text-muted">
+    No active students match {{ preview.from_label }}{% if preview.building %} in {{ preview.building.code }}{% endif %}. Try selecting another graduating year or building filter above.
+  </div>
+  {% endif %}
+</div>
+
+<script>
+function toggleAllPromoteBoxes() {
+  var boxes = Array.from(document.querySelectorAll('.promote-cb'));
+  var allChecked = boxes.every(function (b) { return b.checked; });
+  boxes.forEach(function (b) { b.checked = !allChecked; });
+}
+</script>
+{% endblock %}

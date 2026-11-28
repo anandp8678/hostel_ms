@@ -92,6 +92,9 @@
           Table View
         </a>
       </div>
+      {% if request.user.role == "admin" %}
+        <a class="btn btn-sm btn-outline-warning text-dark fw-semibold" href="{% url 'students_promote' %}">Promote Year</a>
+      {% endif %}
       <a class="btn btn-sm btn-outline-secondary fw-semibold" href="{% url 'students_import' %}">Import CSV</a>
       {% if add %}
         <a class="btn btn-sm btn-navy fw-semibold" href="{{ add }}">{{ add_label }}</a>
