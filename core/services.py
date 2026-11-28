@@ -947,7 +947,7 @@ def perform_visitor_checkout(visitor, actor=None):
 
 
 @transaction.atomic
-def transfer_student_room(student, target_room, transfer_date=None, actor=None, update_preference=False):
+def transfer_student_room(student, target_room, transfer_date=None, actor=None, update_preference=False, notify=True):
     """
     Atomically close the student's active RoomAllocation (end_date=transfer_date)
     and open a new RoomAllocation (start_date=transfer_date) in target_room.
@@ -998,20 +998,21 @@ def transfer_student_room(student, target_room, transfer_date=None, actor=None, 
     if fields_to_update:
         student.save(update_fields=fields_to_update)
 
-    cfg = FeeConfig.get_config()
-    new_rent = cfg.get_rent_for_room(target_room)
-    from_label = str(old_room) if old_room else "Unallocated"
-    notify_users(
-        recipients=_gate_stakeholders(student),
-        title=f"Room Transferred: {target_room}",
-        message=(
-            f"{student.user.display_name} has been transferred from {from_label} to Room {target_room} "
-            f"({target_room.room_type_label}, ₹{new_rent:,.0f}/mo) effective {transfer_date}."
-        ),
-        category="room_change",
-        link="/me/room-change/",
-        actor=actor,
-    )
+    if notify:
+        cfg = FeeConfig.get_config()
+        new_rent = cfg.get_rent_for_room(target_room)
+        from_label = str(old_room) if old_room else "Unallocated"
+        notify_users(
+            recipients=_gate_stakeholders(student),
+            title=f"Room Transferred: {target_room}",
+            message=(
+                f"{student.user.display_name} has been transferred from {from_label} to Room {target_room} "
+                f"({target_room.room_type_label}, ₹{new_rent:,.0f}/mo) effective {transfer_date}."
+            ),
+            category="room_change",
+            link="/me/room-change/",
+            actor=actor,
+        )
     return old_room, new_alloc
 
 
@@ -1316,4 +1317,149 @@ def execute_academic_promotion(
         "unassigned_count": len(unassigned_names),
         "unassigned_names": unassigned_names,
     }
+
+
+@transaction.atomic
+def submit_room_change_request(student, requested_room_type, reason, actor=None):
+    """Create a pending RoomChangeRequest with current/requested rent snapshot and notify staff."""
+    if student.is_currently_suspended:
+        raise ValidationError("Resident access is currently suspended. Room change requests are disabled.")
+    if requested_room_type not in ROOM_TYPE_CAPACITY:
+        raise ValidationError("Please select a valid sharing type (1 Sharing, 2 Sharing, or 3 Sharing).")
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValidationError("Please provide a brief reason for your room sharing change request.")
+
+    cur_room = student.room
+    if cur_room and cur_room.room_type == requested_room_type:
+        raise ValidationError(f"You already reside in a {cur_room.room_type_label} room ({cur_room}).")
+
+    cfg = FeeConfig.get_config()
+    cur_rt = cur_room.room_type if cur_room else (student.preferred_room_type or "")
+    cur_rent = cfg.get_rent_for_room(cur_room) if cur_room else cfg.get_rent_for_type(cur_rt)
+    req_rent = cfg.get_rent_for_type(requested_room_type)
+
+    rc = RoomChangeRequest(
+        student=student,
+        current_room=cur_room,
+        current_room_type=cur_rt,
+        requested_room_type=requested_room_type,
+        current_monthly_rent=cur_rent,
+        requested_monthly_rent=req_rent,
+        reason=reason,
+        status="Pending",
+    )
+    rc.full_clean()
+    rc.save()
+
+    notify_users(
+        recipients=scoped_staff_for_student(student),
+        title=f"Room Change Request {rc.request_code}: {student.user.display_name}",
+        message=(
+            f"{student.user.display_name} ({student.roll_no}) requested "
+            f"{rc.current_tier_label} -> {rc.requested_tier_label} ({rc.rent_difference_display}). "
+            f"Reason: {rc.reason}"
+        ),
+        category="room_change",
+        link="/room-changes/",
+        actor=actor or student.user,
+    )
+    if student.parent and student.parent.user:
+        notify_user(
+            recipient=student.parent.user,
+            title=f"Room Change Requested: {rc.request_code}",
+            message=(
+                f"{student.user.display_name} requested {rc.current_tier_label} -> "
+                f"{rc.requested_tier_label} ({rc.rent_difference_display})."
+            ),
+            category="room_change",
+            link="/me/room-change/",
+            actor=actor or student.user,
+        )
+    return rc
+
+
+@transaction.atomic
+def approve_room_change_request(room_change, target_room, actor=None, staff_note="", transfer_date=None):
+    """Approve a pending RoomChangeRequest, atomically transfer to target_room, and notify stakeholders."""
+    if room_change.status != "Pending":
+        raise ValidationError(f"{room_change.request_code} is already {room_change.status}.")
+    if room_change.student.is_currently_suspended:
+        raise ValidationError(
+            f"{room_change.student.user.display_name} is suspended and cannot be transferred."
+        )
+
+    target_room = Room.objects.select_related("building").get(pk=target_room.pk)
+    if target_room.room_type != room_change.requested_room_type:
+        raise ValidationError(
+            f"Room {target_room} is {target_room.room_type_label}, which does not match "
+            f"requested {room_change.requested_tier_label}."
+        )
+
+    old_room, _ = transfer_student_room(
+        room_change.student,
+        target_room,
+        transfer_date=transfer_date,
+        actor=actor,
+        update_preference=True,
+        notify=False,
+    )
+
+    room_change.status = "Approved"
+    room_change.target_room = target_room
+    room_change.staff_note = (staff_note or "").strip()
+    room_change.reviewed_by = actor
+    room_change.reviewed_at = timezone.now()
+    room_change.save(update_fields=["status", "target_room", "staff_note", "reviewed_by", "reviewed_at"])
+
+    from_label = str(old_room) if old_room else "Unallocated"
+    note_txt = f" Note: {room_change.staff_note}" if room_change.staff_note else ""
+    notify_users(
+        recipients=_gate_stakeholders(room_change.student),
+        title=f"Room Change Approved: {room_change.request_code}",
+        message=(
+            f"{room_change.student.user.display_name} transferred from {from_label} to Room {target_room} "
+            f"({target_room.room_type_label}, {room_change.rent_difference_display}).{note_txt}"
+        ),
+        category="room_change",
+        link="/me/room-change/",
+        actor=actor,
+    )
+    return room_change
+
+
+@transaction.atomic
+def reject_room_change_request(room_change, actor=None, staff_note=""):
+    """Reject a pending RoomChangeRequest and notify student & parent."""
+    if room_change.status != "Pending":
+        raise ValidationError(f"{room_change.request_code} is already {room_change.status}.")
+    room_change.status = "Rejected"
+    room_change.staff_note = (staff_note or "").strip()
+    room_change.reviewed_by = actor
+    room_change.reviewed_at = timezone.now()
+    room_change.save(update_fields=["status", "staff_note", "reviewed_by", "reviewed_at"])
+
+    note_txt = f" Reason: {room_change.staff_note}" if room_change.staff_note else ""
+    notify_users(
+        recipients=_gate_stakeholders(room_change.student),
+        title=f"Room Change Declined: {room_change.request_code}",
+        message=(
+            f"Request {room_change.request_code} ({room_change.current_tier_label} -> "
+            f"{room_change.requested_tier_label}) was not approved.{note_txt}"
+        ),
+        category="room_change",
+        link="/me/room-change/",
+        actor=actor,
+    )
+    return room_change
+
+
+@transaction.atomic
+def cancel_room_change_request(room_change, actor=None):
+    """Cancel a student's own Pending RoomChangeRequest."""
+    if room_change.status != "Pending":
+        raise ValidationError("Only Pending room change requests can be cancelled.")
+    room_change.status = "Cancelled"
+    room_change.save(update_fields=["status"])
+    return room_change
 
