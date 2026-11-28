@@ -661,6 +661,7 @@ class Notification(models.Model):
         ("complaint", "Complaint"),
         ("leave", "Leave"),
         ("gate", "Gate & Visitors"),
+        ("room_change", "Room & Transfers"),
         ("general", "General"),
     ]
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
@@ -787,3 +788,75 @@ class VisitorLog(models.Model):
     def clean(self):
         if self.checked_in_at and self.checked_out_at and self.checked_out_at < self.checked_in_at:
             raise ValidationError("Visitor check-out time cannot be earlier than check-in time.")
+
+
+class RoomChangeRequest(models.Model):
+    """Student request to switch between 1/2/3 sharing room tiers with monthly rent delta."""
+
+    STATUS_CHOICES = [
+        ("Pending", "Pending"),
+        ("Approved", "Approved"),
+        ("Rejected", "Rejected"),
+        ("Cancelled", "Cancelled"),
+    ]
+
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="room_change_requests")
+    current_room = models.ForeignKey(
+        Room, null=True, blank=True, on_delete=models.SET_NULL, related_name="outgoing_change_requests"
+    )
+    current_room_type = models.CharField(max_length=15, choices=ROOM_TYPE_CHOICES, blank=True)
+    requested_room_type = models.CharField("Requested Sharing Type", max_length=15, choices=ROOM_TYPE_CHOICES)
+    current_monthly_rent = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    requested_monthly_rent = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    reason = models.CharField(max_length=300)
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="Pending")
+    target_room = models.ForeignKey(
+        Room, null=True, blank=True, on_delete=models.SET_NULL, related_name="incoming_change_requests"
+    )
+    staff_note = models.CharField(max_length=300, blank=True)
+    reviewed_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="reviewed_room_changes"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.request_code} · {self.student} -> {self.requested_tier_label}"
+
+    @property
+    def request_code(self):
+        return f"RC-{self.pk:04d}" if self.pk else "RC-NEW"
+
+    @property
+    def current_tier_label(self):
+        if self.current_room_type in dict(ROOM_TYPE_CHOICES):
+            return dict(ROOM_TYPE_CHOICES)[self.current_room_type]
+        return "Unallocated"
+
+    @property
+    def requested_tier_label(self):
+        return dict(ROOM_TYPE_CHOICES).get(self.requested_room_type, self.requested_room_type)
+
+    @property
+    def rent_difference(self):
+        return Decimal(self.requested_monthly_rent or 0) - Decimal(self.current_monthly_rent or 0)
+
+    @property
+    def rent_difference_display(self):
+        diff = self.rent_difference
+        if diff > 0:
+            return f"+₹{diff:,.0f}/mo"
+        if diff < 0:
+            return f"-₹{abs(diff):,.0f}/mo"
+        return "₹0/mo (No change)"
+
+    def clean(self):
+        if self.status == "Pending" and self.student_id and self.requested_room_type:
+            cur_room = self.student.room
+            if cur_room and cur_room.room_type == self.requested_room_type:
+                raise ValidationError("Selected sharing type matches your current active room.")
+            if RoomChangeRequest.objects.filter(student_id=self.student_id, status="Pending").exclude(pk=self.pk).exists():
+                raise ValidationError("You already have a pending room change request awaiting review.")
