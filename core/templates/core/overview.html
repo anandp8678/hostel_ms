@@ -41,6 +41,9 @@
           <a class="btn btn-sm btn-navy fw-semibold" href="{% url 'room_detail' room.pk %}">
             View Room {{ room }}
           </a>
+          <button type="button" class="btn btn-sm btn-outline-warning text-dark fw-semibold" data-bs-toggle="modal" data-bs-target="#transferModal">
+            Transfer Room
+          </button>
         {% else %}
           <button type="button" class="btn btn-sm btn-success fw-semibold" data-bs-toggle="modal" data-bs-target="#allocateModal">
             Allocate Room
@@ -167,6 +170,13 @@
       <div class="small text-muted mt-auto">
         {% if room %}
           <b>{{ room.room_type_label }}</b> · <b>{{ room.occupied }}</b> of <b>{{ room.capacity }}</b> beds occupied ({{ roommates|length }} roommate{{ roommates|length|pluralize }})
+          {% if staff_view %}
+            <div class="mt-2">
+              <button type="button" class="btn btn-sm btn-outline-warning text-dark w-100 fw-semibold" data-bs-toggle="modal" data-bs-target="#transferModal">
+                Transfer Room
+              </button>
+            </div>
+          {% endif %}
         {% else %}
           {% if s.preferred_room_type %}Preferred: <b>{{ s.preferred_room_type_label }}</b> · {% endif %}Awaiting room allocation by warden
           {% if staff_view %}
@@ -1149,6 +1159,109 @@ document.addEventListener("DOMContentLoaded", function () {
     var prefBtn = document.querySelector('.modal-rt-btn[data-rt="' + pref + '"]');
     if (matchingOpt && prefBtn) {
       filterModalRooms(pref, prefBtn);
+    }
+  }
+});
+</script>
+{% endif %}
+
+{% if staff_view and room %}
+<!-- Staff 1-Click Room Transfer Modal -->
+<div class="modal fade" id="transferModal" tabindex="-1" aria-labelledby="transferModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <form method="post" action="{% url 'student_transfer' s.pk %}">
+        {% csrf_token %}
+        <div class="modal-header text-white" style="background:var(--navy);">
+          <h5 class="modal-title fw-bold" id="transferModalLabel">Transfer Room &middot; {{ s.user.display_name }}</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-4">
+          <div class="alert alert-warning small mb-3">
+            Transfers <strong>{{ s.user.display_name }}</strong> ({{ s.roll_no }}, <strong>{{ s.year_label }}</strong>) out of <strong>Room {{ room }} ({{ room.room_type_label }})</strong> and opens a new allocation in one atomic step. Current occupancy history is preserved with end date set to the transfer date.
+          </div>
+
+          {% if transfer_rooms %}
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary d-block mb-1">Filter Target Rooms by Sharing Type</label>
+            <div class="btn-group btn-group-sm flex-wrap" role="group" id="transferModalTypeFilter">
+              <button type="button" class="btn btn-navy transfer-rt-btn active" data-rt="" onclick="filterTransferRooms('', this)">All Types</button>
+              {% for rt_val, rt_lbl in room_type_choices %}
+                <button type="button" class="btn btn-outline-secondary transfer-rt-btn" data-rt="{{ rt_val }}" onclick="filterTransferRooms('{{ rt_val }}', this)">{{ rt_lbl }}</button>
+              {% endfor %}
+            </div>
+            <div id="transferRoomFilterHint" class="form-text small text-warning-emphasis d-none">
+              No vacant target rooms match this sharing type. Select "All Types" to view other available rooms.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary">Select Target Vacant Room *</label>
+            <select name="room_id" id="transferRoomSelect" class="form-select" required>
+              <option value="" disabled selected>Choose target room...</option>
+              {% for r in transfer_rooms %}
+                <option value="{{ r.pk }}" data-room-type="{{ r.room_type }}">
+                  Room {{ r }} ({{ r.floor_display }}) &mdash; {{ r.room_type_label }} &middot; {{ r.vacancy }} vacant bed{{ r.vacancy|pluralize }} &middot; ₹{{ r.monthly_rent_display|floatformat:0 }}/mo
+                </option>
+              {% endfor %}
+            </select>
+            <div class="form-text small text-muted">
+              Only active, non-blacklisted rooms compatible with {{ s.year_label }} are listed.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary">Transfer Effective Date *</label>
+            <input type="date" name="transfer_date" class="form-control form-control-sm" value="{{ today|date:'Y-m-d' }}" required>
+          </div>
+          {% else %}
+            <div class="alert alert-warning small mb-0">
+              No compatible vacant target rooms are currently available for transfer.
+            </div>
+          {% endif %}
+        </div>
+        <div class="modal-footer bg-light">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          {% if transfer_rooms %}
+            <button type="submit" class="btn btn-sm btn-warning fw-semibold px-3 text-dark">Confirm Transfer</button>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+function filterTransferRooms(rt, btn) {
+  var sel = document.getElementById("transferRoomSelect");
+  var hint = document.getElementById("transferRoomFilterHint");
+  if (!sel) return;
+  document.querySelectorAll(".transfer-rt-btn").forEach(function (b) {
+    b.classList.remove("btn-navy", "active");
+    b.classList.add("btn-outline-secondary");
+  });
+  if (btn) {
+    btn.classList.remove("btn-outline-secondary");
+    btn.classList.add("btn-navy", "active");
+  }
+  var visibleCount = 0;
+  var selectedHidden = false;
+  Array.from(sel.options).forEach(function (opt) {
+    if (!opt.value) return;
+    var match = !rt || opt.getAttribute("data-room-type") === rt;
+    opt.hidden = !match;
+    opt.disabled = !match;
+    if (match) visibleCount++;
+    if (!match && opt.selected) selectedHidden = true;
+  });
+  if (selectedHidden) sel.value = "";
+  if (hint) hint.classList.toggle("d-none", visibleCount > 0);
+}
+document.addEventListener("DOMContentLoaded", function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get("open_transfer") === "1") {
+    var modalEl = document.getElementById("transferModal");
+    if (modalEl && typeof bootstrap !== "undefined") {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
     }
   }
 });

@@ -262,6 +262,9 @@
                   <a href="{% url 'student_detail' s.pk %}" class="btn btn-sm btn-outline-primary fw-semibold">
                     Profile &rarr;
                   </a>
+                  <a href="{% url 'student_detail' s.pk %}?open_transfer=1" class="btn btn-sm btn-outline-warning text-dark fw-semibold" title="Transfer student to another room">
+                    Transfer
+                  </a>
                   <!-- Vacate Bed Action -->
                   <form method="post" action="{% url 'allocation_vacate' alloc.pk %}" class="d-inline" onsubmit="return confirm('Mark {{ s.user.display_name }} as vacated from Room {{ room }}?');">
                     {% csrf_token %}

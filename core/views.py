@@ -38,6 +38,7 @@ from .services import (
     perform_visitor_checkout,
     scoped_staff_for_student,
     sync_overdue_gate_passes,
+    transfer_student_room,
 )
 
 
@@ -1215,11 +1216,20 @@ def overview(s, user):
     room = s.room
     roommates = []
     available_rooms = []
+    transfer_rooms = []
     if room:
         allocs = m.RoomAllocation.objects.filter(
             room=room, end_date__isnull=True
         ).exclude(student=s).select_related("student__user", "student__parent__user")
         roommates = [a.student for a in allocs]
+        if user.role in STAFF:
+            transfer_rooms = [
+                r for r in _vacant_rooms(
+                    building=getattr(user, "scoped_building", None),
+                    student_year=s.year_of_study,
+                )
+                if r.pk != room.pk
+            ]
     elif user.role in STAFF:
         available_rooms = _vacant_rooms(
             building=getattr(user, "scoped_building", None),
@@ -1282,6 +1292,7 @@ def overview(s, user):
         notices=notices,
         badge=badge,
         available_rooms=available_rooms,
+        transfer_rooms=transfer_rooms,
         room_type_choices=m.ROOM_TYPE_CHOICES,
         cfg=m.FeeConfig.get_config(),
     )
@@ -2460,6 +2471,45 @@ def student_allocate(request, pk):
 
     messages.success(request, f"{s.user.display_name} allocated to Room {room} successfully.")
     return redirect("student_detail", pk=s.pk)
+
+
+@staff
+@require_POST
+def student_transfer(request, pk):
+    """Atomically vacate student's current room allocation and open new allocation in target room."""
+    s = get_object_or_404(m.Student.objects.select_related("user", "parent__user"), pk=pk)
+    _assert_building_access(request, student=s)
+    room_id = (request.POST.get("room_id") or "").strip()
+    transfer_date_str = (request.POST.get("transfer_date") or "").strip()
+    next_url = request.POST.get("next") or reverse("student_detail", args=[s.pk])
+
+    if not room_id:
+        messages.error(request, "Please select a target room for transfer.")
+        return redirect(next_url)
+
+    target_room = get_object_or_404(m.Room.objects.select_related("building"), pk=room_id)
+    _assert_building_access(request, room=target_room)
+
+    transfer_date = date.today()
+    if transfer_date_str:
+        transfer_date = parse_date(transfer_date_str) or date.today()
+
+    try:
+        old_room, _ = transfer_student_room(
+            s,
+            target_room,
+            transfer_date=transfer_date,
+            actor=request.user,
+        )
+        from_label = str(old_room) if old_room else "Unallocated"
+        messages.success(
+            request,
+            f"Transferred {s.user.display_name} from {from_label} to Room {target_room} effective {transfer_date}.",
+        )
+    except ValidationError as e:
+        messages.error(request, getattr(e, "messages", [str(e)])[0])
+
+    return redirect(next_url)
 
 
 def _enact_student_suspension(s, actor, reason, start_date, end_date=None):
