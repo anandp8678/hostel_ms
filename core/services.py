@@ -19,6 +19,7 @@ from .models import (
     Parent,
     Room,
     RoomAllocation,
+    RoomChangeRequest,
     Student,
     User,
     VisitorLog,
@@ -943,4 +944,73 @@ def perform_visitor_checkout(visitor, actor=None):
     visitor.checked_out_at = timezone.now()
     visitor.save(update_fields=["checked_out_at"])
     return visitor
+
+
+@transaction.atomic
+def transfer_student_room(student, target_room, transfer_date=None, actor=None, update_preference=False):
+    """
+    Atomically close the student's active RoomAllocation (end_date=transfer_date)
+    and open a new RoomAllocation (start_date=transfer_date) in target_room.
+    """
+    transfer_date = transfer_date or date.today()
+    target_room = Room.objects.select_related("building").get(pk=target_room.pk)
+
+    if target_room.is_blacklisted:
+        cause = f" ({target_room.blacklist_reason})" if target_room.blacklist_reason else ""
+        raise ValidationError(f"Room {target_room} is blacklisted{cause} and cannot accept transfers.")
+
+    if target_room.building_id and not target_room.building.allows_year(student.year_of_study):
+        raise ValidationError(
+            f"Anti-ragging policy violation: {student.year_label} students cannot reside in "
+            f"{target_room.building.name} (restricted to {target_room.building.allowed_years_display})."
+        )
+
+    active_alloc = student.allocations.select_related("room__building").filter(end_date__isnull=True).first()
+    if active_alloc and active_alloc.room_id == target_room.pk:
+        raise ValidationError(f"{student.user.display_name} is already allocated to Room {target_room}.")
+
+    if active_alloc and transfer_date < active_alloc.start_date:
+        raise ValidationError(
+            f"Transfer date ({transfer_date}) cannot be earlier than current room start date ({active_alloc.start_date})."
+        )
+
+    if target_room.occupied >= target_room.capacity:
+        raise ValidationError(
+            f"Room {target_room} is full (capacity: {target_room.capacity}, occupied: {target_room.occupied})."
+        )
+
+    old_room = active_alloc.room if active_alloc else None
+    if active_alloc:
+        active_alloc.end_date = transfer_date
+        active_alloc.save(update_fields=["end_date"])
+
+    new_alloc = RoomAllocation(student=student, room=target_room, start_date=transfer_date)
+    new_alloc.full_clean()
+    new_alloc.save()
+
+    fields_to_update = []
+    if not student.is_active:
+        student.is_active = True
+        fields_to_update.append("is_active")
+    if update_preference and target_room.room_type and student.preferred_room_type != target_room.room_type:
+        student.preferred_room_type = target_room.room_type
+        fields_to_update.append("preferred_room_type")
+    if fields_to_update:
+        student.save(update_fields=fields_to_update)
+
+    cfg = FeeConfig.get_config()
+    new_rent = cfg.get_rent_for_room(target_room)
+    from_label = str(old_room) if old_room else "Unallocated"
+    notify_users(
+        recipients=_gate_stakeholders(student),
+        title=f"Room Transferred: {target_room}",
+        message=(
+            f"{student.user.display_name} has been transferred from {from_label} to Room {target_room} "
+            f"({target_room.room_type_label}, ₹{new_rent:,.0f}/mo) effective {transfer_date}."
+        ),
+        category="room_change",
+        link="/me/room-change/",
+        actor=actor,
+    )
+    return old_room, new_alloc
 
