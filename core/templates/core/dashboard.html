@@ -53,6 +53,9 @@
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'students_new' %}">
           Add Student
         </a>
+        <a class="btn btn-sm btn-outline-warning text-dark fw-semibold" href="{% url 'students_promote' %}">
+          Promote Year
+        </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'rooms_bulk_add' %}">
           Bulk Add Rooms
         </a>
@@ -247,7 +250,7 @@
     <div class="card p-3 h-100 card-hover bg-white">
       <div class="d-flex justify-content-between align-items-start mb-2">
         <span class="text-secondary small fw-semibold text-uppercase tracking-wider">Alerts &amp; Actions</span>
-        {% if pending_leaves_count > 0 or open_complaints_count > 0 or overdue_fees_count > 0 or late_gate_passes_count > 0 or pending_gate_passes_count > 0 %}
+        {% if pending_leaves_count > 0 or open_complaints_count > 0 or overdue_fees_count > 0 or late_gate_passes_count > 0 or pending_gate_passes_count > 0 or pending_room_changes_count > 0 %}
           <span class="badge text-bg-danger rounded-pill">Action Needed</span>
         {% else %}
           <span class="badge text-bg-success rounded-pill">All Clear</span>
@@ -262,6 +265,7 @@
         <span class="badge text-bg-light border text-danger">{{ overdue_fees_count }} overdue fees</span>
         <span class="badge {% if late_gate_passes_count > 0 %}text-bg-danger{% else %}text-bg-light border text-dark{% endif %}">{{ currently_out_count }} out &middot; {{ late_gate_passes_count }} late</span>
         <span class="badge text-bg-light border text-primary">{{ active_visitors_count }} visitor{{ active_visitors_count|pluralize }}</span>
+        <a href="{% url 'room_changes' %}?status=Pending" class="badge text-decoration-none {% if pending_room_changes_count > 0 %}text-bg-warning text-dark{% else %}text-bg-light border text-dark{% endif %}">{{ pending_room_changes_count }} room change{{ pending_room_changes_count|pluralize }}</a>
       </div>
       <div class="d-flex justify-content-between small text-muted mt-auto">
         <span>Balance: <b>₹{{ total_balance_amount }}</b></span>

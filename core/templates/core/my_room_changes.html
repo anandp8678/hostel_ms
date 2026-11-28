@@ -1,0 +1,240 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Room Sharing &amp; Tier Change Requests</h4>
+        <span class="badge {% if parent_view %}text-bg-info text-dark{% else %}text-bg-primary{% endif %} rounded-pill">
+          {% if parent_view %}Parent Portal (View){% else %}Student Portal{% endif %}
+        </span>
+      </div>
+      <div class="text-secondary small">
+        Compare 1 Sharing, 2 Sharing, and 3 Sharing monthly room rents and track sharing tier upgrade or downgrade requests.
+      </div>
+      {% if parent_view and all_children|length > 1 %}
+        <div class="mt-2 d-flex flex-wrap align-items-center gap-2">
+          <span class="small fw-semibold text-dark">Filter Ward:</span>
+          <a href="{% url 'my_room_changes' %}" class="badge {% if not selected_child %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-1 px-2">All Wards</a>
+          {% for ch in all_children %}
+            <a href="{% url 'my_room_changes' %}?child={{ ch.pk }}" class="badge {% if selected_child and selected_child.pk == ch.pk %}text-bg-primary{% else %}text-bg-light border text-dark text-decoration-none{% endif %} py-1 px-2">
+              {{ ch.user.first_name }} ({{ ch.roll_no }})
+            </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{% url 'student_rooms' %}" class="btn btn-sm btn-outline-primary fw-semibold">Room Directory</a>
+      <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary fw-semibold">&larr; Dashboard</a>
+    </div>
+  </div>
+</div>
+
+{% if not parent_view %}
+<!-- Current Allocation + Tier Comparison Cards -->
+<div class="row g-3 mb-4">
+  {% for card in tier_cards %}
+  <div class="col-12 col-md-4">
+    <div class="card p-3 h-100 bg-white border {% if card.is_current %}border-primary shadow-sm{% else %}border-0 shadow-sm{% endif %}">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <h6 class="fw-bold mb-0" style="color:var(--navy);">{{ card.label }}</h6>
+        {% if card.is_current %}
+          <span class="badge text-bg-primary">Current Tier</span>
+        {% elif card.diff > 0 %}
+          <span class="badge text-bg-warning text-dark">{{ card.diff_display }}</span>
+        {% elif card.diff < 0 %}
+          <span class="badge text-bg-success">{{ card.diff_display }}</span>
+        {% else %}
+          <span class="badge text-bg-secondary">{{ card.diff_display }}</span>
+        {% endif %}
+      </div>
+      <div class="fs-4 fw-bold text-dark mb-1">₹{{ card.rent|floatformat:0 }}<span class="fs-6 text-muted fw-normal">/month</span></div>
+      <div class="small text-secondary mb-3">
+        {{ card.free_beds }} compatible vacant bed{{ card.free_beds|pluralize }} currently open
+      </div>
+      {% if not card.is_current and not student.is_currently_suspended and not has_pending_request %}
+        <button type="button" class="btn btn-sm btn-outline-navy mt-auto fw-semibold" onclick="pickRoomTier('{{ card.room_type }}')">
+          Select {{ card.label }}
+        </button>
+      {% elif card.is_current %}
+        <span class="small text-primary fw-semibold mt-auto">Your active room sharing plan{% if cur_room %} ({{ cur_room }}){% endif %}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="row g-4">
+  <!-- Request Submission Column -->
+  <div class="col-12 col-lg-5">
+    <div class="card p-4 bg-white border-0 shadow-sm h-100">
+      <h5 class="fw-bold mb-2" style="color:var(--navy);">Request Sharing Tier Change</h5>
+      <div class="small text-secondary mb-3">
+        Current Plan:
+        {% if cur_room %}
+          <b>Room {{ cur_room }} ({{ cur_tier_label }})</b> at <b>₹{{ cur_rent|floatformat:0 }}/mo</b>
+        {% else %}
+          <b>Unallocated</b> (Preferred: {{ cur_tier_label }} &middot; ₹{{ cur_rent|floatformat:0 }}/mo)
+        {% endif %}
+      </div>
+
+      {% if student.is_currently_suspended %}
+        <div class="alert alert-danger small mb-0">
+          Hostel resident access is currently suspended. Room change requests are disabled.
+        </div>
+      {% elif has_pending_request %}
+        <div class="alert alert-warning small mb-0">
+          You already have a <strong>Pending</strong> room change request awaiting Warden/Admin review. Cancel it in the table if you want to submit a different sharing type.
+        </div>
+      {% else %}
+        <form method="post" action="{% url 'my_room_changes' %}" id="roomChangeSubmitForm">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary">{{ form.requested_room_type.label }}</label>
+            {{ form.requested_room_type }}
+            {% if form.requested_room_type.errors %}
+              <div class="text-danger small mt-1">{{ form.requested_room_type.errors.0 }}</div>
+            {% endif %}
+          </div>
+
+          <div class="alert alert-info py-2 px-3 small mb-3" id="rentDeltaPreview">
+            Select a sharing tier above to view the exact monthly fee difference.
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold text-secondary">{{ form.reason.label }}</label>
+            {{ form.reason }}
+            {% if form.reason.errors %}
+              <div class="text-danger small mt-1">{{ form.reason.errors.0 }}</div>
+            {% endif %}
+          </div>
+
+          {% if form.non_field_errors %}
+            <div class="alert alert-danger small">{{ form.non_field_errors.0 }}</div>
+          {% endif %}
+
+          <button type="submit" class="btn btn-navy fw-semibold w-100">Submit Room Change Request</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-12 col-lg-7">
+{% else %}
+<div class="row g-4">
+  <div class="col-12">
+{% endif %}
+
+    <!-- History Table -->
+    <div class="card bg-white border-0 shadow-sm h-100">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-bold" style="color:var(--navy);">Room Change Request History</h6>
+        <span class="badge text-bg-light border text-dark">{{ requests_list|length }} record{{ requests_list|length|pluralize }}</span>
+      </div>
+      {% if requests_list %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 small">
+            <thead class="table-light">
+              <tr>
+                <th>Request</th>
+                {% if parent_view %}<th>Student</th>{% endif %}
+                <th>Tier Switch</th>
+                <th>Monthly Fee Delta</th>
+                <th>Status</th>
+                <th>Assigned Room</th>
+                {% if not parent_view %}<th class="text-end">Action</th>{% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for rc in requests_list %}
+              <tr>
+                <td>
+                  <div class="fw-bold text-dark">{{ rc.request_code }}</div>
+                  <div class="text-muted">{{ rc.created_at|date:"d M Y" }}</div>
+                </td>
+                {% if parent_view %}
+                  <td class="fw-semibold">{{ rc.student.user.display_name }}</td>
+                {% endif %}
+                <td>
+                  <div><b>{{ rc.current_tier_label }}</b> &rarr; <b>{{ rc.requested_tier_label }}</b></div>
+                  <div class="text-muted">{{ rc.reason|truncatechars:45 }}</div>
+                </td>
+                <td>
+                  <span class="badge {% if rc.rent_difference > 0 %}text-bg-warning text-dark{% elif rc.rent_difference < 0 %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                    {{ rc.rent_difference_display }}
+                  </span>
+                  <div class="text-muted mt-1" style="font-size:0.75rem;">
+                    ₹{{ rc.current_monthly_rent|floatformat:0 }} &rarr; ₹{{ rc.requested_monthly_rent|floatformat:0 }}
+                  </div>
+                </td>
+                <td>
+                  {{ rc.status_badge }}
+                  {% if rc.staff_note %}
+                    <div class="text-muted mt-1" style="font-size:0.75rem;">Note: {{ rc.staff_note }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if rc.target_room %}
+                    <span class="fw-semibold text-success">Room {{ rc.target_room }}</span>
+                  {% elif rc.current_room %}
+                    <span class="text-muted">From {{ rc.current_room }}</span>
+                  {% else %}
+                    <span class="text-muted">&mdash;</span>
+                  {% endif %}
+                </td>
+                {% if not parent_view %}
+                <td class="text-end">
+                  {% if rc.status == "Pending" %}
+                    <form method="post" action="{% url 'my_room_change_cancel' rc.pk %}" class="d-inline" onsubmit="return confirm('Cancel request {{ rc.request_code }}?');">
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2">Cancel</button>
+                    </form>
+                  {% else %}
+                    <span class="text-muted">&mdash;</span>
+                  {% endif %}
+                </td>
+                {% endif %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="p-4 text-center text-muted small">
+          No room sharing change requests submitted yet.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if not parent_view %}
+<script>
+var tierDeltaMap = {{ tier_delta_json|safe }};
+function updateRentDeltaBanner() {
+  var sel = document.getElementById("id_requested_room_type");
+  var box = document.getElementById("rentDeltaPreview");
+  if (!sel || !box) return;
+  var info = tierDeltaMap[sel.value];
+  if (!info) {
+    box.textContent = "Select a sharing tier above to view the exact monthly fee difference.";
+    return;
+  }
+  box.innerHTML = "<strong>" + info.label + "</strong>: ₹" + info.rent + "/mo (<strong>" + info.diff_display + "</strong> vs current rate of ₹{{ cur_rent|floatformat:0 }}/mo).";
+}
+function pickRoomTier(rt) {
+  var sel = document.getElementById("id_requested_room_type");
+  if (!sel) return;
+  sel.value = rt;
+  updateRentDeltaBanner();
+  sel.focus();
+}
+document.addEventListener("DOMContentLoaded", function () {
+  var sel = document.getElementById("id_requested_room_type");
+  if (sel) {
+    sel.addEventListener("change", updateRentDeltaBanner);
+    updateRentDeltaBanner();
+  }
+});
+</script>
+{% endif %}
+{% endblock %}

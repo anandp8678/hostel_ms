@@ -25,6 +25,7 @@ from core.models import (
     Parent,
     Room,
     RoomAllocation,
+    RoomChangeRequest,
     Student,
     User,
     VisitorLog,
@@ -3109,7 +3110,7 @@ class GatePassAndVisitorTests(TestCase):
         )
         self.assertFalse(bad_gp_form.is_valid())
 
-        bad_visitor_form = VisitorLogForm(
+        bad_form = VisitorLogForm(
             data={
                 "student": str(self.s1.pk),
                 "visitor_name": "",
@@ -3119,9 +3120,9 @@ class GatePassAndVisitorTests(TestCase):
                 "id_proof_last4": "4821",
             }
         )
-        self.assertFalse(bad_visitor_form.is_valid())
-        self.assertIn("visitor_name", bad_visitor_form.errors)
-        self.assertIn("phone", bad_visitor_form.errors)
+        self.assertFalse(bad_form.is_valid())
+        self.assertIn("visitor_name", bad_form.errors)
+        self.assertIn("phone", bad_form.errors)
 
     def test_full_gate_pass_lifecycle_optional_parent_ack_and_notifications(self):
         c_student = Client()
@@ -3424,3 +3425,333 @@ class GatePassAndVisitorTests(TestCase):
         self.assertEqual(dash.status_code, 200)
         self.assertContains(dash, "lateReturnsBanner")
         self.assertContains(dash, "LATE RETURNS")
+
+
+class PromotionTransferAndRoomChangeTests(TestCase):
+    def setUp(self):
+        self.b1, _ = Building.objects.get_or_create(
+            code="B1",
+            defaults={
+                "name": "First Year Block",
+                "description": "Dedicated 1st-year block",
+                "allowed_years": "1",
+                "is_first_year_only": True,
+            },
+        )
+        self.b2, _ = Building.objects.get_or_create(
+            code="B2",
+            defaults={
+                "name": "Senior Block",
+                "description": "Senior block",
+                "allowed_years": "2,3,4",
+                "is_first_year_only": False,
+            },
+        )
+        self.cfg = FeeConfig.get_config()
+        self.cfg.rent_1_sharing = Decimal("3000.00")
+        self.cfg.rent_2_sharing = Decimal("2000.00")
+        self.cfg.rent_3_sharing = Decimal("1500.00")
+        self.cfg.save()
+
+        self.admin_u = User.objects.create_superuser(
+            username="prom_admin", password="Pass@1234", role="admin", first_name="Prom", last_name="Admin"
+        )
+        self.head_warden = User.objects.create_user(
+            username="prom_warden", password="Pass@1234", role="warden", is_staff=True, first_name="Head", last_name="Warden"
+        )
+        self.fy_warden = User.objects.create_user(
+            username="prom_fywarden",
+            password="Pass@1234",
+            role="warden",
+            is_staff=True,
+            assigned_building=self.b1,
+            first_name="First",
+            last_name="Warden",
+        )
+
+        self.r_b1_2s = Room.objects.create(building=self.b1, block="G", number="701", room_type="2_sharing")
+        self.r_b1_1s = Room.objects.create(building=self.b1, block="G", number="702", room_type="1_sharing")
+        self.r_b2_1s = Room.objects.create(building=self.b2, block="1", number="703", room_type="1_sharing")
+        self.r_b2_3s = Room.objects.create(building=self.b2, block="1", number="704", room_type="3_sharing")
+        self.r_b2_2s = Room.objects.create(building=self.b2, block="1", number="705", room_type="2_sharing")
+
+        self.p1_u = User.objects.create_user(
+            username="pm_parent_1", password="Pass@1234", role="parent", phone="9811001100", first_name="Raj", last_name="Nair"
+        )
+        self.p1 = Parent.objects.create(user=self.p1_u)
+        self.s1_u = User.objects.create_user(
+            username="pm_student_1", password="Pass@1234", role="student", phone="9800110011", first_name="Asha", last_name="Nair"
+        )
+        self.s1 = Student.objects.create(
+            user=self.s1_u,
+            roll_no="PM101",
+            course="B.Tech CSE",
+            year_of_study=1,
+            preferred_room_type="1_sharing",
+            parent=self.p1,
+        )
+        allocate_student_to_room(self.s1, self.r_b1_2s)
+
+        self.s2_u = User.objects.create_user(
+            username="pm_student_2", password="Pass@1234", role="student", phone="9800110022", first_name="Ritu", last_name="Menon"
+        )
+        self.s2 = Student.objects.create(
+            user=self.s2_u,
+            roll_no="PM102",
+            course="B.Tech ECE",
+            year_of_study=1,
+            preferred_room_type="3_sharing",
+        )
+        allocate_student_to_room(self.s2, self.r_b1_2s)
+
+        self.s3_u = User.objects.create_user(
+            username="pm_student_3", password="Pass@1234", role="student", phone="9800110033", first_name="Dev", last_name="Pillai"
+        )
+        self.s3 = Student.objects.create(
+            user=self.s3_u,
+            roll_no="PM201",
+            course="B.Tech ME",
+            year_of_study=2,
+            preferred_room_type="2_sharing",
+        )
+        allocate_student_to_room(self.s3, self.r_b2_2s)
+
+    def test_atomic_room_transfer_closes_old_opens_new_and_enforces_rules(self):
+        c_fy = Client()
+        c_fy.force_login(self.fy_warden)
+
+        prof = c_fy.get(reverse("student_detail", args=[self.s1.pk]))
+        self.assertEqual(prof.status_code, 200)
+        self.assertContains(prof, "Transfer Room")
+        self.assertContains(prof, "transferModal")
+
+        today = date.today()
+        resp = c_fy.post(
+            reverse("student_transfer", args=[self.s1.pk]),
+            {"room_id": str(self.r_b1_1s.pk), "transfer_date": today.isoformat()},
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        old_alloc = RoomAllocation.objects.get(student=self.s1, room=self.r_b1_2s)
+        new_alloc = RoomAllocation.objects.get(student=self.s1, room=self.r_b1_1s, end_date__isnull=True)
+        self.assertEqual(old_alloc.end_date, today)
+        self.assertEqual(new_alloc.start_date, today)
+        self.assertEqual(self.s1.room, self.r_b1_1s)
+        self.assertTrue(Notification.objects.filter(recipient=self.s1_u, category="room_change").exists())
+        self.assertTrue(Notification.objects.filter(recipient=self.p1_u, category="room_change").exists())
+
+        # Blocked cases: same room, full room, blacklisted room, and B2 building rule for 1st-year resident
+        c_fy.post(reverse("student_transfer", args=[self.s1.pk]), {"room_id": str(self.r_b1_1s.pk)}, follow=True)
+        self.assertEqual(self.s1.room, self.r_b1_1s)
+
+        # FY Warden cannot transfer B2 resident (403)
+        self.assertEqual(
+            c_fy.post(reverse("student_transfer", args=[self.s3.pk]), {"room_id": str(self.r_b2_3s.pk)}).status_code,
+            403,
+        )
+
+        # Head Warden cannot transfer 1st-year resident into Senior Block B2
+        c_head = Client()
+        c_head.force_login(self.head_warden)
+        c_head.post(reverse("student_transfer", args=[self.s1.pk]), {"room_id": str(self.r_b2_1s.pk)}, follow=True)
+        self.assertEqual(self.s1.room, self.r_b1_1s)
+
+    def test_academic_year_promotion_wizard_b1_to_b2_auto_assign_and_permissions(self):
+        # Wardens and students get 403 on Admin-only Promotion Wizard
+        for other_u in (self.head_warden, self.fy_warden, self.s1_u):
+            c_other = Client()
+            c_other.force_login(other_u)
+            self.assertEqual(c_other.get(reverse("students_promote")).status_code, 403)
+
+        c_admin = Client()
+        c_admin.force_login(self.admin_u)
+
+        # Dry-run preview defaults to 1st Year + B1
+        prev = c_admin.get(reverse("students_promote"))
+        self.assertEqual(prev.status_code, 200)
+        self.assertContains(prev, self.s1.roll_no)
+        self.assertContains(prev, self.s2.roll_no)
+        self.assertContains(prev, "Incompatible Block")
+        self.assertContains(prev, self.r_b2_1s.short_code)
+        self.assertContains(prev, self.r_b2_3s.short_code)
+
+        # Execute promotion for B1 1st-year cohort (1st Year -> 2nd Year)
+        post_resp = c_admin.post(
+            reverse("students_promote"),
+            {
+                "from_year": "1",
+                "building": str(self.b1.pk),
+                "effective_date": date.today().isoformat(),
+                "auto_assign": "1",
+                "allow_fallback": "0",
+                "student_ids": [str(self.s1.pk), str(self.s2.pk)],
+            },
+            follow=True,
+        )
+        self.assertEqual(post_resp.status_code, 200)
+        self.assertContains(post_resp, "Promotion Completed")
+
+        self.s1.refresh_from_db()
+        self.s2.refresh_from_db()
+        self.assertEqual(self.s1.year_of_study, 2)
+        self.assertEqual(self.s2.year_of_study, 2)
+        self.assertFalse(RoomAllocation.objects.filter(student__in=[self.s1, self.s2], room__building=self.b1, end_date__isnull=True).exists())
+        self.assertEqual(self.s1.room, self.r_b2_1s)
+        self.assertEqual(self.s2.room, self.r_b2_3s)
+        self.assertTrue(Notification.objects.filter(recipient=self.p1_u, category="room_change").exists())
+
+        # Compatible 2nd Year -> 3rd Year inside B2 keeps existing room cleanly
+        post_sr = c_admin.post(
+            reverse("students_promote"),
+            {
+                "from_year": "2",
+                "building": str(self.b2.pk),
+                "effective_date": date.today().isoformat(),
+                "auto_assign": "1",
+                "student_ids": [str(self.s3.pk)],
+            },
+            follow=True,
+        )
+        self.assertEqual(post_sr.status_code, 200)
+        self.s3.refresh_from_db()
+        self.assertEqual(self.s3.year_of_study, 3)
+        self.assertEqual(self.s3.room, self.r_b2_2s)
+
+    def test_room_change_request_portal_live_rent_delta_and_cancel(self):
+        c_stu = Client()
+        c_stu.force_login(self.s1_u)
+
+        page = c_stu.get(reverse("my_room_changes"))
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "+₹1,000/mo")
+        self.assertContains(page, "-₹500/mo")
+
+        # Submit tier change 2 Sharing (2000) -> 1 Sharing (3000)
+        sub = c_stu.post(
+            reverse("my_room_changes"),
+            {"requested_room_type": "1_sharing", "reason": "Need single study room"},
+            follow=True,
+        )
+        self.assertEqual(sub.status_code, 200)
+        rc = RoomChangeRequest.objects.get(student=self.s1, status="Pending")
+        self.assertEqual(rc.current_monthly_rent, Decimal("2000.00"))
+        self.assertEqual(rc.requested_monthly_rent, Decimal("3000.00"))
+        self.assertEqual(rc.rent_difference_display, "+₹1,000/mo")
+        self.assertTrue(Notification.objects.filter(recipient=self.fy_warden, category="room_change").exists())
+        self.assertTrue(Notification.objects.filter(recipient=self.p1_u, category="room_change").exists())
+
+        # Duplicate pending request blocked
+        c_stu.post(
+            reverse("my_room_changes"),
+            {"requested_room_type": "3_sharing", "reason": "Duplicate"},
+            follow=True,
+        )
+        self.assertEqual(RoomChangeRequest.objects.filter(student=self.s1, status="Pending").count(), 1)
+
+        # Parent sees request in read-only parent view
+        c_parent = Client()
+        c_parent.force_login(self.p1_u)
+        p_resp = c_parent.get(reverse("my_room_changes"))
+        self.assertEqual(p_resp.status_code, 200)
+        self.assertContains(p_resp, rc.request_code)
+
+        # Student cancels own pending request
+        c_stu.post(reverse("my_room_change_cancel", args=[rc.pk]), follow=True)
+        rc.refresh_from_db()
+        self.assertEqual(rc.status, "Cancelled")
+
+        # Suspended student blocked from submitting
+        self.s1.is_suspended = True
+        self.s1.save()
+        c_stu.post(
+            reverse("my_room_changes"),
+            {"requested_room_type": "1_sharing", "reason": "Blocked while suspended"},
+            follow=True,
+        )
+        self.assertEqual(RoomChangeRequest.objects.filter(student=self.s1, status="Pending").count(), 0)
+
+    def test_warden_approve_and_reject_room_change_queue_with_building_isolation(self):
+        rc_b1 = RoomChangeRequest.objects.create(
+            student=self.s1,
+            current_room=self.r_b1_2s,
+            current_room_type="2_sharing",
+            requested_room_type="1_sharing",
+            current_monthly_rent=Decimal("2000.00"),
+            requested_monthly_rent=Decimal("3000.00"),
+            reason="Upgrade to 1 Sharing",
+        )
+        rc_b2 = RoomChangeRequest.objects.create(
+            student=self.s3,
+            current_room=self.r_b2_2s,
+            current_room_type="2_sharing",
+            requested_room_type="3_sharing",
+            current_monthly_rent=Decimal("2000.00"),
+            requested_monthly_rent=Decimal("1500.00"),
+            reason="Downgrade to 3 Sharing",
+        )
+
+        c_fy = Client()
+        c_fy.force_login(self.fy_warden)
+        q_resp = c_fy.get(reverse("room_changes"))
+        self.assertEqual(q_resp.status_code, 200)
+        self.assertContains(q_resp, rc_b1.request_code)
+        self.assertNotContains(q_resp, rc_b2.request_code)
+
+        # FY Warden cannot act on B2 request or approve B1 request into B2 room
+        self.assertEqual(
+            c_fy.post(reverse("room_change_approve", args=[rc_b2.pk]), {"target_room_id": str(self.r_b2_3s.pk)}).status_code,
+            403,
+        )
+        self.assertEqual(
+            c_fy.post(reverse("room_change_reject", args=[rc_b2.pk])).status_code,
+            403,
+        )
+        self.assertEqual(
+            c_fy.post(reverse("room_change_approve", args=[rc_b1.pk]), {"target_room_id": str(self.r_b2_1s.pk)}).status_code,
+            403,
+        )
+
+        # 1-Click Approve & Transfer for B1 request
+        app_resp = c_fy.post(
+            reverse("room_change_approve", args=[rc_b1.pk]),
+            {"target_room_id": str(self.r_b1_1s.pk), "staff_note": "Approved for academic study"},
+            follow=True,
+        )
+        self.assertEqual(app_resp.status_code, 200)
+        rc_b1.refresh_from_db()
+        self.s1.refresh_from_db()
+        self.assertEqual(rc_b1.status, "Approved")
+        self.assertEqual(rc_b1.target_room, self.r_b1_1s)
+        self.assertEqual(rc_b1.reviewed_by, self.fy_warden)
+        self.assertEqual(self.s1.room, self.r_b1_1s)
+        self.assertEqual(self.s1.preferred_room_type, "1_sharing")
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.p1_u, category="room_change", title=f"Room Change Approved: {rc_b1.request_code}"
+            ).exists()
+        )
+
+        # Head Warden rejects B2 request
+        c_head = Client()
+        c_head.force_login(self.head_warden)
+        rej_resp = c_head.post(
+            reverse("room_change_reject", args=[rc_b2.pk]),
+            {"staff_note": "Wait for next term"},
+            follow=True,
+        )
+        self.assertEqual(rej_resp.status_code, 200)
+        rc_b2.refresh_from_db()
+        self.assertEqual(rc_b2.status, "Rejected")
+        self.assertEqual(self.s3.room, self.r_b2_2s)
+
+    def test_dashboard_room_change_badge_and_seed_demo(self):
+        call_command("seed_demo")
+        self.assertTrue(RoomChangeRequest.objects.filter(status="Pending").exists())
+
+        c_admin = Client()
+        c_admin.force_login(User.objects.get(username="admin"))
+        dash = c_admin.get(reverse("home"))
+        self.assertEqual(dash.status_code, 200)
+        self.assertContains(dash, "room change")
+        self.assertContains(dash, reverse("students_promote"))

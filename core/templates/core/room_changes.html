@@ -1,0 +1,161 @@
+{% extends "core/base.html" %}{% block content %}
+<div class="card p-4 mb-4 bg-white border-0 shadow-sm" style="background: linear-gradient(135deg, #ffffff 0%, #f4f8fd 100%);">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 class="mb-0 fw-bold" style="color:var(--navy);">Room Change &amp; Tier Upgrade Queue</h4>
+        <span class="badge {% if pending_count > 0 %}text-bg-warning text-dark{% else %}text-bg-success{% endif %} rounded-pill">
+          {{ pending_count }} Pending
+        </span>
+        <span class="badge text-bg-light border text-dark rounded-pill">{{ total_count }} Total</span>
+        {% if active_building %}
+          <span class="badge text-bg-dark rounded-pill">{{ active_building.code }} &mdash; {{ active_building.name }}</span>
+        {% endif %}
+      </div>
+      <div class="text-secondary small">
+        Review student requests to switch between 1 Sharing, 2 Sharing, and 3 Sharing rooms, preview the monthly rent delta, and execute 1-click approve &amp; transfer.
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      {% if request.user.role == "admin" %}
+        <a href="{% url 'students_promote' %}" class="btn btn-sm btn-outline-warning text-dark fw-semibold">Promotion Wizard</a>
+      {% endif %}
+      <a href="{% url 'rooms' %}" class="btn btn-sm btn-outline-primary fw-semibold">Vacant Rooms</a>
+      <a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary fw-semibold">&larr; Dashboard</a>
+    </div>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="card p-3 mb-4 bg-white border-0 shadow-sm">
+  <form method="get" action="{% url 'room_changes' %}" class="row g-2 align-items-center">
+    <div class="col-12 col-md-4">
+      <input type="text" name="q" value="{{ filter_q }}" class="form-control form-control-sm" placeholder="Search code, student name, roll no, or reason...">
+    </div>
+    <div class="col-6 col-md-3">
+      <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Statuses</option>
+        <option value="Pending" {% if filter_status == 'Pending' %}selected{% endif %}>Pending</option>
+        <option value="Approved" {% if filter_status == 'Approved' %}selected{% endif %}>Approved</option>
+        <option value="Rejected" {% if filter_status == 'Rejected' %}selected{% endif %}>Rejected</option>
+        <option value="Cancelled" {% if filter_status == 'Cancelled' %}selected{% endif %}>Cancelled</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-3">
+      <select name="building" class="form-select form-select-sm" onchange="this.form.submit()" {% if is_building_locked %}disabled{% endif %}>
+        {% if not is_building_locked %}<option value="">All Buildings</option>{% endif %}
+        {% for bld in buildings %}
+          <option value="{{ bld.code }}" {% if active_building and active_building.pk == bld.pk %}selected{% endif %}>{{ bld.code }} &mdash; {{ bld.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-2 d-flex gap-2">
+      <button type="submit" class="btn btn-sm btn-navy fw-semibold flex-grow-1">Filter</button>
+      {% if filter_q or filter_status or active_building and not is_building_locked %}
+        <a href="{% url 'room_changes' %}" class="btn btn-sm btn-outline-secondary">Reset</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<!-- Queue List -->
+{% if requests_list %}
+  <div class="d-flex flex-column gap-3">
+    {% for rc in requests_list %}
+    <div class="card p-3 bg-white border {% if rc.status == 'Pending' %}border-warning-subtle{% else %}border-0{% endif %} shadow-sm">
+      <div class="row g-3 align-items-center">
+        <div class="col-12 col-lg-5">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="fw-bold text-dark">{{ rc.request_code }}</span>
+            {{ rc.status_badge }}
+            <span class="badge {% if rc.rent_difference > 0 %}text-bg-warning text-dark{% elif rc.rent_difference < 0 %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+              {{ rc.rent_difference_display }}
+            </span>
+            <span class="text-muted small">{{ rc.created_at|date:"d M Y, h:i A" }}</span>
+          </div>
+          <div class="fw-bold fs-6" style="color:var(--navy);">
+            <a href="{% url 'student_detail' rc.student.pk %}" class="text-decoration-none" style="color:var(--navy);">{{ rc.student.user.display_name }}</a>
+            <span class="text-muted fw-normal small">({{ rc.student.roll_no }} &middot; {{ rc.student.year_label }})</span>
+          </div>
+          <div class="small text-secondary mt-1">
+            From: <b>{% if rc.current_room %}Room {{ rc.current_room }}{% else %}Unallocated{% endif %} ({{ rc.current_tier_label }})</b>
+            &rarr; To: <b class="text-primary">{{ rc.requested_tier_label }}</b>
+            (₹{{ rc.current_monthly_rent|floatformat:0 }} &rarr; ₹{{ rc.requested_monthly_rent|floatformat:0 }}/mo)
+          </div>
+          <div class="small text-dark mt-1">
+            <span class="text-muted">Reason:</span> {{ rc.reason }}
+          </div>
+        </div>
+
+        <div class="col-12 col-lg-7">
+          {% if rc.status == "Pending" %}
+            {% if rc.student.is_currently_suspended %}
+              <div class="alert alert-danger py-2 px-3 small mb-0">
+                Resident access suspended; 1-click transfer blocked.
+              </div>
+            {% else %}
+              <div class="d-flex flex-column gap-2">
+                <form method="post" action="{% url 'room_change_approve' rc.pk %}" class="row g-2 align-items-center">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <div class="col-12 col-md-6">
+                    {% if rc.matching_rooms %}
+                      <select name="target_room_id" class="form-select form-select-sm" required>
+                        <option value="" disabled selected>Select {{ rc.requested_tier_label }} room...</option>
+                        {% for rm in rc.matching_rooms %}
+                          <option value="{{ rm.pk }}">
+                            Room {{ rm }} ({{ rm.floor_display }}) &middot; {{ rm.vacancy }} free &middot; ₹{{ rm.monthly_rent_display|floatformat:0 }}/mo
+                          </option>
+                        {% endfor %}
+                      </select>
+                    {% else %}
+                      <div class="form-control form-control-sm bg-warning-subtle text-warning-emphasis border-warning">
+                        No vacant {{ rc.requested_tier_label }} rooms compatible with {{ rc.student.year_label }}
+                      </div>
+                    {% endif %}
+                  </div>
+                  <div class="col-6 col-md-3">
+                    <input type="text" name="staff_note" class="form-control form-control-sm" placeholder="Optional note...">
+                  </div>
+                  <div class="col-6 col-md-3 d-grid">
+                    <button type="submit" class="btn btn-sm btn-success fw-semibold" {% if not rc.matching_rooms %}disabled{% endif %}>
+                      Approve &amp; Transfer
+                    </button>
+                  </div>
+                </form>
+
+                <form method="post" action="{% url 'room_change_reject' rc.pk %}" class="d-flex justify-content-end gap-2 align-items-center">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <input type="text" name="staff_note" class="form-control form-control-sm" style="max-width:240px;" placeholder="Decline reason (optional)...">
+                  <button type="submit" class="btn btn-sm btn-outline-danger fw-semibold px-3">Reject</button>
+                </form>
+              </div>
+            {% endif %}
+          {% else %}
+            <div class="p-2 rounded bg-light small">
+              <div>
+                {% if rc.target_room %}
+                  <b>Transferred to:</b> <span class="text-success fw-semibold">Room {{ rc.target_room }}</span>
+                {% else %}
+                  <b>Outcome:</b> {{ rc.status }}
+                {% endif %}
+                {% if rc.reviewed_by %} &middot; <b>By:</b> {{ rc.reviewed_by.display_name }}{% endif %}
+                {% if rc.reviewed_at %} &middot; {{ rc.reviewed_at|date:"d M Y, h:i A" }}{% endif %}
+              </div>
+              {% if rc.staff_note %}
+                <div class="text-secondary mt-1"><b>Note:</b> {{ rc.staff_note }}</div>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="card p-5 text-center text-muted bg-white border-0 shadow-sm">
+    No room sharing change requests match the active filters.
+  </div>
+{% endif %}
+{% endblock %}

@@ -1,5 +1,6 @@
 import csv
 from decimal import Decimal
+import json
 import re
 from datetime import date, timedelta
 from functools import wraps
@@ -20,6 +21,7 @@ from . import forms as f
 from . import models as m
 from .pdf_services import generate_fee_invoice_pdf, generate_fees_report_pdf, generate_gate_pass_pdf
 from .services import (
+    approve_room_change_request,
     bulk_create_rooms,
     bulk_create_rooms_floors,
     execute_academic_promotion,
@@ -28,6 +30,7 @@ from .services import (
     parse_year,
     bulk_create_rooms_from_list,
     calculate_student_monthly_fee,
+    cancel_room_change_request,
     import_allocations,
     import_rooms_csv,
     import_rows,
@@ -38,7 +41,9 @@ from .services import (
     perform_gate_checkout,
     perform_visitor_checkout,
     preview_academic_promotion,
+    reject_room_change_request,
     scoped_staff_for_student,
+    submit_room_change_request,
     sync_overdue_gate_passes,
     transfer_student_room,
 )
@@ -61,9 +66,9 @@ def floor_order_key(b):
 STAFF = ("admin", "warden")
 BADGE = {"Paid": "success", "Resolved": "success", "Approved": "success", "Present": "success", "Unpaid": "secondary",
          "Submitted": "secondary", "Pending": "warning", "Under Review": "info", "In Progress": "primary",
-         "Partly paid": "info", "Overdue": "danger", "Rejected": "danger", "Absent": "danger", "On leave": "info",
-         "Suspended": "danger", "Staying": "success", "Left": "secondary", "Active": "success",
-         "Checked Out": "primary", "Returned": "success", "Late": "danger", "Confirmed": "success"}
+         "Partly paid": "info", "Overdue": "danger", "Rejected": "danger", "Cancelled": "secondary",
+         "Absent": "danger", "On leave": "info", "Suspended": "danger", "Staying": "success", "Left": "secondary",
+         "Active": "success", "Checked Out": "primary", "Returned": "success", "Late": "danger", "Confirmed": "success"}
 
 
 def badge(t):
@@ -884,6 +889,124 @@ def allocation_vacate(request, pk):
     return redirect("allocations")
 
 
+@staff
+def room_changes_list(request):
+    """Building-scoped staff queue for reviewing and 1-click approving RoomChangeRequests."""
+    buildings, active_building, is_building_locked = _get_building_scope(request)
+    status_filter = (request.GET.get("status") or "").strip()
+    q = (request.GET.get("q") or "").strip()
+
+    all_requests = list(
+        m.RoomChangeRequest.objects.select_related(
+            "student__user", "current_room__building", "target_room__building", "reviewed_by"
+        ).prefetch_related(
+            Prefetch(
+                "student__allocations",
+                queryset=m.RoomAllocation.objects.filter(end_date__isnull=True).select_related("room__building"),
+            )
+        )
+    )
+    if active_building:
+        all_requests = [rc for rc in all_requests if _student_matches_building(rc.student, active_building)]
+
+    total_count = len(all_requests)
+    pending_count = sum(1 for rc in all_requests if rc.status == "Pending")
+
+    requests_list = all_requests
+    if status_filter in ("Pending", "Approved", "Rejected", "Cancelled"):
+        requests_list = [rc for rc in requests_list if rc.status == status_filter]
+    if q:
+        ql = q.lower()
+        requests_list = [
+            rc for rc in requests_list
+            if ql in rc.request_code.lower()
+            or ql in rc.student.user.display_name.lower()
+            or ql in rc.student.roll_no.lower()
+            or ql in rc.reason.lower()
+        ]
+
+    for rc in requests_list:
+        rc.status_badge = badge(rc.status)
+        if rc.status == "Pending":
+            rc.matching_rooms = [
+                r for r in _vacant_rooms(
+                    building=(active_building if is_building_locked else None),
+                    student_year=rc.student.year_of_study,
+                    room_type=rc.requested_room_type,
+                )
+                if (not rc.current_room_id or r.pk != rc.current_room_id)
+            ]
+        else:
+            rc.matching_rooms = []
+
+    return show(
+        request,
+        "room_changes",
+        requests_list=requests_list,
+        total_count=total_count,
+        pending_count=pending_count,
+        filter_status=status_filter,
+        filter_q=q,
+        buildings=buildings,
+        active_building=active_building,
+        is_building_locked=is_building_locked,
+    )
+
+
+@staff
+@require_POST
+def room_change_approve(request, pk):
+    rc = get_object_or_404(
+        m.RoomChangeRequest.objects.select_related("student__user", "student__parent__user", "current_room"),
+        pk=pk,
+    )
+    _assert_building_access(request, student=rc.student)
+    target_room_id = (request.POST.get("target_room_id") or "").strip()
+    next_url = request.POST.get("next") or "room_changes"
+    if not target_room_id:
+        messages.error(request, "Please select a compatible vacant target room before approving.")
+        return redirect(next_url)
+
+    target_room = get_object_or_404(m.Room.objects.select_related("building"), pk=target_room_id)
+    _assert_building_access(request, room=target_room)
+
+    try:
+        approve_room_change_request(
+            rc,
+            target_room=target_room,
+            actor=request.user,
+            staff_note=(request.POST.get("staff_note") or "").strip(),
+        )
+        messages.success(
+            request,
+            f"Approved {rc.request_code} and transferred {rc.student.user.display_name} to Room {target_room}.",
+        )
+    except ValidationError as e:
+        messages.error(request, getattr(e, "messages", [str(e)])[0])
+    return redirect(next_url)
+
+
+@staff
+@require_POST
+def room_change_reject(request, pk):
+    rc = get_object_or_404(
+        m.RoomChangeRequest.objects.select_related("student__user", "student__parent__user"),
+        pk=pk,
+    )
+    _assert_building_access(request, student=rc.student)
+    next_url = request.POST.get("next") or "room_changes"
+    try:
+        reject_room_change_request(
+            rc,
+            actor=request.user,
+            staff_note=(request.POST.get("staff_note") or "").strip(),
+        )
+        messages.info(request, f"Declined {rc.request_code}.")
+    except ValidationError as e:
+        messages.error(request, getattr(e, "messages", [str(e)])[0])
+    return redirect(next_url)
+
+
 # ---------- auth / home ----------
 def _build_room_type_summary(rooms, cfg=None):
     """Aggregate room count, capacity, occupied, free beds, and monthly rent for 1/2/3 sharing tiers."""
@@ -1059,6 +1182,9 @@ def home(request):
         currently_out_count = gate_base.filter(status__in=["Checked Out", "Late"], actual_return_at__isnull=True).count()
         pending_gate_passes_count = gate_base.filter(status="Pending").count()
         active_visitors_count = m.VisitorLog.objects.filter(student_id__in=scoped_student_ids, checked_out_at__isnull=True).count()
+        pending_room_changes_count = m.RoomChangeRequest.objects.filter(
+            status="Pending", student_id__in=scoped_student_ids
+        ).count()
 
         # Today's menu
         today_menu = list(m.MealMenu.objects.filter(day=today.weekday()))
@@ -1120,6 +1246,7 @@ def home(request):
             currently_out_count=currently_out_count,
             pending_gate_passes_count=pending_gate_passes_count,
             active_visitors_count=active_visitors_count,
+            pending_room_changes_count=pending_room_changes_count,
             total_fee_amount=total_fee_amount,
             total_paid_amount=total_paid_amount,
             total_balance_amount=total_balance_amount,
@@ -1264,6 +1391,11 @@ def overview(s, user):
         gp.status_badge = badge(gp.effective_status)
     active_gate_pass = s.gate_passes.filter(status__in=["Checked Out", "Late"], actual_return_at__isnull=True).first()
     recent_visitors = list(s.visitors.all()[:3])
+    recent_room_changes = list(
+        s.room_change_requests.select_related("current_room", "target_room")[:3]
+    )
+    for rc in recent_room_changes:
+        rc.status_badge = badge(rc.status)
 
     return dict(
         s=s,
@@ -1289,6 +1421,7 @@ def overview(s, user):
         recent_gate_passes=recent_gate_passes,
         active_gate_pass=active_gate_pass,
         recent_visitors=recent_visitors,
+        recent_room_changes=recent_room_changes,
         fees=fees,
         wardens=wardens,
         notices=notices,
@@ -3807,6 +3940,127 @@ def gate_pass_parent_ack(request, pk):
         )
         messages.success(request, f"Confirmed {gp.pass_code} for {gp.student.user.display_name}.")
     return redirect(request.POST.get("next") or "my_gate_passes")
+
+
+@role_required("student", "parent")
+def my_room_changes(request):
+    """Student self-service room sharing tier change requests (with live rent delta) & Parent view."""
+    u = request.user
+    if u.role == "parent":
+        p = getattr(u, "parent", None)
+        children = list(p.children.select_related("user").all()) if p else []
+        child_id = (request.GET.get("child") or "").strip()
+        selected_child = None
+        if child_id.isdigit():
+            selected_child = next((ch for ch in children if ch.pk == int(child_id)), None)
+        target_students = [selected_child] if selected_child else children
+        requests_list = list(
+            m.RoomChangeRequest.objects.filter(student__in=target_students)
+            .select_related("student__user", "current_room__building", "target_room__building", "reviewed_by")
+        )
+        for rc in requests_list:
+            rc.status_badge = badge(rc.status)
+        return show(
+            request,
+            "my_room_changes",
+            parent_view=True,
+            all_children=children,
+            selected_child=selected_child,
+            requests_list=requests_list,
+        )
+
+    s = _mine(request)
+    cfg = m.FeeConfig.get_config()
+    cur_room = s.room
+    cur_rt = cur_room.room_type if cur_room else (s.preferred_room_type or "")
+    cur_tier_label = dict(m.ROOM_TYPE_CHOICES).get(cur_rt, "Unallocated")
+    cur_rent = cfg.get_rent_for_room(cur_room) if cur_room else cfg.get_rent_for_type(cur_rt)
+
+    tier_cards = []
+    tier_delta_map = {}
+    for rt_val, rt_lbl in m.ROOM_TYPE_CHOICES:
+        rent = cfg.get_rent_for_type(rt_val)
+        diff = rent - cur_rent
+        if diff > 0:
+            diff_display = f"+₹{diff:,.0f}/mo"
+        elif diff < 0:
+            diff_display = f"-₹{abs(diff):,.0f}/mo"
+        else:
+            diff_display = "₹0/mo (No change)"
+        is_current = bool(cur_room and cur_room.room_type == rt_val)
+        compat_rooms = _vacant_rooms(building=s.building, student_year=s.year_of_study, room_type=rt_val)
+        free_beds = sum(r.vacancy for r in compat_rooms)
+        tier_cards.append({
+            "room_type": rt_val,
+            "label": rt_lbl,
+            "rent": rent,
+            "diff": diff,
+            "diff_display": diff_display,
+            "is_current": is_current,
+            "free_beds": free_beds,
+        })
+        tier_delta_map[rt_val] = {
+            "label": rt_lbl,
+            "rent": f"{rent:,.0f}",
+            "diff_display": diff_display,
+        }
+
+    form = f.RoomChangeRequestForm(request.POST or None, student=s)
+    if request.method == "POST":
+        if s.is_currently_suspended:
+            messages.error(request, "Resident access is currently suspended. Room change requests are disabled.")
+            return redirect("my_room_changes")
+        if form.is_valid():
+            try:
+                rc = submit_room_change_request(
+                    student=s,
+                    requested_room_type=form.cleaned_data["requested_room_type"],
+                    reason=form.cleaned_data["reason"],
+                    actor=u,
+                )
+                messages.success(
+                    request,
+                    f"Submitted {rc.request_code} for {rc.requested_tier_label} ({rc.rent_difference_display}).",
+                )
+                return redirect("my_room_changes")
+            except ValidationError as e:
+                form.add_error(None, getattr(e, "messages", [str(e)])[0])
+
+    requests_list = list(
+        s.room_change_requests.select_related("current_room__building", "target_room__building", "reviewed_by")
+    )
+    has_pending_request = False
+    for rc in requests_list:
+        rc.status_badge = badge(rc.status)
+        if rc.status == "Pending":
+            has_pending_request = True
+
+    return show(
+        request,
+        "my_room_changes",
+        parent_view=False,
+        student=s,
+        cur_room=cur_room,
+        cur_tier_label=cur_tier_label,
+        cur_rent=cur_rent,
+        tier_cards=tier_cards,
+        tier_delta_json=json.dumps(tier_delta_map),
+        form=form,
+        requests_list=requests_list,
+        has_pending_request=has_pending_request,
+    )
+
+
+@role_required("student")
+@require_POST
+def my_room_change_cancel(request, pk):
+    rc = get_object_or_404(m.RoomChangeRequest, pk=pk, student=_mine(request))
+    try:
+        cancel_room_change_request(rc, actor=request.user)
+        messages.info(request, f"Cancelled room change request {rc.request_code}.")
+    except ValidationError as e:
+        messages.error(request, getattr(e, "messages", [str(e)])[0])
+    return redirect("my_room_changes")
 
 
 @role_required("student", "parent")

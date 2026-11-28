@@ -91,6 +91,9 @@
         <a class="btn btn-sm btn-outline-secondary fw-semibold" href="{% url 'my_gate_passes' %}?child={{ s.pk }}">
           Gate Passes
         </a>
+        <a class="btn btn-sm btn-outline-secondary fw-semibold" href="{% url 'my_room_changes' %}?child={{ s.pk }}">
+          Room Changes
+        </a>
         {% if wardens %}
           <a class="btn btn-sm btn-outline-secondary fw-semibold" href="#wardenContacts">
             Warden Contacts
@@ -105,6 +108,9 @@
         </a>
         <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'my_gate_passes' %}">
           Gate Pass
+        </a>
+        <a class="btn btn-sm btn-outline-primary fw-semibold" href="{% url 'my_room_changes' %}">
+          Room Change
         </a>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'my_complaints' %}">
           Complaints
@@ -743,6 +749,52 @@
       </div>
     {% else %}
       <div class="text-muted small text-center py-2">No recent gate passes recorded.</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Room Sharing Tier Change Requests Summary -->
+<div class="card bg-white border-0 shadow-sm mb-4">
+  <div class="card-header bg-light d-flex flex-wrap justify-content-between align-items-center py-2 border-bottom gap-2">
+    <span class="fw-bold small" style="color:var(--navy);">Room Sharing &amp; Tier Requests</span>
+    <div>
+      {% if staff_view %}
+        <a href="{% url 'room_changes' %}?q={{ s.roll_no }}" class="btn btn-sm btn-outline-primary py-0 px-2 fw-semibold">Manage Requests &rarr;</a>
+      {% elif parent_view %}
+        <a href="{% url 'my_room_changes' %}?child={{ s.pk }}" class="btn btn-sm btn-outline-primary py-0 px-2 fw-semibold">View Requests &rarr;</a>
+      {% else %}
+        <a href="{% url 'my_room_changes' %}" class="btn btn-sm btn-outline-primary py-0 px-2 fw-semibold">Request Tier Change &rarr;</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="p-3">
+    {% if recent_room_changes %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0 small">
+          <thead class="table-light">
+            <tr>
+              <th>Code</th>
+              <th>Switch</th>
+              <th>Rent Delta</th>
+              <th>Status</th>
+              <th>Target Room</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rc in recent_room_changes %}
+              <tr>
+                <td class="fw-semibold">{{ rc.request_code }}</td>
+                <td>{{ rc.current_tier_label }} &rarr; {{ rc.requested_tier_label }}</td>
+                <td><span class="badge text-bg-light border text-dark">{{ rc.rent_difference_display }}</span></td>
+                <td>{{ rc.status_badge }}</td>
+                <td>{% if rc.target_room %}Room {{ rc.target_room }}{% else %}&mdash;{% endif %}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted small text-center py-2">No room tier change requests submitted.</div>
     {% endif %}
   </div>
 </div>

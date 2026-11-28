@@ -185,4 +185,28 @@ class Command(BaseCommand):
             recorded_by=warden_user,
         )
 
+        # Sample Room Change / Sharing Upgrade Requests
+        rc_fy = s_fy_2
+        m.RoomChangeRequest.objects.create(
+            student=rc_fy,
+            current_room=rc_fy.room,
+            current_room_type=rc_fy.room.room_type if rc_fy.room else "2_sharing",
+            requested_room_type="1_sharing",
+            current_monthly_rent=cfg.get_rent_for_room(rc_fy.room) if rc_fy.room else cfg.rent_2_sharing,
+            requested_monthly_rent=cfg.rent_1_sharing,
+            reason="Need quieter single room for exam preparation",
+            status="Pending",
+        )
+        rc_sr = s_sr_1
+        m.RoomChangeRequest.objects.create(
+            student=rc_sr,
+            current_room=rc_sr.room,
+            current_room_type=rc_sr.room.room_type if rc_sr.room else "1_sharing",
+            requested_room_type="2_sharing",
+            current_monthly_rent=cfg.get_rent_for_room(rc_sr.room) if rc_sr.room else cfg.rent_1_sharing,
+            requested_monthly_rent=cfg.rent_2_sharing,
+            reason="Prefer sharing with batchmate",
+            status="Pending",
+        )
+
         self.stdout.write(self.style.SUCCESS("Demo data ready."))
