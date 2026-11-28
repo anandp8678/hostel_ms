@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 import re
 
 from django import forms
@@ -560,3 +560,108 @@ class VisitorLogForm(MF):
         self.fields["phone"].widget.attrs["placeholder"] = "10-digit mobile number"
         self.fields["purpose"].widget.attrs["placeholder"] = "e.g. Family visit / Dropping luggage"
         self.fields["id_proof_last4"].widget.attrs["placeholder"] = "Last 4 digits of Aadhaar / PAN / DL"
+
+
+class RoomTransferForm(BS, DateMixin, forms.Form):
+    target_room = forms.ModelChoiceField(
+        queryset=m.Room.objects.none(),
+        empty_label="Choose compatible vacant room...",
+        label="Target Room",
+    )
+    transfer_date = forms.DateField(initial=date.today, label="Transfer Effective Date")
+
+    def __init__(self, *a, **k):
+        student = k.pop("student", None)
+        scoped_building = k.pop("building", None)
+        super().__init__(*a, **k)
+
+        qs = m.Room.objects.select_related("building").filter(is_blacklisted=False)
+        if scoped_building is not None:
+            qs = qs.filter(building=scoped_building)
+
+        cur_room_id = student.room.pk if (student and student.room) else None
+        cur_year = student.year_of_study if student else None
+
+        compat_ids = []
+        for r in qs:
+            if cur_room_id and r.pk == cur_room_id:
+                continue
+            if r.vacancy <= 0:
+                continue
+            if cur_year is not None and r.building_id and not r.building.allows_year(cur_year):
+                continue
+            compat_ids.append(r.pk)
+
+        cfg = m.FeeConfig.get_config()
+        self.fields["target_room"].queryset = m.Room.objects.select_related("building").filter(pk__in=compat_ids)
+        self.fields["target_room"].label_from_instance = (
+            lambda r: f"Room {r} ({r.floor_display}) — {r.room_type_label} · {r.vacancy} free · ₹{cfg.get_rent_for_room(r):,.0f}/mo"
+        )
+
+
+class AcademicPromotionForm(BS, DateMixin, forms.Form):
+    FROM_YEAR_CHOICES = [
+        (1, "1st Year -> 2nd Year"),
+        (2, "2nd Year -> 3rd Year"),
+        (3, "3rd Year -> 4th Year"),
+    ]
+
+    from_year = forms.TypedChoiceField(
+        choices=FROM_YEAR_CHOICES,
+        coerce=int,
+        initial=1,
+        label="Graduating Cohort",
+    )
+    building = forms.ModelChoiceField(
+        queryset=m.Building.objects.filter(is_active=True).order_by("code"),
+        required=False,
+        empty_label="All Active Buildings",
+        label="Source Building Filter",
+    )
+    effective_date = forms.DateField(initial=date.today, label="Vacate / Transfer Date")
+    auto_assign = forms.BooleanField(
+        required=False,
+        initial=True,
+        label="Auto-assign vacant senior rooms matching each student's preferred sharing type",
+    )
+    allow_fallback = forms.BooleanField(
+        required=False,
+        initial=False,
+        label="Fallback to another compatible tier if preferred sharing type is full",
+    )
+
+
+class RoomChangeRequestForm(MF):
+    class Meta:
+        model = m.RoomChangeRequest
+        fields = ["requested_room_type", "reason"]
+        labels = {
+            "requested_room_type": "Target Room Sharing Tier",
+            "reason": "Reason for Room Sharing Change",
+        }
+
+    def __init__(self, *a, **k):
+        student = k.pop("student", None)
+        super().__init__(*a, **k)
+
+        cfg = m.FeeConfig.get_config()
+        cur_room = student.room if student else None
+        cur_rt = cur_room.room_type if cur_room else (student.preferred_room_type if student else "")
+        cur_rent = cfg.get_rent_for_room(cur_room) if cur_room else cfg.get_rent_for_type(cur_rt)
+
+        choices = []
+        for rt_val, rt_lbl in m.ROOM_TYPE_CHOICES:
+            if cur_room and cur_room.room_type == rt_val:
+                continue
+            tier_rent = cfg.get_rent_for_type(rt_val)
+            diff = tier_rent - cur_rent
+            if diff > 0:
+                diff_txt = f"+₹{diff:,.0f}/mo"
+            elif diff < 0:
+                diff_txt = f"-₹{abs(diff):,.0f}/mo"
+            else:
+                diff_txt = "Same monthly rate"
+            choices.append((rt_val, f"{rt_lbl} — ₹{tier_rent:,.0f}/mo ({diff_txt})"))
+
+        self.fields["requested_room_type"].choices = choices
+        self.fields["reason"].widget.attrs["placeholder"] = "e.g. Prefer single study space (1 Sharing) or budget 3 Sharing"
