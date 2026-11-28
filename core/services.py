@@ -1014,3 +1014,306 @@ def transfer_student_room(student, target_room, transfer_date=None, actor=None, 
     )
     return old_room, new_alloc
 
+
+def _compatible_promotion_rooms(to_year):
+    """Return sorted pool dicts for non-blacklisted vacant rooms allowing `to_year`."""
+    cfg = FeeConfig.get_config()
+    active_counts = {}
+    for rid in RoomAllocation.objects.filter(end_date__isnull=True).values_list("room_id", flat=True):
+        active_counts[rid] = active_counts.get(rid, 0) + 1
+
+    rooms = list(Room.objects.select_related("building").filter(is_blacklisted=False))
+    pool = []
+    for r in rooms:
+        if r.building_id and not r.building.allows_year(to_year):
+            continue
+        occ = active_counts.get(r.pk, 0)
+        rem = max(0, r.capacity - occ)
+        if rem > 0:
+            pool.append({
+                "room": r,
+                "remaining": rem,
+                "rent": cfg.get_rent_for_room(r),
+            })
+    pool.sort(key=lambda item: (
+        item["room"].building.code if item["room"].building else "",
+        item["room"].room_type,
+        item["room"].block,
+        item["room"].number,
+    ))
+    return pool
+
+
+def _pick_promotion_room(student, pool, allow_fallback=False):
+    """Pick first matching vacant room for student's preferred_room_type (optional fallback)."""
+    pref = (student.preferred_room_type or "").strip()
+    for item in pool:
+        if item["remaining"] <= 0:
+            continue
+        if not pref or item["room"].room_type == pref:
+            item["remaining"] -= 1
+            return item["room"], item["rent"], ("exact" if pref else "any")
+    if allow_fallback:
+        for item in pool:
+            if item["remaining"] > 0:
+                item["remaining"] -= 1
+                return item["room"], item["rent"], "fallback"
+    return None, None, "unmatched"
+
+
+def preview_academic_promotion(
+    from_year,
+    to_year=None,
+    building=None,
+    auto_assign=True,
+    allow_fallback=False,
+    effective_date=None,
+):
+    """
+    Build a dry-run preview for promoting active `from_year` students to `to_year`,
+    highlighting incompatible building allocations (e.g., B1 1st-year block) and
+    projected B2 auto-assignments matching preferred_room_type.
+    """
+    from_year = int(from_year)
+    to_year = int(to_year) if to_year is not None else from_year + 1
+    if from_year not in (1, 2, 3) or to_year not in (2, 3, 4) or to_year <= from_year:
+        raise ValidationError("Invalid academic year promotion range.")
+
+    effective_date = effective_date or date.today()
+    bld_obj = find_building(building) if building else None
+
+    students_qs = list(
+        Student.objects.filter(is_active=True, year_of_study=from_year)
+        .select_related("user", "parent__user")
+        .order_by("roll_no")
+    )
+    active_allocs = {
+        a.student_id: a
+        for a in RoomAllocation.objects.filter(
+            student__in=students_qs, end_date__isnull=True
+        ).select_related("room__building")
+    }
+
+    if bld_obj is not None:
+        filtered = []
+        for s in students_qs:
+            a = active_allocs.get(s.pk)
+            if a and a.room.building_id == bld_obj.pk:
+                filtered.append(s)
+            elif not a and bld_obj.allows_year(s.year_of_study):
+                filtered.append(s)
+        students_qs = filtered
+
+    pool = _compatible_promotion_rooms(to_year)
+    total_free_beds = sum(item["remaining"] for item in pool)
+    cfg = FeeConfig.get_config()
+
+    rows = []
+    incompatible_count = 0
+    keep_count = 0
+    unallocated_count = 0
+    auto_assigned_count = 0
+    fallback_count = 0
+    remaining_unassigned_count = 0
+
+    for s in students_qs:
+        cur_alloc = active_allocs.get(s.pk)
+        cur_room = cur_alloc.room if cur_alloc else None
+        incompatible = bool(
+            cur_room and cur_room.building_id and not cur_room.building.allows_year(to_year)
+        )
+        if incompatible:
+            incompatible_count += 1
+            action_kind = "vacate_reassign"
+        elif cur_room is not None:
+            keep_count += 1
+            action_kind = "keep_compatible"
+        else:
+            unallocated_count += 1
+            action_kind = "unallocated"
+
+        projected_room = None
+        projected_rent = None
+        match_status = "manual"
+        if action_kind == "keep_compatible":
+            projected_room = cur_room
+            projected_rent = cfg.get_rent_for_room(cur_room)
+            match_status = "kept"
+        elif auto_assign:
+            projected_room, projected_rent, match_status = _pick_promotion_room(
+                s, pool, allow_fallback=allow_fallback
+            )
+            if projected_room is not None:
+                auto_assigned_count += 1
+                if match_status == "fallback":
+                    fallback_count += 1
+            else:
+                remaining_unassigned_count += 1
+        else:
+            remaining_unassigned_count += 1
+
+        rows.append({
+            "student": s,
+            "current_alloc": cur_alloc,
+            "current_room": cur_room,
+            "incompatible": incompatible,
+            "action_kind": action_kind,
+            "projected_room": projected_room,
+            "projected_rent": projected_rent,
+            "match_status": match_status,
+        })
+
+    year_labels = dict(Student.YEAR_CHOICES)
+    needing_beds = incompatible_count + unallocated_count
+    return {
+        "from_year": from_year,
+        "to_year": to_year,
+        "from_label": year_labels.get(from_year, f"Year {from_year}"),
+        "to_label": year_labels.get(to_year, f"Year {to_year}"),
+        "building": bld_obj,
+        "effective_date": effective_date,
+        "auto_assign": bool(auto_assign),
+        "allow_fallback": bool(allow_fallback),
+        "rows": rows,
+        "total_students": len(rows),
+        "incompatible_count": incompatible_count,
+        "keep_count": keep_count,
+        "unallocated_count": unallocated_count,
+        "auto_assigned_count": auto_assigned_count,
+        "fallback_count": fallback_count,
+        "remaining_unassigned_count": remaining_unassigned_count,
+        "needing_beds": needing_beds,
+        "total_compatible_free_beds": total_free_beds,
+        "capacity_shortfall": max(0, needing_beds - total_free_beds),
+    }
+
+
+@transaction.atomic
+def execute_academic_promotion(
+    student_ids,
+    from_year,
+    to_year=None,
+    auto_assign=True,
+    allow_fallback=False,
+    effective_date=None,
+    actor=None,
+):
+    """
+    Atomically promote selected `from_year` students to `to_year`:
+    vacate incompatible building allocations, increment year_of_study,
+    and optionally auto-assign compatible vacant rooms by preferred_room_type.
+    """
+    from_year = int(from_year)
+    to_year = int(to_year) if to_year is not None else from_year + 1
+    if from_year not in (1, 2, 3) or to_year not in (2, 3, 4) or to_year <= from_year:
+        raise ValidationError("Invalid academic year promotion range.")
+    if not student_ids:
+        raise ValidationError("Select at least one student to promote.")
+
+    effective_date = effective_date or date.today()
+    students = list(
+        Student.objects.filter(pk__in=student_ids, is_active=True, year_of_study=from_year)
+        .select_related("user", "parent__user")
+        .order_by("roll_no")
+    )
+    if not students:
+        raise ValidationError("No eligible active students found in the selected academic year.")
+
+    active_allocs = {
+        a.student_id: a
+        for a in RoomAllocation.objects.filter(
+            student__in=students, end_date__isnull=True
+        ).select_related("room__building")
+    }
+    pool = _compatible_promotion_rooms(to_year) if auto_assign else []
+    year_labels = dict(Student.YEAR_CHOICES)
+    to_label = year_labels.get(to_year, f"Year {to_year}")
+
+    promoted_count = 0
+    vacated_count = 0
+    assigned_count = 0
+    kept_count = 0
+    unassigned_names = []
+
+    for s in students:
+        cur_alloc = active_allocs.get(s.pk)
+        cur_room = cur_alloc.room if cur_alloc else None
+        incompatible = bool(
+            cur_room and cur_room.building_id and not cur_room.building.allows_year(to_year)
+        )
+        old_room_label = str(cur_room) if cur_room else ""
+
+        if cur_alloc and incompatible:
+            end_d = effective_date if effective_date >= cur_alloc.start_date else cur_alloc.start_date
+            cur_alloc.end_date = end_d
+            cur_alloc.save(update_fields=["end_date"])
+            vacated_count += 1
+            cur_alloc = None
+
+        s.year_of_study = to_year
+        s.save(update_fields=["year_of_study"])
+        promoted_count += 1
+
+        if cur_alloc is not None:
+            kept_count += 1
+            notify_users(
+                recipients=_gate_stakeholders(s),
+                title=f"Promoted to {to_label}",
+                message=f"{s.user.display_name} has been promoted to {to_label} and retains Room {cur_alloc.room}.",
+                category="room_change",
+                link="/me/room-change/",
+                actor=actor,
+            )
+            continue
+
+        assigned_room = None
+        assigned_rent = None
+        if auto_assign:
+            assigned_room, assigned_rent, _ = _pick_promotion_room(
+                s, pool, allow_fallback=allow_fallback
+            )
+
+        if assigned_room is not None:
+            new_alloc = RoomAllocation(student=s, room=assigned_room, start_date=effective_date)
+            new_alloc.full_clean()
+            new_alloc.save()
+            assigned_count += 1
+            vac_note = f" (vacated {old_room_label})" if old_room_label else ""
+            notify_users(
+                recipients=_gate_stakeholders(s),
+                title=f"Promoted to {to_label}: Room {assigned_room}",
+                message=(
+                    f"{s.user.display_name} promoted to {to_label}{vac_note} and assigned to "
+                    f"Room {assigned_room} ({assigned_room.room_type_label}, ₹{assigned_rent:,.0f}/mo)."
+                ),
+                category="room_change",
+                link="/me/room-change/",
+                actor=actor,
+            )
+        else:
+            unassigned_names.append(f"{s.user.display_name} ({s.roll_no})")
+            vac_note = f"Room {old_room_label} has been vacated. " if old_room_label else ""
+            notify_users(
+                recipients=_gate_stakeholders(s),
+                title=f"Promoted to {to_label}",
+                message=(
+                    f"{s.user.display_name} has been promoted to {to_label}. "
+                    f"{vac_note}Senior block room assignment is pending."
+                ),
+                category="room_change",
+                link="/me/room-change/",
+                actor=actor,
+            )
+
+    return {
+        "from_year": from_year,
+        "to_year": to_year,
+        "to_label": to_label,
+        "promoted_count": promoted_count,
+        "vacated_count": vacated_count,
+        "assigned_count": assigned_count,
+        "kept_count": kept_count,
+        "unassigned_count": len(unassigned_names),
+        "unassigned_names": unassigned_names,
+    }
+
